@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
-import type { SystemBlock } from "@herta/core";
-import { ensureHertaGitignore } from "@herta/core";
+import type { PageMarkerLang, SystemBlock } from "@herta/core";
+import { ensureHertaGitignore, pageMarkerShape } from "@herta/core";
 import { sanitizeSystemBlock } from "@herta/herta";
 import {
   isCredentialBasename,
@@ -16,6 +16,7 @@ import {
 import {
   type DocumentFormat,
   extractDocumentText,
+  type OutlineEntry,
   sniffDocumentFormat,
 } from "./document-text.js";
 
@@ -55,6 +56,14 @@ export const MAX_ATTACHMENT_CHARS = 200_000;
 
 /** Files per attach action. */
 export const MAX_ATTACHMENTS_PER_ACTION = 10;
+
+/** How much of a document's outline rides the record block's detail
+ *  (2026-08-23) — the presentation bound for Herta's view of the table of
+ *  contents, the way the head excerpt is bounded for the body. The sidecar
+ *  holds the whole thing; the detail says how many entries it shows of how
+ *  many. */
+export const OUTLINE_PREVIEW_ENTRIES = 40;
+export const OUTLINE_PREVIEW_CHARS = 2000;
 
 /** Where a session's attachments live, relative to the backend workspace.
  *  Session-scoped so deleting or rewinding a session takes its documents with
@@ -218,6 +227,24 @@ export function headExcerpt(text: string): { text: string; clipped: boolean } {
   return { text: out, clipped };
 }
 
+/** The bounded slice of outline lines the record block shows: entry- and
+ *  char-capped, whole lines only, so a long title never gets cut mid-word.
+ *  Redacted like the head (§6f): the sidecar on disk stays verbatim, the copy
+ *  that travels does not. */
+function outlinePreview(lines: readonly string[]): string[] {
+  const out: string[] = [];
+  let chars = 0;
+  for (const raw of lines.slice(0, OUTLINE_PREVIEW_ENTRIES)) {
+    const line = redactSecrets(raw);
+    if (chars + line.length + 1 > OUTLINE_PREVIEW_CHARS && out.length > 0) {
+      break;
+    }
+    out.push(line);
+    chars += line.length + 1;
+  }
+  return out;
+}
+
 function formatCount(n: number): string {
   return n >= 1000 ? `${Math.round(n / 100) / 10}K` : String(n);
 }
@@ -317,9 +344,12 @@ async function ingestDocument(opts: {
   readonly bytes: Buffer;
   readonly workspaceRoot: string;
   readonly sessionId: string;
+  readonly lang: PageMarkerLang;
 }): Promise<IngestedAttachment> {
   const { format, displayName } = opts;
-  const extracted = await extractDocumentText(format, opts.bytes);
+  const extracted = await extractDocumentText(format, opts.bytes, {
+    lang: opts.lang,
+  });
   if (!extracted.ok) {
     const doc = {
       format,
@@ -342,8 +372,12 @@ async function ingestDocument(opts: {
   const doc = {
     format,
     ...(extracted.pages !== undefined ? { pages: extracted.pages } : {}),
+    // A PDF's text is opened per page with the marker line (2026-08-23);
+    // the digest records the exact shape the file carries.
+    ...(format === "pdf" ? { pageMarker: pageMarkerShape(opts.lang) } : {}),
   };
-  const storedName = `${safeStoredName(displayName, opts.bytes)}.txt`;
+  const baseName = safeStoredName(displayName, opts.bytes);
+  const storedName = `${baseName}.txt`;
   const relPath = await storeBytes({
     workspaceRoot: opts.workspaceRoot,
     sessionId: opts.sessionId,
@@ -352,10 +386,25 @@ async function ingestDocument(opts: {
   });
   if (relPath === null) return notStored(displayName, "read_error", doc);
 
+  // The outline sidecar (2026-08-23) — written beside the text, best-effort:
+  // the text is the attachment, and a failed sidecar write must not turn a
+  // stored document into a read_error. Absent when the document has none.
+  const outline =
+    extracted.outline !== undefined && extracted.outline.length > 0
+      ? await storeOutline({
+          workspaceRoot: opts.workspaceRoot,
+          sessionId: opts.sessionId,
+          storedName: `${baseName}.outline.txt`,
+          entries: extracted.outline,
+        })
+      : undefined;
+
   const lines = text.split("\n").length;
   // The char cap applies to the EXTRACTED text — the source-byte excerpt cap
   // does not, because a PDF's bytes are mostly fonts and images (ADR 0038 §4).
-  // Same rule as a 5 MB log: stored and searchable, no head excerpt.
+  // Same rule as a 5 MB log: stored and searchable, no head excerpt — but
+  // the outline preview still rides the detail, so an over-cap document is
+  // no longer a blank citation in front of Herta.
   if (text.length > MAX_ATTACHMENT_CHARS) {
     return {
       block: buildBlock({
@@ -365,6 +414,7 @@ async function ingestDocument(opts: {
         chars: text.length,
         unreadable: "too_large",
         ...doc,
+        ...(outline !== undefined ? { outline } : {}),
       }),
       relPath,
       unreadable: "too_large",
@@ -378,11 +428,50 @@ async function ingestDocument(opts: {
       chars: text.length,
       head: headExcerpt(text),
       ...doc,
+      ...(outline !== undefined ? { outline } : {}),
     }),
     relPath,
   };
 }
 
+/** What the block carries about a stored outline: the sidecar's path, the
+ *  formatted lines (all of them — buildBlock bounds the preview), the count. */
+interface StoredOutline {
+  readonly path: string;
+  readonly lines: readonly string[];
+  readonly total: number;
+}
+
+/**
+ * Format one outline entry as the sidecar line — indentation by depth, then
+ * the title, then where it is: `(p.12 · L345)` for a PDF (page, marker line),
+ * `(L345)` for Word. Terse and language-neutral on purpose: it is read by
+ * 板砖 through `cat`, quoted by `show_excerpt`, and previewed in the record
+ * in both languages; the task line explains the columns.
+ */
+export function formatOutlineEntry(e: OutlineEntry): string {
+  const indent = "  ".repeat(Math.max(0, e.level - 1));
+  const where =
+    e.page !== undefined ? `p.${e.page} · L${e.line}` : `L${e.line}`;
+  return `${indent}${e.title} (${where})`;
+}
+
+async function storeOutline(opts: {
+  readonly workspaceRoot: string;
+  readonly sessionId: string;
+  readonly storedName: string;
+  readonly entries: readonly OutlineEntry[];
+}): Promise<StoredOutline | undefined> {
+  const lines = opts.entries.map(formatOutlineEntry);
+  const path = await storeBytes({
+    workspaceRoot: opts.workspaceRoot,
+    sessionId: opts.sessionId,
+    storedName: opts.storedName,
+    bytes: Buffer.from(`${lines.join("\n")}\n`, "utf8"),
+  });
+  if (path === null) return undefined;
+  return { path, lines, total: opts.entries.length };
+}
 /**
  * Copy one file into the session's attachment directory and build its record
  * block.
@@ -405,6 +494,9 @@ export async function ingestAttachment(opts: {
    *  the name the user saw; the main process only has a temp path in some
    *  drag-and-drop flows). */
   readonly displayName?: string;
+  /** Session interaction language — decides the page-marker lines a PDF's
+   *  text is opened with (2026-08-23). Default zh. */
+  readonly lang?: PageMarkerLang;
 }): Promise<IngestedAttachment> {
   const displayName = opts.displayName ?? basename(opts.sourcePath);
 
@@ -449,6 +541,7 @@ export async function ingestAttachment(opts: {
       bytes,
       workspaceRoot: opts.workspaceRoot,
       sessionId: opts.sessionId,
+      lang: opts.lang ?? "zh",
     });
   }
 
@@ -548,6 +641,8 @@ function buildBlock(a: {
   head?: { text: string; clipped: boolean };
   format?: DocumentFormat;
   pages?: number;
+  pageMarker?: string;
+  outline?: StoredOutline;
 }): SystemBlock {
   const parts = [`附件 ${a.displayName}`];
   // A document is named as such up front, so the `.pdf.txt` path further
@@ -561,32 +656,59 @@ function buildBlock(a: {
     parts.push(
       reasonFor(a.unreadable, { format: a.format, relPath: a.relPath }),
     );
-    if (a.relPath !== null) parts.push(a.relPath);
   } else {
     if (a.format !== undefined) parts.push("已提取文本");
     parts.push(`${formatCount(a.lines)} 行`, `${formatCount(a.chars)} 字`);
-    if (a.relPath !== null) parts.push(a.relPath);
+  }
+  // The outline count sits before the path in both states: for an over-cap
+  // document it is the one thing the row can say about what is inside.
+  if (a.outline !== undefined && a.relPath !== null) {
+    parts.push(`目录 ${a.outline.total} 条`);
+  }
+  if (a.relPath !== null) parts.push(a.relPath);
+
+  // Detail: the head (when one was taken) then the outline preview (when the
+  // document has one) — both prompt-visible while the attachment is fresh,
+  // both dropped when the block folds (ADR 0033 §1 / §6g). An over-cap
+  // document has no head and still gets the outline.
+  const sections: string[] = [];
+  const evidence: NonNullable<SystemBlock["evidence"]>[number][] = [];
+  if (a.head !== undefined && a.relPath !== null) {
+    sections.push(
+      `↳ 附件 ${a.displayName}\n${a.head.text}${
+        a.head.clipped ? "\n（仅开头部分，正文更长）" : ""
+      }`,
+    );
+    evidence.push({
+      kind: "attachment",
+      name: a.displayName,
+      path: a.relPath,
+      text: a.head.text,
+      clipped: a.head.clipped,
+    });
+  }
+  if (a.outline !== undefined && a.relPath !== null) {
+    const preview = outlinePreview(a.outline.lines);
+    const shown =
+      preview.length < a.outline.total ? `（前 ${preview.length} 条）` : "";
+    sections.push(
+      `↳ 目录 ${a.outline.total} 条${shown}\n${preview.join("\n")}`,
+    );
+    evidence.push({
+      kind: "outline",
+      name: a.displayName,
+      path: a.outline.path,
+      items: preview,
+      total: a.outline.total,
+    });
   }
 
   const block: SystemBlock = {
     kind: "system",
     label: "系统",
     body: parts.join(" · "),
-    ...(a.head !== undefined && a.relPath !== null
-      ? {
-          evidenceDetail: `↳ 附件 ${a.displayName}\n${a.head.text}${
-            a.head.clipped ? "\n（仅开头部分，正文更长）" : ""
-          }`,
-          evidence: [
-            {
-              kind: "attachment" as const,
-              name: a.displayName,
-              path: a.relPath,
-              text: a.head.text,
-              clipped: a.head.clipped,
-            },
-          ],
-        }
+    ...(sections.length > 0
+      ? { evidenceDetail: sections.join("\n"), evidence }
       : {}),
     digest: {
       kind: "attachment",
@@ -597,6 +719,12 @@ function buildBlock(a: {
       ...(a.format !== undefined ? { format: a.format } : {}),
       ...(a.pages !== undefined ? { pages: a.pages } : {}),
       ...(a.unreadable !== undefined ? { unreadable: a.unreadable } : {}),
+      ...(a.pageMarker !== undefined && a.relPath !== null
+        ? { pageMarker: a.pageMarker }
+        : {}),
+      ...(a.outline !== undefined && a.relPath !== null
+        ? { outline: { path: a.outline.path, entries: a.outline.total } }
+        : {}),
     },
   };
 

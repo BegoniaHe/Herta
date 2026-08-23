@@ -107,11 +107,28 @@ export function isUnusableBlock(text: string): boolean {
  *       hint's register. Both reached the user's screen verbatim. Drop the
  *       trailing pair; the answer is what precedes it.
  *
+ *   The trailing case is narrower than the leading one ON PURPOSE. The
+ *   first cut stripped any trailing pair, and the same day a speech that
+ *   ended in a list of quoted lines committed as `…没拿行号顶页码：` — the
+ *   list was gone. `〔…〕` is reserved in the HARNESS's prose, but Chinese
+ *   typography uses it for citation marks (`〔1〕`, `〔行 7902〕`), which is
+ *   exactly what a speech citing a document ends with. So a trailing pair
+ *   is stripped only when its content reads as a directive (只准/不得/
+ *   不写/无命令/… — the register of both observed leaks); a citation-shaped
+ *   pair stays. A leading pair keeps the original rule: content never
+ *   starts with a bare citation.
+ *
  * Runs BEFORE the usability check, which is what makes the nested case work:
  * `〔{需要说的话}〕` unwraps to `{需要说的话}`, which `isPlaceholderOnly`
  * then catches, so it takes the slot ladder instead of committing. Stripping
  * never rescues junk — it just stops the wrapper from hiding it.
  */
+/** The register of a self-directive: prohibitions and stage directions the
+ *  hints are written in. A citation (`〔1〕`, `〔行 7902〕`, `〔第101篇〕`)
+ *  carries none of these. Both languages, since the EN hints echo too. */
+const TRAILING_DIRECTIVE =
+  /只准|不得|不许|不要|不写|禁止|无命令|到这里|这句之后|接下来|只说|停[。，]|\b(?:stop|do not|don't|only say|next:)\b/i;
+
 export function stripHintScaffolding(text: string): string {
   // Fast path: the overwhelming majority of generations carry no bracket at
   // all and must come back byte-identical.
@@ -126,10 +143,11 @@ export function stripHintScaffolding(text: string): string {
     if (rest.trim().length === 0) break; // whole-wrap — handled just below
     out = rest;
   }
-  // Trailing self-directives that FOLLOW real content, same bound.
+  // Trailing self-directives that FOLLOW real content, same bound — and
+  // only when the bracket's content is directive-shaped (see above).
   for (let i = 0; i < 3; i += 1) {
-    const m = /\s*〔[^〔〕]*〕\s*$/.exec(out);
-    if (m === null) break;
+    const m = /\s*〔([^〔〕]*)〕\s*$/.exec(out);
+    if (m === null || !TRAILING_DIRECTIVE.test(m[1] ?? "")) break;
     const rest = out.slice(0, m.index);
     if (rest.trim().length === 0) break; // whole-wrap — handled just below
     out = rest;

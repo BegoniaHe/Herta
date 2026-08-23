@@ -265,6 +265,8 @@ export const zh = {
   "activity.attachment.format.docx": "Word 文档",
   "activity.attachment.pages": "页",
   "activity.attachment.extracted": "已提取文本",
+  /** The document's own outline, stored beside the text (2026-08-23). */
+  "activity.attachment.outline": "目录 {n} 条",
   "activity.attachment.remove": "移除这个附件",
   "activity.attachment.removeFailed": "没能移除这个附件。",
   "activity.plan.more": "还有 {n} 项",
@@ -283,6 +285,9 @@ export const zh = {
   "evidence.attachment": "附件",
   /** Noted under a head excerpt so neither reader takes it for the whole file. */
   "evidence.attachment.clipped": "（仅开头部分，正文更长）",
+  /** The outline pane (2026-08-23): `↳ 目录 N 条（前 M 条）` + one line per entry. */
+  "evidence.outline": "目录 {n} 条",
+  "evidence.outline.shown": "（前 {n} 条）",
   /** The search-hit pane (2026-08-17): `↳ 匹配 /pattern/:` + one line per hit. */
   "evidence.matches": "匹配",
   "evidence.matches.omitted": "（另有 {n} 处未列出）",

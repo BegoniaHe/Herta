@@ -57,6 +57,12 @@ export const COMPACTION_TEXT = {
      *  scaffolding, same register as the meta-think anchors; it expires so an
      *  old attachment does not carry a standing nudge forever. */
     attachmentRereadHint: "（正文仍在磁盘上，需要时可派板砖重读）",
+    /** Appended to a folded attachment citation whose document carries an
+     *  outline sidecar (2026-08-23): the preview is gone with the detail, but
+     *  the table of contents is the one thing worth knowing still exists —
+     *  it is how a later dispatch jumps to a chapter instead of re-reading. */
+    attachmentOutline: (entries: number, path: string) =>
+      `目录 ${entries} 条在 ${path}`,
     /** Second line under the newest FOLDED done-marker (E2E 2026-08-11):
      *  patch previews are prompt-skipped after their turn, so a follow-up
      *  question about "which lines changed" found nothing to quote and got
@@ -87,6 +93,8 @@ export const COMPACTION_TEXT = {
     },
     attachmentRereadHint:
       "(the full text is still on disk — send 板砖 to re-read it if needed)",
+    attachmentOutline: (entries: number, path: string) =>
+      `outline of ${entries} entries at ${path}`,
     diffRereadHint:
       "(the diff is no longer in view — have 板砖 re-read it via git diff before quoting details)",
     noOutput: "(板砖 produced nothing)",

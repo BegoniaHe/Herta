@@ -292,6 +292,24 @@ export type SystemBlockDigest =
         | "removed"
         | "encrypted"
         | "unsupported";
+      /** The exact page-marker line shape the stored text carries, with `N`
+       *  for the number (`── 第 N 页 ──` / `── page N ──`; `pageMarkerShape`
+       *  in core). PDF only, 2026-08-23: the ingest opens every page with
+       *  that line so a page is a greppable, citable location rather than an
+       *  estimate. Recorded here — not re-derived from the session language
+       *  — so 板砖's citation quotes the shape the FILE has. Absent for
+       *  Word/text attachments and on records persisted before it existed. */
+      readonly pageMarker?: string;
+      /** A deterministic outline stored beside the text (2026-08-23): PDF
+       *  bookmarks (`getOutline`) or Word heading styles, one line per entry
+       *  with the page (PDF) and the line it starts at. Absent when the
+       *  document carries none — Chrome-printed PDFs, plain letters — so its
+       *  presence is itself a fact about the file, never a guess. */
+      readonly outline?: {
+        /** Workspace-relative sidecar path (`…pdf.outline.txt`). */
+        readonly path: string;
+        readonly entries: number;
+      };
     }
   | {
       /** A search_text result (2026-08-17). Same lifecycle split as `excerpt`:
@@ -408,6 +426,20 @@ export type EvidenceSection =
        *  Rendered as a note so neither reader mistakes the head for the whole
        *  document. */
       readonly clipped: boolean;
+    }
+  | {
+      /** An attached document's outline (`↳ 目录`), 2026-08-23 — the first
+       *  entries of the sidecar the ingest wrote from the PDF's bookmarks or
+       *  the Word heading styles, verbatim. Bounded like the head; `total`
+       *  says how many the sidecar holds so a preview never reads as the
+       *  whole table of contents. Rides `evidenceDetail`'s lifecycle: in
+       *  front of Herta while the attachment is fresh, a citation after. */
+      readonly kind: "outline";
+      readonly name: string;
+      /** The sidecar's workspace-relative path. */
+      readonly path: string;
+      readonly items: readonly string[];
+      readonly total: number;
     }
   | {
       /** The done-marker's conclusions (`↳ 结论:`) — the backend's own cited

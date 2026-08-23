@@ -124,6 +124,35 @@ describe("digestSystemBlock — 差分协处理器 entries", () => {
     expect(digestSystemBlock(block)).toBe("（板砖无产出）");
   });
 
+  it("an attachment digest keeps the outline sidecar by citation (2026-08-23), in both languages", () => {
+    const block: SystemBlock = {
+      kind: "system",
+      label: "系统",
+      body: "附件 book.pdf · PDF · 516 页 · 正文过长，未取正文 · 目录 124 条 · .herta/attachments/s1/book-ab12cd34.pdf.txt",
+      digest: {
+        kind: "attachment",
+        name: "book.pdf",
+        path: ".herta/attachments/s1/book-ab12cd34.pdf.txt",
+        lines: 14603,
+        chars: 318437,
+        format: "pdf",
+        pages: 516,
+        unreadable: "too_large",
+        pageMarker: "── 第 N 页 ──",
+        outline: {
+          path: ".herta/attachments/s1/book-ab12cd34.pdf.outline.txt",
+          entries: 124,
+        },
+      },
+    };
+    expect(digestSystemBlock(block)).toBe(
+      "Attachment book.pdf (.herta/attachments/s1/book-ab12cd34.pdf.txt) · 文件过大，未取正文 · 目录 124 条在 .herta/attachments/s1/book-ab12cd34.pdf.outline.txt",
+    );
+    expect(digestSystemBlock(block, "en")).toBe(
+      "Attachment book.pdf (.herta/attachments/s1/book-ab12cd34.pdf.txt) · file too large, no body taken · outline of 124 entries at .herta/attachments/s1/book-ab12cd34.pdf.outline.txt",
+    );
+  });
+
   it("digests a role:noop-marker block to （板砖无产出）", () => {
     const block: SystemBlock = {
       kind: "system",

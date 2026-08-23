@@ -146,6 +146,11 @@ export {
   composeMarkerSummary,
   type MarkerSummaryLabels,
 } from "./text/marker-summary.js";
+export {
+  type PageMarkerLang,
+  pageMarkerLine,
+  pageMarkerShape,
+} from "./text/page-marker.js";
 export { stripDisplayUnsafe } from "./text-sanitize.js";
 export { renderTodoState, TodoStore } from "./todo-store.js";
 export type { ToolRegistry } from "./tool-registry.js";

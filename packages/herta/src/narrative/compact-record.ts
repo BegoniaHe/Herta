@@ -191,7 +191,13 @@ function renderStructuredDigest(
         d.unreadable === undefined
           ? COMPACTION_TEXT[lang].excerptElided
           : COMPACTION_TEXT[lang].attachmentUnreadable[d.unreadable];
-      return `Attachment ${d.name} (${d.path}) · ${tail}`;
+      // The outline sidecar survives the fold by citation (2026-08-23) —
+      // path included, for the same reason the document's path is kept.
+      const outline =
+        d.outline !== undefined
+          ? ` · ${COMPACTION_TEXT[lang].attachmentOutline(d.outline.entries, d.outline.path)}`
+          : "";
+      return `Attachment ${d.name} (${d.path}) · ${tail}${outline}`;
     }
     case "text":
       return fallbackDigest(d.text);

@@ -15,9 +15,23 @@ import { strToU8, zipSync } from "fflate";
  * strings, so the empty user password fails validation and pdfjs raises
  * `PasswordException` before it needs to decrypt anything.
  */
+/** A bookmark for `makePdf`'s `bookmarks` option: title, 1-based target
+ *  page, optional children. `named` routes the dest through the catalog's
+ *  `/Dests` name tree instead of an explicit array — the other shape real
+ *  producers emit. `page: 0` leaves the bookmark with no dest at all. */
+export interface PdfBookmark {
+  readonly title: string;
+  readonly page: number;
+  readonly named?: boolean;
+  readonly items?: readonly PdfBookmark[];
+}
+
 export function makePdf(
   pages: ReadonlyArray<readonly string[]>,
-  opts: { readonly encrypt?: boolean } = {},
+  opts: {
+    readonly encrypt?: boolean;
+    readonly bookmarks?: readonly PdfBookmark[];
+  } = {},
 ): Buffer {
   const objs: string[] = [];
   const add = (body: string): number => {
@@ -50,7 +64,65 @@ export function makePdf(
     );
     kids.push(`${page} 0 R`);
   }
-  objs[catalog - 1] = `<< /Type /Catalog /Pages ${pagesObj} 0 R >>`;
+  // Outline tree (2026-08-23): a doubly linked sibling list per level, the
+  // spec's shape. Named dests collect into a flat `/Dests` dictionary on the
+  // catalog (the pre-1.2 form pdfjs resolves through getDestination).
+  const namedDests: string[] = [];
+  let outlinesRef = "";
+  if (opts.bookmarks !== undefined && opts.bookmarks.length > 0) {
+    const outlines = add("");
+    const link = (
+      items: readonly PdfBookmark[],
+      parent: number,
+    ): { first: number; last: number; count: number } => {
+      const nums = items.map(() => add(""));
+      let count = nums.length;
+      items.forEach((b, i) => {
+        const num = nums[i] as number;
+        const target = kids[b.page - 1];
+        let dest = "";
+        if (target !== undefined) {
+          if (b.named === true) {
+            const name = `bm${num}`;
+            namedDests.push(`/${name} [${target} /Fit]`);
+            dest = ` /Dest (${name})`;
+          } else {
+            dest = ` /Dest [${target} /XYZ null null null]`;
+          }
+        }
+        const children =
+          b.items !== undefined && b.items.length > 0
+            ? link(b.items, num)
+            : undefined;
+        if (children !== undefined) count += children.count;
+        const prev = i > 0 ? ` /Prev ${nums[i - 1]} 0 R` : "";
+        const next = i < nums.length - 1 ? ` /Next ${nums[i + 1]} 0 R` : "";
+        const kidsPart =
+          children !== undefined
+            ? ` /First ${children.first} 0 R /Last ${children.last} 0 R /Count ${children.count}`
+            : "";
+        const title = b.title
+          .replace(/\\/g, "\\\\")
+          .replace(/\(/g, "\\(")
+          .replace(/\)/g, "\\)");
+        objs[num - 1] =
+          `<< /Title (${title}) /Parent ${parent} 0 R${prev}${next}${dest}${kidsPart} >>`;
+      });
+      return {
+        first: nums[0] as number,
+        last: nums[nums.length - 1] as number,
+        count,
+      };
+    };
+    const top = link(opts.bookmarks, outlines);
+    objs[outlines - 1] =
+      `<< /Type /Outlines /First ${top.first} 0 R /Last ${top.last} 0 R /Count ${top.count} >>`;
+    outlinesRef = ` /Outlines ${outlines} 0 R`;
+  }
+  const destsRef =
+    namedDests.length > 0 ? ` /Dests << ${namedDests.join(" ")} >>` : "";
+  objs[catalog - 1] =
+    `<< /Type /Catalog /Pages ${pagesObj} 0 R${outlinesRef}${destsRef} >>`;
   objs[pagesObj - 1] =
     `<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${kids.length} >>`;
   let encryptRef = "";
@@ -99,6 +171,21 @@ export function docxParagraphs(paragraphs: readonly string[]): string {
         `<w:p><w:r><w:t xml:space="preserve">${escapeXml(p)}</w:t></w:r></w:p>`,
     )
     .join("");
+}
+
+/** One heading paragraph: `style` is the `w:pStyle` id (`Heading1`, or the
+ *  bare `1` Chinese Word writes), `outlineLvl` an explicit 0-based level. */
+export function docxHeading(
+  text: string,
+  opts: { readonly style?: string; readonly outlineLvl?: number } = {},
+): string {
+  const style =
+    opts.style !== undefined ? `<w:pStyle w:val="${opts.style}"/>` : "";
+  const lvl =
+    opts.outlineLvl !== undefined
+      ? `<w:outlineLvl w:val="${opts.outlineLvl}"/>`
+      : "";
+  return `<w:p><w:pPr>${style}${lvl}</w:pPr><w:r><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p>`;
 }
 
 /** A zip that is NOT a Word package (no `word/document.xml`) — the shape of a

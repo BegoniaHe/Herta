@@ -1,17 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
   extractDocumentText,
+  MAX_OUTLINE_DEPTH,
+  MAX_OUTLINE_ENTRIES,
   MAX_PDF_PAGES,
   sniffDocumentFormat,
   textOfWordprocessingXml,
+  walkWordprocessingXml,
 } from "./document-text.js";
 import {
+  docxHeading,
   docxParagraphs,
   makeDocx,
   makeNonWordZip,
   makeOleBytes,
   makePdf,
+  type PdfBookmark,
 } from "./testing/document-fixtures.js";
+
+/** The zh page marker (the default), for the PDF expectations. */
+const pg = (n: number): string => `── 第 ${n} 页 ──`;
 
 describe("sniffDocumentFormat — extension AND magic (ADR 0038 §2)", () => {
   it(".pdf with the %PDF- header is pdf", () => {
@@ -94,24 +102,84 @@ describe("extractDocumentText — pdf", () => {
     }
     expect(canvasResolvable).toBe(false);
     const r = await extractDocumentText("pdf", makePdf([["still works"]]));
-    expect(r).toEqual({ ok: true, text: "still works", pages: 1 });
+    expect(r).toEqual({ ok: true, text: `${pg(1)}\nstill works`, pages: 1 });
   });
 
-  it("extracts text with line breaks and a page count", async () => {
+  it("extracts text with line breaks and a page count, every page opened by its marker line (2026-08-23)", async () => {
     const r = await extractDocumentText(
       "pdf",
       makePdf([["Hello (world)", "Second line"], ["Page two"]]),
     );
     expect(r).toEqual({
       ok: true,
-      text: "Hello (world)\nSecond line\n\nPage two",
+      text: `${pg(1)}\nHello (world)\nSecond line\n\n${pg(2)}\nPage two`,
       pages: 2,
     });
+    // The marker is localized by the session language and lives in core
+    // (pageMarkerLine), so the three readers of the shape agree.
+    const en = await extractDocumentText("pdf", makePdf([["x"], ["y"]]), {
+      lang: "en",
+    });
+    expect(en.ok && en.text).toBe("── page 1 ──\nx\n\n── page 2 ──\ny");
   });
 
-  it("a page with no text content is `empty` — the scanned-PDF case ADR 0033 §5 warned about", async () => {
+  it("a page with no text content is `empty` — the scanned-PDF case ADR 0033 §5 warned about; the markers alone do not make it a text file", async () => {
     const r = await extractDocumentText("pdf", makePdf([[], []]));
     expect(r).toEqual({ ok: false, reason: "empty", pages: 2 });
+  });
+
+  it("a PDF's bookmarks become the outline: page + that page's marker line, nested by depth, named and explicit dests alike", async () => {
+    const r = await extractDocumentText(
+      "pdf",
+      makePdf([["one"], ["two", "more"], ["three"]], {
+        bookmarks: [
+          { title: "Chapter 1", page: 1 },
+          {
+            title: "Chapter 2",
+            page: 2,
+            named: true,
+            items: [{ title: "  Section  2.1 ", page: 3 }],
+          },
+          { title: "No dest", page: 0 },
+        ],
+      }),
+    );
+    if (!r.ok) throw new Error(r.reason);
+    // Page 1's marker is line 1; page 2 starts after "one" + blank = line 4;
+    // page 3 after "two","more" + blank = line 8.
+    expect(r.outline).toEqual([
+      { level: 1, title: "Chapter 1", page: 1, line: 1 },
+      { level: 1, title: "Chapter 2", page: 2, line: 4 },
+      { level: 2, title: "Section 2.1", page: 3, line: 8 },
+      { level: 1, title: "No dest", line: 1 },
+    ]);
+    const lines = r.text.split("\n");
+    expect(lines[0]).toBe(pg(1));
+    expect(lines[3]).toBe(pg(2));
+    expect(lines[7]).toBe(pg(3));
+  });
+
+  it("a PDF without bookmarks carries no outline at all — absence is a fact, not an empty list", async () => {
+    const r = await extractDocumentText("pdf", makePdf([["plain"]]));
+    expect(r.ok && "outline" in r).toBe(false);
+  });
+
+  it("the outline is bounded in entries and depth", async () => {
+    const deep = (d: number): PdfBookmark =>
+      d > MAX_OUTLINE_DEPTH + 2
+        ? { title: `d${d}`, page: 1 }
+        : { title: `d${d}`, page: 1, items: [deep(d + 1)] };
+    const many = Array.from({ length: MAX_OUTLINE_ENTRIES + 5 }, (_, i) => ({
+      title: `e${i}`,
+      page: 1,
+    }));
+    const r = await extractDocumentText(
+      "pdf",
+      makePdf([["p"]], { bookmarks: [deep(1), ...many] }),
+    );
+    if (!r.ok || r.outline === undefined) throw new Error("no outline");
+    expect(Math.max(...r.outline.map((e) => e.level))).toBe(MAX_OUTLINE_DEPTH);
+    expect(r.outline.length).toBe(MAX_OUTLINE_ENTRIES);
   });
 
   it("a password-protected file is `encrypted`, not a generic parse error", async () => {
@@ -150,7 +218,7 @@ describe("extractDocumentText — pdf", () => {
 
   it("Latin-1 text through WinAnsi decodes to the right characters", async () => {
     const r = await extractDocumentText("pdf", makePdf([["caf\xe9 na\xefve"]]));
-    expect(r).toEqual({ ok: true, text: "café naïve", pages: 1 });
+    expect(r).toEqual({ ok: true, text: `${pg(1)}\ncafé naïve`, pages: 1 });
   });
 });
 
@@ -164,6 +232,48 @@ describe("extractDocumentText — docx", () => {
       ok: true,
       text: 'Hello\n第二段 & <more>\nquoted "x"',
     });
+  });
+
+  it("heading styles become the outline with the paragraph's line (2026-08-23): English ids, Chinese Word's bare numbers, Title, and an explicit outlineLvl", async () => {
+    const body =
+      docxHeading("Intro", { style: "Heading1" }) +
+      docxParagraphs(["body one", "body two"]) +
+      docxHeading("第二章", { style: "2" }) +
+      docxHeading("Doc Title", { style: "Title" }) +
+      // Body style with an explicit outline level wins over the style name.
+      docxHeading("Forced", { style: "Normal", outlineLvl: 2 }) +
+      // Not headings: TOC entries, a heading character style, body text.
+      docxHeading("toc line", { style: "TOC1" }) +
+      docxParagraphs(["plain"]);
+    const r = await extractDocumentText("docx", makeDocx(body));
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.text.split("\n")).toEqual([
+      "Intro",
+      "body one",
+      "body two",
+      "第二章",
+      "Doc Title",
+      "Forced",
+      "toc line",
+      "plain",
+    ]);
+    expect(r.outline).toEqual([
+      { level: 1, title: "Intro", line: 1 },
+      { level: 2, title: "第二章", line: 4 },
+      { level: 1, title: "Doc Title", line: 5 },
+      { level: 3, title: "Forced", line: 6 },
+    ]);
+  });
+
+  it("a Word file without headings carries no outline; a break inside a paragraph still counts as a line", () => {
+    const plain = walkWordprocessingXml(docxParagraphs(["a", "b"]));
+    expect(plain.outline).toEqual([]);
+    const xml =
+      "<w:p><w:r><w:t>a</w:t><w:br/><w:t>b</w:t></w:r></w:p>" +
+      docxHeading("H", { style: "Heading1" });
+    expect(walkWordprocessingXml(xml).outline).toEqual([
+      { level: 1, title: "H", line: 3 },
+    ]);
   });
 
   it("an empty document is `empty`", async () => {

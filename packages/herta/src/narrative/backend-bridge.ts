@@ -103,6 +103,14 @@ function sanitizeDigest(digest: SystemBlockDigest): SystemBlockDigest {
         ...digest,
         name: cleanBody(digest.name),
         path: cleanBody(digest.path),
+        ...(digest.outline === undefined
+          ? {}
+          : {
+              outline: {
+                ...digest.outline,
+                path: cleanBody(digest.outline.path),
+              },
+            }),
       };
     case "skip":
       return digest;
@@ -146,6 +154,15 @@ function sanitizeSection(s: EvidenceSection): EvidenceSection {
         name: cleanBody(s.name),
         path: cleanBody(s.path),
         text: cleanBody(s.text),
+      };
+    case "outline":
+      // The document's own headings — user-supplied text like the head
+      // above, and the same forgery surface.
+      return {
+        ...s,
+        name: cleanBody(s.name),
+        path: cleanBody(s.path),
+        items: s.items.map(cleanBody),
       };
     case "error":
       return { ...s, message: cleanBody(s.message) };
@@ -1507,6 +1524,8 @@ function attachmentTaskLine(
     unreadable?: string;
     format?: "pdf" | "docx";
     pages?: number;
+    pageMarker?: string;
+    outline?: { path: string; entries: number };
   },
   lang: PromptLang,
 ): string {
@@ -1572,9 +1591,25 @@ function attachmentTaskLine(
         : en
           ? " Read it with your file tools if the task needs it."
           : "任务需要时用文件工具自行读取。";
+    // The navigation aids (2026-08-23): the exact page-marker shape the FILE
+    // carries (from the digest, not the session language), and the outline
+    // sidecar with its column legend. Both absent for records from before
+    // they existed, so an old citation still reads as it did.
+    const markerNote =
+      d.pageMarker !== undefined
+        ? en
+          ? ` Each page of the text begins with a line of the form \`${d.pageMarker}\`, so \`grep -n\` for that prefix is a page→line map and a cite of that line is a page cite.`
+          : ` 正文每页以「${d.pageMarker}」一行起始：按该前缀 \`grep -n\` 即得页码→行号表，引用该行即引用页码。`
+        : "";
+    const outlineNote =
+      d.outline !== undefined
+        ? en
+          ? ` Its outline (${d.outline.entries} entries — the document's own bookmarks/headings, one per line as \`title (p.<page> · L<line>)\`, nested by indent) is at ${d.outline.path}; read it first to jump to the part the task needs.`
+          : ` 文档自带目录（${d.outline.entries} 条，来自书签/标题样式，每行形如「标题 (p.页 · L行)」，缩进表层级）存于 ${d.outline.path}——先读目录，再跳到任务需要的部分。`
+        : "";
     return en
-      ? `[attachment] The Trailblazer provided a document: ${d.name}${docNote}. The harness extracted its text to ${where} — that path IS the document, as plain text; there is no separate ${d.format} file.${noHead}`
-      : `〔附件〕开拓者提供了文档：${d.name}${docNote}。框架已将其正文提取为纯文本，存于 ${where}——该路径就是这份文档的文本版，没有另外的 ${d.format === "pdf" ? "PDF" : "docx"} 文件。${noHead}`;
+      ? `[attachment] The Trailblazer provided a document: ${d.name}${docNote}. The harness extracted its text to ${where} — that path IS the document, as plain text; there is no separate ${d.format} file.${noHead}${markerNote}${outlineNote}`
+      : `〔附件〕开拓者提供了文档：${d.name}${docNote}。框架已将其正文提取为纯文本，存于 ${where}——该路径就是这份文档的文本版，没有另外的 ${d.format === "pdf" ? "PDF" : "docx"} 文件。${noHead}${markerNote}${outlineNote}`;
   }
   if (d.unreadable !== undefined) {
     return en

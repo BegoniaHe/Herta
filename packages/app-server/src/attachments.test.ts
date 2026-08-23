@@ -20,9 +20,11 @@ import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENT_CHARS,
   MAX_ATTACHMENT_STORE_BYTES,
+  OUTLINE_PREVIEW_ENTRIES,
   safeStoredName,
 } from "./attachments.js";
 import {
+  docxHeading,
   docxParagraphs,
   makeDocx,
   makeNonWordZip,
@@ -273,9 +275,10 @@ describe("document attachments — PDF / Word (ADR 0038)", () => {
     expect(r.relPath).toMatch(
       /^\.herta\/attachments\/s1\/report-[0-9a-f]{8}\.pdf\.txt$/,
     );
-    // The stored file is the extracted text — readable by every tool as-is.
+    // The stored file is the extracted text — readable by every tool as-is —
+    // with every page opened by its marker line (2026-08-23).
     expect(readFileSync(join(ws, ...r.relPath.split("/")), "utf8")).toBe(
-      "Findings\nLine two\n\nPage two",
+      "── 第 1 页 ──\nFindings\nLine two\n\n── 第 2 页 ──\nPage two",
     );
     // The body names it as a PDF with its page count BEFORE the .txt path, and
     // says the text was extracted; the head rides evidenceDetail as always.
@@ -289,8 +292,14 @@ describe("document attachments — PDF / Word (ADR 0038)", () => {
       path: r.relPath,
       format: "pdf",
       pages: 2,
-      lines: 4,
+      lines: 6,
+      // The exact marker shape the FILE carries, so 板砖's citation quotes
+      // the truth even if the session language ever differs.
+      pageMarker: "── 第 N 页 ──",
     });
+    // No bookmarks → no outline: neither a sidecar nor a digest field.
+    expect(r.block.digest).not.toHaveProperty("outline");
+    expect(r.block.body).not.toContain("目录");
     // …and it is reachable through the ADR 0033 carve-out like any attachment.
     const safe = await resolveSafePath(ws, r.relPath, {
       allowAttachmentPaths: true,
@@ -311,6 +320,132 @@ describe("document attachments — PDF / Word (ADR 0038)", () => {
     expect(r.block.body).not.toContain("页"); // page count is PDF-only
     expect(r.block.digest).toMatchObject({ format: "docx" });
     expect(r.block.digest).not.toHaveProperty("pages");
+    // Page markers are PDF-only too: a Word file has no pages to mark.
+    expect(r.block.digest).not.toHaveProperty("pageMarker");
+  });
+
+  it("the page markers follow the session language (ADR 0016), and the digest records the shape used", async () => {
+    const r = await ingestAttachment({
+      sourcePath: seed("en.pdf", makePdf([["one"], ["two"]])),
+      workspaceRoot: ws,
+      sessionId: "s1",
+      lang: "en",
+    });
+    expect(readFileSync(join(ws, ...r.relPath.split("/")), "utf8")).toBe(
+      "── page 1 ──\none\n\n── page 2 ──\ntwo",
+    );
+    expect(r.block.digest).toMatchObject({ pageMarker: "── page N ──" });
+  });
+
+  it("a PDF's bookmarks are stored as an outline sidecar beside the text, cited in the body, the digest and the detail (2026-08-23)", async () => {
+    const r = await ingest(
+      seed(
+        "book.pdf",
+        makePdf([["p1 text"], ["p2 text"], ["p3 text"]], {
+          bookmarks: [
+            { title: "Chapter 1", page: 1 },
+            {
+              title: "Chapter 2",
+              page: 2,
+              items: [{ title: "Section 2.1", page: 3 }],
+            },
+          ],
+        }),
+      ),
+    );
+    expect(r.unreadable).toBeUndefined();
+    const outline =
+      r.block.digest?.kind === "attachment"
+        ? r.block.digest.outline
+        : undefined;
+    expect(outline).toEqual({
+      path: r.relPath.replace(/\.txt$/, ".outline.txt"),
+      entries: 3,
+    });
+    // The sidecar: one line per entry, indented by depth, page + marker line.
+    // Page 2's marker is line 4 (marker, text, blank), page 3's is line 7.
+    expect(
+      readFileSync(join(ws, ...(outline?.path ?? "").split("/")), "utf8"),
+    ).toBe(
+      "Chapter 1 (p.1 · L1)\nChapter 2 (p.2 · L4)\n  Section 2.1 (p.3 · L7)\n",
+    );
+    // Exactly two files in the session dir: the text and its outline.
+    expect(readdirSync(join(ws, ".herta", "attachments", "s1")).sort()).toEqual(
+      [r.relPath, outline?.path ?? ""].map((p) => p.split("/").pop()).sort(),
+    );
+    // Body, detail and evidence carry it; the head still comes first.
+    expect(r.block.body).toContain("· 目录 3 条 ·");
+    expect(r.block.evidenceDetail).toMatch(
+      /^↳ 附件 book\.pdf\n[\s\S]*\n↳ 目录 3 条\nChapter 1 \(p\.1 · L1\)\nChapter 2 \(p\.2 · L4\)\n {2}Section 2\.1 \(p\.3 · L7\)$/,
+    );
+    expect(r.block.evidence?.map((s) => s.kind)).toEqual([
+      "attachment",
+      "outline",
+    ]);
+    expect(r.block.evidence?.[1]).toMatchObject({
+      kind: "outline",
+      name: "book.pdf",
+      path: outline?.path,
+      total: 3,
+    });
+    // And the sidecar is reachable through the same carve-out as the text.
+    const safe = await resolveSafePath(ws, outline?.path ?? "", {
+      allowAttachmentPaths: true,
+    });
+    expect(safe.ok).toBe(true);
+  });
+
+  it("the outline preview in the record is bounded and says so; the sidecar holds the whole thing", async () => {
+    const bookmarks = Array.from(
+      { length: OUTLINE_PREVIEW_ENTRIES + 20 },
+      (_, i) => ({
+        title: `Heading ${i + 1}`,
+        page: 1,
+      }),
+    );
+    const r = await ingest(
+      seed("long-toc.pdf", makePdf([["x"]], { bookmarks })),
+    );
+    const outline =
+      r.block.digest?.kind === "attachment"
+        ? r.block.digest.outline
+        : undefined;
+    expect(outline?.entries).toBe(OUTLINE_PREVIEW_ENTRIES + 20);
+    expect(r.block.evidenceDetail).toContain(
+      `↳ 目录 ${OUTLINE_PREVIEW_ENTRIES + 20} 条（前 ${OUTLINE_PREVIEW_ENTRIES} 条）`,
+    );
+    const section = r.block.evidence?.find((s) => s.kind === "outline");
+    expect(section?.kind === "outline" && section.items.length).toBe(
+      OUTLINE_PREVIEW_ENTRIES,
+    );
+    const stored = readFileSync(
+      join(ws, ...(outline?.path ?? "").split("/")),
+      "utf8",
+    );
+    expect(stored.trim().split("\n")).toHaveLength(
+      OUTLINE_PREVIEW_ENTRIES + 20,
+    );
+  });
+
+  it("Word headings become the outline with their line numbers", async () => {
+    const r = await ingest(
+      seed(
+        "spec.docx",
+        makeDocx(
+          docxHeading("总则", { style: "1" }) +
+            docxParagraphs(["正文一", "正文二"]) +
+            docxHeading("验收标准", { style: "Heading2" }),
+        ),
+      ),
+    );
+    const outline =
+      r.block.digest?.kind === "attachment"
+        ? r.block.digest.outline
+        : undefined;
+    expect(outline?.entries).toBe(2);
+    expect(
+      readFileSync(join(ws, ...(outline?.path ?? "").split("/")), "utf8"),
+    ).toBe("总则 (L1)\n  验收标准 (L4)\n");
   });
 
   it("the stored name hashes the ORIGINAL bytes, so re-attaching is idempotent and the .pdf.txt has no binary sibling", async () => {
@@ -385,6 +520,38 @@ describe("document attachments — PDF / Word (ADR 0038)", () => {
     const stored = readFileSync(join(ws, ...r.relPath.split("/")), "utf8");
     expect(stored.length).toBeGreaterThan(MAX_ATTACHMENT_CHARS);
     expect(stored.split("\n").filter((l) => l === line)).toHaveLength(4000);
+    expect(
+      stored.split("\n").filter((l) => l.startsWith("── 第 ")),
+    ).toHaveLength(80);
+  });
+
+  it("an over-cap document with bookmarks still puts its outline in front of Herta — no head, but not a blank citation", async () => {
+    const line = "y".repeat(60);
+    const pages = Array.from({ length: 80 }, () =>
+      Array.from({ length: 50 }, () => line),
+    );
+    const r = await ingest(
+      seed(
+        "long-toc.pdf",
+        makePdf(pages, {
+          bookmarks: [
+            { title: "Part I", page: 1 },
+            { title: "Part II", page: 41 },
+          ],
+        }),
+      ),
+    );
+    expect(r.unreadable).toBe("too_large");
+    expect(r.block.body).toContain("正文过长，未取正文 · 目录 2 条 ·");
+    // Page 41's marker: 40 pages × (marker + 50 lines + blank) = 2080 → line 2081.
+    expect(r.block.evidenceDetail).toBe(
+      "↳ 目录 2 条\nPart I (p.1 · L1)\nPart II (p.41 · L2081)",
+    );
+    expect(r.block.evidence?.map((s) => s.kind)).toEqual(["outline"]);
+    expect(r.block.digest).toMatchObject({
+      unreadable: "too_large",
+      outline: { entries: 2 },
+    });
   });
 
   it("the source-byte excerpt cap does NOT apply to documents — a large PDF with little text still gets its head", async () => {

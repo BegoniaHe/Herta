@@ -1006,6 +1006,7 @@ export class SessionImpl implements Session {
           sourcePath,
           workspaceRoot: this.wsHolder.current,
           sessionId: this.sessionId,
+          lang: this.lang,
         }),
       });
     }
@@ -1074,13 +1075,24 @@ export class SessionImpl implements Session {
         ? stored.path
         : null;
     if (relPath === null) return { ok: false, reason: "not_found" };
-    try {
-      await rm(join(this.wsHolder.current, ...relPath.split("/")), {
-        force: true,
-      });
-    } catch {
-      // Best-effort: a file already gone (manual delete, workspace switched)
-      // must not block the record from recording the withdrawal.
+    // The outline sidecar (2026-08-23) goes with the text, under the same
+    // prefix check — it is the document's own table of contents, and a
+    // withdrawn document must not leave its chapter titles behind.
+    const sidecar =
+      stored?.kind === "attachment" &&
+      stored.outline !== undefined &&
+      stored.outline.path.startsWith(prefix)
+        ? stored.outline.path
+        : null;
+    for (const rel of sidecar === null ? [relPath] : [relPath, sidecar]) {
+      try {
+        await rm(join(this.wsHolder.current, ...rel.split("/")), {
+          force: true,
+        });
+      } catch {
+        // Best-effort: a file already gone (manual delete, workspace
+        // switched) must not block the record from recording the withdrawal.
+      }
     }
 
     // Guard re-check on the far side of the await — the same hole attachFiles
@@ -1100,10 +1112,13 @@ export class SessionImpl implements Session {
       // for a document the user just took back would be the opposite of what
       // they asked for.
       const { evidenceDetail: _d, evidence: _e, ...rest } = block;
+      // The outline citation goes too: its sidecar was just unlinked, and a
+      // digest pointing at it would be a path to nothing.
+      const { outline: _o, ...digest } = d;
       this.driver.replaceBlockAt(index, {
         ...rest,
         body: `附件 ${d.name} · 已移除`,
-        digest: { ...d, lines: 0, chars: 0, unreadable: "removed" },
+        digest: { ...digest, lines: 0, chars: 0, unreadable: "removed" },
       });
     }
 

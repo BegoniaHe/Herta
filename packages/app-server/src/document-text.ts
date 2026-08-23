@@ -1,4 +1,5 @@
 import { extname } from "node:path";
+import { type PageMarkerLang, pageMarkerLine } from "@herta/core";
 import { strFromU8, unzipSync } from "fflate";
 
 /**
@@ -29,12 +30,32 @@ export type DocumentSniff =
   | { readonly kind: "unsupported" }
   | { readonly kind: "none" };
 
+/**
+ * One entry of a document's own outline (2026-08-23): a PDF bookmark or a
+ * Word heading. `line` is where it starts in the EXTRACTED text — for a PDF
+ * that is the page marker's line (the bookmark points at a page, not a line),
+ * for Word the heading paragraph's own line — so 板砖 can `sed -n` straight to
+ * it. Deterministic: read from the file's structure, never inferred from its
+ * prose, so an absent outline is a fact about the document.
+ */
+export interface OutlineEntry {
+  /** 1-based nesting depth. */
+  readonly level: number;
+  readonly title: string;
+  /** PDF only; 1-based. */
+  readonly page?: number;
+  /** 1-based line in the extracted text. */
+  readonly line: number;
+}
+
 export type ExtractedDocument =
   | {
       readonly ok: true;
       readonly text: string;
       /** PDF only. */
       readonly pages?: number;
+      /** Present only when the document carries one (see OutlineEntry). */
+      readonly outline?: readonly OutlineEntry[];
     }
   | {
       readonly ok: false;
@@ -55,6 +76,14 @@ export type ExtractedDocument =
  * the edge, not the use.
  */
 export const MAX_PDF_PAGES = 1000;
+
+/** Outline ceiling, entries and depth. A textbook's bookmarks run to a few
+ *  hundred; past this the sidecar stops being a map and becomes a second
+ *  document. Depth 4 keeps chapter/section/subsection/item; deeper bookmark
+ *  trees are index-grade detail 板砖 finds faster by grep. */
+export const MAX_OUTLINE_ENTRIES = 400;
+export const MAX_OUTLINE_DEPTH = 4;
+const MAX_OUTLINE_TITLE_CHARS = 120;
 
 /** Legacy binary Office and the sibling OOXML formats this slice does not
  *  decode. Listed by extension so a `.doc` gets `暂不支持` rather than
@@ -113,10 +142,17 @@ export function sniffDocumentFormat(
   return { kind: "none" };
 }
 
+export interface ExtractOptions {
+  readonly maxPages?: number;
+  /** Language of the page-marker lines a PDF's text is opened with (the
+   *  session's interaction language, ADR 0016). Default zh. */
+  readonly lang?: PageMarkerLang;
+}
+
 export async function extractDocumentText(
   format: DocumentFormat,
   bytes: Uint8Array,
-  opts: { readonly maxPages?: number } = {},
+  opts: ExtractOptions = {},
 ): Promise<ExtractedDocument> {
   return format === "pdf"
     ? extractPdfText(bytes, opts)
@@ -186,9 +222,10 @@ function installRenderingGlobalStubs(): void {
 
 async function extractPdfText(
   bytes: Uint8Array,
-  opts: { readonly maxPages?: number },
+  opts: ExtractOptions,
 ): Promise<ExtractedDocument> {
   const maxPages = opts.maxPages ?? MAX_PDF_PAGES;
+  const lang = opts.lang ?? "zh";
   // The engine load sits INSIDE the try: the ingest's contract is never to
   // throw (a throw is a file that vanished without a trace), so a failed
   // import must come back as a stated failure like any other.
@@ -209,19 +246,41 @@ async function extractPdfText(
     const doc = await task.promise;
     const pages = doc.numPages;
     if (pages > maxPages) return { ok: false, reason: "too_many_pages", pages };
+    // Every page opens with its marker line (2026-08-23); pages are separated
+    // by a blank line as before, so paragraph spacing reads the same and the
+    // marker sits in its own visual gap. `pageLine[p]` is the marker's
+    // 1-based line — the bookmark outline below cites it.
     const out: string[] = [];
+    const pageLine: number[] = [];
+    let nextLine = 1;
+    let body = 0;
     for (let p = 1; p <= pages; p += 1) {
       const page = await doc.getPage(p);
       try {
         const content = await page.getTextContent();
-        out.push(linesOfTextContent(content.items));
+        const pageText = linesOfTextContent(content.items);
+        body += pageText.trim().length;
+        pageLine[p] = nextLine;
+        const chunk = `${pageMarkerLine(p, lang)}\n${pageText}`;
+        out.push(chunk);
+        // The chunk's own lines plus the blank separator before the next.
+        nextLine += chunk.split("\n").length + 1;
       } finally {
         page.cleanup();
       }
     }
+    // "Empty" is judged on the document's OWN text: a scan carries no text
+    // and the markers alone must not turn it into a stored file of headings
+    // over nothing (ADR 0038 §4's scanned-PDF rule).
+    if (body === 0) return { ok: false, reason: "empty", pages };
     const text = out.join("\n\n");
-    if (text.trim().length === 0) return { ok: false, reason: "empty", pages };
-    return { ok: true, text, pages };
+    const outline = await pdfOutline(doc, pageLine);
+    return {
+      ok: true,
+      text,
+      pages,
+      ...(outline.length > 0 ? { outline } : {}),
+    };
   } catch (err) {
     // pdfjs raises a distinct exception for a password-protected file; the
     // rest (InvalidPDF, malformed xref, truncated stream) is "could not parse".
@@ -234,6 +293,85 @@ async function extractPdfText(
     // the parsed object graph for the process lifetime.
     if (task !== undefined) await task.destroy().catch(() => undefined);
   }
+}
+
+type PdfDocument = Awaited<ReturnType<PdfJs["getDocument"]>["promise"]>;
+
+/**
+ * The PDF's own bookmark tree, flattened to OutlineEntry[] with each node
+ * resolved to the page it points at and that page's marker line.
+ *
+ * Resolution follows the spec's two dest shapes: a NAMED destination (string
+ * → `getDestination`) or an explicit array whose first element is a page
+ * reference (→ `getPageIndex`) or, in some producers' files, a bare page
+ * index. A node whose dest cannot be resolved keeps its title with no page —
+ * the heading still exists, and a reader can grep it — and any pdfjs error
+ * in the walk yields the entries gathered so far rather than failing the
+ * extraction: the text is the attachment, the outline is a convenience.
+ */
+async function pdfOutline(
+  doc: PdfDocument,
+  pageLine: readonly number[],
+): Promise<OutlineEntry[]> {
+  const entries: OutlineEntry[] = [];
+  try {
+    const tree = await doc.getOutline();
+    if (tree === null || tree === undefined) return entries;
+    type Node = { title?: unknown; dest?: unknown; items?: unknown };
+    const visit = async (nodes: unknown, level: number): Promise<void> => {
+      if (!Array.isArray(nodes) || level > MAX_OUTLINE_DEPTH) return;
+      for (const raw of nodes) {
+        if (entries.length >= MAX_OUTLINE_ENTRIES) return;
+        const node = raw as Node;
+        const title = cleanOutlineTitle(node.title);
+        if (title.length === 0) continue;
+        const page = await pageOfDest(doc, node.dest);
+        const line = page !== undefined ? pageLine[page] : undefined;
+        entries.push({
+          level,
+          title,
+          ...(page !== undefined ? { page } : {}),
+          // A bookmark without a resolvable page still names a heading; cite
+          // the document's first line so the entry stays well-formed.
+          line: line ?? 1,
+        });
+        await visit(node.items, level + 1);
+      }
+    };
+    await visit(tree, 1);
+  } catch {
+    // Outline is best-effort by contract (see above).
+  }
+  return entries;
+}
+
+async function pageOfDest(
+  doc: PdfDocument,
+  dest: unknown,
+): Promise<number | undefined> {
+  try {
+    const explicit =
+      typeof dest === "string" ? await doc.getDestination(dest) : dest;
+    if (!Array.isArray(explicit) || explicit.length === 0) return undefined;
+    const first: unknown = explicit[0];
+    if (typeof first === "number" && Number.isInteger(first) && first >= 0) {
+      return first + 1;
+    }
+    if (typeof first === "object" && first !== null) {
+      const index = await doc.getPageIndex(
+        first as { num: number; gen: number },
+      );
+      return Number.isInteger(index) && index >= 0 ? index + 1 : undefined;
+    }
+  } catch {
+    // Unresolvable dest — see pdfOutline.
+  }
+  return undefined;
+}
+
+function cleanOutlineTitle(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  return raw.replace(/\s+/g, " ").trim().slice(0, MAX_OUTLINE_TITLE_CHARS);
 }
 
 /** pdfjs hands back a flat item list per page; `hasEOL` marks where the
@@ -294,29 +432,77 @@ function extractDocxText(bytes: Uint8Array): ExtractedDocument {
   } catch {
     return { ok: false, reason: "parse_error" };
   }
-  const text = textOfWordprocessingXml(xml);
+  const { text, outline } = walkWordprocessingXml(xml);
   if (text.trim().length === 0) return { ok: false, reason: "empty" };
-  return { ok: true, text };
+  return { ok: true, text, ...(outline.length > 0 ? { outline } : {}) };
 }
 
 /** Structural tags the walk reacts to. `w:t` opens/closes a text run; the
  *  others are pure emitters. Matched by name followed by whitespace, `/` or
- *  `>` so `w:tab` cannot match `w:table`… (nor `w:t` match `w:tab`). */
+ *  `>` so `w:tab` cannot match `w:table`… (nor `w:t` match `w:tab`).
+ *  `w:pStyle` / `w:outlineLvl` (2026-08-23) are the paragraph's heading
+ *  evidence, read for the outline and emitting nothing. */
 const WORD_TAG =
-  /<(\/?)(w:t|w:tab|w:br|w:cr|w:p|w:tc|w:noBreakHyphen)(?=[\s/>])([^>]*)>/g;
+  /<(\/?)(w:t|w:tab|w:br|w:cr|w:p|w:tc|w:noBreakHyphen|w:pStyle|w:outlineLvl)(?=[\s/>])([^>]*)>/g;
+
+const W_VAL = /\bw:val="([^"]*)"/;
+
+/**
+ * Heading level from a paragraph's style id, or undefined for body text.
+ * Word (English) names them `Heading1`…`Heading9`; Chinese Word's built-in
+ * 标题 N styles carry the bare id `1`…`9`; LibreOffice and Google Docs export
+ * the English ids. Anchored, so `TOC1` / `Heading1Char` never match. An
+ * explicit `w:outlineLvl` on the paragraph (0-based) wins over the style name
+ * when both are present — it is what Word's own navigation pane reads.
+ */
+function headingLevelOf(
+  style: string | undefined,
+  outlineLvl: number | undefined,
+): number | undefined {
+  if (outlineLvl !== undefined && outlineLvl >= 0 && outlineLvl < 9) {
+    return outlineLvl + 1;
+  }
+  if (style === undefined) return undefined;
+  const m = /^(?:heading|h)?\s*([1-9])$/i.exec(style.trim());
+  if (m !== null) return Number(m[1]);
+  if (/^title$/i.test(style.trim())) return 1;
+  return undefined;
+}
 
 export function textOfWordprocessingXml(xml: string): string {
+  return walkWordprocessingXml(xml).text;
+}
+
+export function walkWordprocessingXml(xml: string): {
+  text: string;
+  outline: OutlineEntry[];
+} {
   const paragraphs: string[] = [];
+  const outline: OutlineEntry[] = [];
   let para = "";
   let inText = false;
   let textStart = 0;
+  // Heading evidence for the paragraph being walked, and the 1-based line
+  // the NEXT paragraph will start at (paragraphs join with "\n"; a paragraph
+  // spans one line plus one per explicit break inside it).
+  let paraStyle: string | undefined;
+  let paraOutlineLvl: number | undefined;
+  let nextLine = 1;
   WORD_TAG.lastIndex = 0;
   let m: RegExpExecArray | null = WORD_TAG.exec(xml);
   while (m !== null) {
     const closing = m[1] === "/";
     const tag = m[2];
     const selfClosing = (m[3] ?? "").trimEnd().endsWith("/");
-    if (tag === "w:t") {
+    if (tag === "w:pStyle" || tag === "w:outlineLvl") {
+      if (!closing) {
+        const val = W_VAL.exec(m[3] ?? "")?.[1];
+        if (tag === "w:pStyle") paraStyle = val;
+        else if (val !== undefined && /^\d+$/.test(val)) {
+          paraOutlineLvl = Number(val);
+        }
+      }
+    } else if (tag === "w:t") {
       if (closing) {
         if (inText) {
           para += decodeXmlEntities(xml.slice(textStart, m.index));
@@ -333,15 +519,27 @@ export function textOfWordprocessingXml(xml: string): string {
       else if (tag === "w:br" || tag === "w:cr") para += "\n";
       else if (tag === "w:noBreakHyphen") para += "-";
     } else if (tag === "w:p") {
+      const level = headingLevelOf(paraStyle, paraOutlineLvl);
+      const title = cleanOutlineTitle(para.split("\n")[0]);
+      if (
+        level !== undefined &&
+        title.length > 0 &&
+        outline.length < MAX_OUTLINE_ENTRIES
+      ) {
+        outline.push({ level, title, line: nextLine });
+      }
       paragraphs.push(para);
+      nextLine += 1 + (para.match(/\n/g)?.length ?? 0);
       para = "";
+      paraStyle = undefined;
+      paraOutlineLvl = undefined;
     } else if (tag === "w:tc") {
       para += "\t";
     }
     m = WORD_TAG.exec(xml);
   }
   if (para.length > 0) paragraphs.push(para);
-  return paragraphs.join("\n");
+  return { text: paragraphs.join("\n"), outline };
 }
 
 /** The five XML entities plus numeric references — all that `w:t` content

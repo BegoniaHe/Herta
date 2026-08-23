@@ -1505,6 +1505,47 @@ describe("Session — attachFiles (ADR 0033)", () => {
     await cleanup();
   });
 
+  it("removeAttachment takes the outline sidecar with the text and drops its citation from the digest (2026-08-23)", async () => {
+    const { makePdf } = await import("./testing/document-fixtures.js");
+    const { session, backendWs, srcDir, cleanup } = await mkAttachSession();
+    writeFileSync(
+      join(srcDir, "book.pdf"),
+      makePdf([["one"], ["two"]], {
+        bookmarks: [
+          { title: "Chapter 1", page: 1 },
+          { title: "Chapter 2", page: 2 },
+        ],
+      }),
+    );
+    const a = await session.attachFiles([join(srcDir, "book.pdf")]);
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    const rel = a.files[0]?.path ?? "";
+    const block = session.record.find(
+      (b) => b.kind === "system" && b.digest?.kind === "attachment",
+    );
+    const digest = block?.kind === "system" ? block.digest : undefined;
+    const sidecar =
+      digest?.kind === "attachment" ? (digest.outline?.path ?? "") : "";
+    expect(sidecar).toMatch(/\.pdf\.outline\.txt$/);
+    expect(existsSync(join(backendWs, ...sidecar.split("/")))).toBe(true);
+
+    expect(await session.removeAttachment(rel)).toEqual({
+      ok: true,
+      removed: 1,
+    });
+    expect(existsSync(join(backendWs, ...rel.split("/")))).toBe(false);
+    expect(existsSync(join(backendWs, ...sidecar.split("/")))).toBe(false);
+    const after = session.record.find(
+      (b) => b.kind === "system" && b.digest?.kind === "attachment",
+    );
+    if (after?.kind !== "system") throw new Error("no attachment block");
+    expect(after.digest).toMatchObject({ unreadable: "removed" });
+    expect(after.digest).not.toHaveProperty("outline");
+    expect(JSON.stringify(session.record)).not.toContain("Chapter 2");
+    await cleanup();
+  });
+
   it("the removal survives a reload — it is on disk, not just in memory", async () => {
     const { session, cfg, srcDir, cleanup } = await mkAttachSession();
     writeFileSync(join(srcDir, "spec.md"), "# spec\nbody\n");

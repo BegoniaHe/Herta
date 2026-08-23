@@ -341,6 +341,7 @@ describe("stepDisplayBody — attachment rows, incl. PDF / Word (ADR 0038)", () 
     "activity.attachment.unreadable.encrypted": "文档已加密，未取正文",
     "activity.attachment.unreadable.unsupported": "暂不支持的文档格式",
     "activity.attachment.unreadable.readError": "读取失败",
+    "activity.attachment.outline": "目录 {n} 条",
   };
   const ta = (key: MessageKey): string => A[key] ?? `MISSING:${key}`;
   const att = (digest: Record<string, unknown>): SystemBlock =>
@@ -373,6 +374,41 @@ describe("stepDisplayBody — attachment rows, incl. PDF / Word (ADR 0038)", () 
         ta,
       ),
     ).toBe("附件 report.pdf · PDF · 12 页 · 已提取文本 · 340 行 · 18,000 字");
+  });
+
+  it("a document with an outline shows the entry count after the body counts — and after the reason for an over-cap one (2026-08-23)", () => {
+    const outline = {
+      path: ".herta/attachments/s/book-ab12cd34.pdf.outline.txt",
+      entries: 124,
+    };
+    expect(
+      stepDisplayBody(
+        att({
+          name: "book.pdf",
+          format: "pdf",
+          pages: 216,
+          lines: 5149,
+          chars: 116049,
+          pageMarker: "── 第 N 页 ──",
+          outline,
+        }),
+        ta,
+      ),
+    ).toBe(
+      "附件 book.pdf · PDF · 216 页 · 已提取文本 · 5,149 行 · 116,049 字 · 目录 124 条",
+    );
+    expect(
+      stepDisplayBody(
+        att({
+          name: "book.pdf",
+          format: "pdf",
+          pages: 516,
+          unreadable: "too_large",
+          outline,
+        }),
+        ta,
+      ),
+    ).toBe("附件 book.pdf · PDF · 516 页 · 正文过长，未取正文 · 目录 124 条");
   });
 
   it("a Word document has no page count", () => {
@@ -547,6 +583,50 @@ describe("stepDisplayDetail — the evidence pane localizes (2026-08-01)", () =>
         tEn,
       ),
     ).toBe("↳ error: mkdir EACCES");
+  });
+
+  it("localizes the outline section and keeps its preview note (2026-08-23)", () => {
+    const block: SystemBlock = {
+      kind: "system",
+      label: "系统",
+      body: "附件 book.pdf · …",
+      evidenceDetail:
+        "↳ 目录 124 条（前 2 条）\nChapter 1 (p.1 · L1)\n  Section 1.1 (p.2 · L4)",
+      evidence: [
+        {
+          kind: "outline",
+          name: "book.pdf",
+          path: ".herta/attachments/s/book-ab12cd34.pdf.outline.txt",
+          items: ["Chapter 1 (p.1 · L1)", "  Section 1.1 (p.2 · L4)"],
+          total: 124,
+        },
+      ],
+    };
+    const tOutline = (key: MessageKey): string =>
+      key === "evidence.outline"
+        ? "outline · {n} entries"
+        : key === "evidence.outline.shown"
+          ? "(first {n})"
+          : tEn(key);
+    expect(stepDisplayDetail(block, tOutline)).toBe(
+      "↳ outline · 124 entries (first 2)\nChapter 1 (p.1 · L1)\n  Section 1.1 (p.2 · L4)",
+    );
+    // A complete preview carries no "(first N)".
+    const whole: SystemBlock = {
+      ...block,
+      evidence: [
+        {
+          kind: "outline",
+          name: "book.pdf",
+          path: ".herta/attachments/s/book-ab12cd34.pdf.outline.txt",
+          items: ["Chapter 1 (p.1 · L1)", "  Section 1.1 (p.2 · L4)"],
+          total: 2,
+        },
+      ],
+    };
+    expect(stepDisplayDetail(whole, tOutline)).toBe(
+      "↳ outline · 2 entries\nChapter 1 (p.1 · L1)\n  Section 1.1 (p.2 · L4)",
+    );
   });
 
   it("falls back to the canonical string for records without sections", () => {

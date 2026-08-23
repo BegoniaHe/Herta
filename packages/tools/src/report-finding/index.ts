@@ -7,6 +7,7 @@ import type {
   ToolSchema,
 } from "@herta/core";
 import { MAX_FINDINGS } from "@herta/core";
+import { isDigestSidecar } from "../digest-document/index.js";
 import { formatInputIssues } from "../input-issues.js";
 import { resolveSafePath } from "../path-safety.js";
 import {
@@ -114,6 +115,15 @@ export function reportFindingTool(opts: ReportFindingToolOpts = {}): HertaTool {
           allowEvidenceDiscoveryPaths: true,
         });
         if (!safe.ok) return badCite(raw, safe.message);
+        // A digest sidecar (ADR 0043) is model-generated: a conclusion cited
+        // to it would rest on a summary, not on the document. The digest's
+        // own entries name the source ranges — cite those.
+        if (isDigestSidecar(safe.relative)) {
+          return badCite(
+            raw,
+            "a .digest.txt is a model-generated summary — cite the source lines its L<from>–L<to> entries point at, not the digest",
+          );
+        }
         let info: Awaited<ReturnType<typeof stat>>;
         try {
           info = await stat(safe.resolved);

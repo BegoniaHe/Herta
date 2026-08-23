@@ -4,6 +4,7 @@ import type {
   AgentEvent,
   AgentExecutionReport,
   CodingAgentRuntime,
+  DigestDocumentData,
   DoneMarkerSummary,
   EventBus,
   EvidenceSection,
@@ -112,6 +113,13 @@ function sanitizeDigest(digest: SystemBlockDigest): SystemBlockDigest {
               },
             }),
       };
+    case "digest":
+      // Two paths from the filesystem; counts and the flag are harness-made.
+      return {
+        ...digest,
+        source: cleanBody(digest.source),
+        path: cleanBody(digest.path),
+      };
     case "skip":
       return digest;
   }
@@ -163,6 +171,15 @@ function sanitizeSection(s: EvidenceSection): EvidenceSection {
         name: cleanBody(s.name),
         path: cleanBody(s.path),
         items: s.items.map(cleanBody),
+      };
+    case "digest":
+      // Model-authored text about a user document: both untrusted origins
+      // at once, so it rides the cleaner like everything else.
+      return {
+        ...s,
+        source: cleanBody(s.source),
+        path: cleanBody(s.path),
+        text: cleanBody(s.text),
       };
     case "error":
       return { ...s, message: cleanBody(s.message) };
@@ -384,6 +401,49 @@ function projectBackendEventUnsanitized(event: AgentEvent): SystemBlock | null {
           const data = event.result.data as SearchTextData | undefined;
           if (data === undefined || !Array.isArray(data.matches)) return null;
           return projectSearchResult(data);
+        }
+        // digest_document (ADR 0043): the overview rides the two-state lane
+        // like an excerpt — in front of Herta this turn, a citation after —
+        // and the row says what the sidecar is and how many chunks it holds.
+        // Labeled MODEL-GENERATED in the detail: it is the one evidence
+        // section in the record that a model wrote about the user's document.
+        if (event.tool === "digest_document") {
+          const data = event.result.data as DigestDocumentData | undefined;
+          if (
+            data === undefined ||
+            typeof data.digestPath !== "string" ||
+            typeof data.overview !== "string"
+          )
+            return null;
+          const overview = data.overview.trim();
+          return {
+            kind: "system",
+            label: "差分协处理器",
+            body: `↳ digest ${data.digestPath} · ${data.chunks} chunks${
+              data.cached ? " (cached)" : ""
+            }`,
+            digest: {
+              kind: "digest",
+              source: data.relPath,
+              path: data.digestPath,
+              chunks: data.chunks,
+              cached: data.cached,
+            },
+            ...(overview.length > 0
+              ? {
+                  evidenceDetail: `↳ 摘要 ${data.relPath}（模型生成，共 ${data.chunks} 段，分段摘要见 ${data.digestPath}）\n${overview}`,
+                  evidence: [
+                    {
+                      kind: "digest" as const,
+                      source: data.relPath,
+                      path: data.digestPath,
+                      chunks: data.chunks,
+                      text: overview,
+                    },
+                  ],
+                }
+              : {}),
+          };
         }
         // Success: run_command (incl. the background trio) surfaces a result
         // block — its output is otherwise invisible. The minimal contract's
@@ -640,6 +700,8 @@ function workflowLabel(
       return "Inspecting";
     case "memory_save":
       return "Saving memory";
+    case "digest_document":
+      return "Digesting";
     default:
       return null;
   }
@@ -1586,11 +1648,11 @@ function attachmentTaskLine(
     const noHead =
       d.unreadable !== undefined
         ? en
-          ? " The harness took no head excerpt from it (the text is long); the full text is on disk — search for headings or keywords to locate what the task needs, then read that range."
-          : "框架未取其开头（正文过长）；全文在磁盘上——先按标题或关键词检索定位，再分段读取需要的范围。"
+          ? " The harness took no head excerpt from it (the text is long); the full text is on disk — search for headings or keywords to locate what the task needs, then read that range. If the task needs the WHOLE document (a summary, an index, what it covers), call digest_document on the path once instead of reading it end to end."
+          : "框架未取其开头（正文过长）；全文在磁盘上——先按标题或关键词检索定位，再分段读取需要的范围。若任务需要整份文档的内容（总结、索引、它讲了什么），对该路径调用一次 digest_document，不要从头读到尾。"
         : en
-          ? " Read it with your file tools if the task needs it."
-          : "任务需要时用文件工具自行读取。";
+          ? " Read it with your file tools if the task needs it; for the whole document's content at once (a summary, an index), call digest_document on the path."
+          : "任务需要时用文件工具自行读取；若需要整份文档的内容（总结、索引），对该路径调用 digest_document。";
     // The navigation aids (2026-08-23): the exact page-marker shape the FILE
     // carries (from the digest, not the session language), and the outline
     // sidecar with its column legend. Both absent for records from before

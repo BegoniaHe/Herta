@@ -157,8 +157,26 @@ export type SystemBlockDigest =
         | "Searching"
         /** command_stop (2026-08-17; was `Running bg-N`, which read as a
          *  second launch — Herta reads these rows). */
-        | "Stopping";
+        | "Stopping"
+        /** digest_document (ADR 0043): a side-model pass over a whole
+         *  attached document — neither a read nor a run, and worth its own
+         *  word because it spends model tokens. */
+        | "Digesting";
       readonly arg: string;
+    }
+  | {
+      /** A `digest_document` result (ADR 0043). The overview rides
+       *  `evidenceDetail` (the two-state lane, like an excerpt); the digest
+       *  keeps the citation — which document, where the sidecar is, how
+       *  many chunks — so a later turn can send 板砖 back to the sidecar
+       *  rather than re-digest. `cached` says no model ran this time. */
+      readonly kind: "digest";
+      /** The attachment's stored text (source). */
+      readonly source: string;
+      /** The `.digest.txt` sidecar. */
+      readonly path: string;
+      readonly chunks: number;
+      readonly cached: boolean;
     }
   | {
       /** A recognized test run (run_command + detectTestRun). */
@@ -440,6 +458,17 @@ export type EvidenceSection =
       readonly path: string;
       readonly items: readonly string[];
       readonly total: number;
+    }
+  | {
+      /** A document digest's overview (`↳ 摘要`), ADR 0043 — MODEL-GENERATED,
+       *  unlike every other section here, and labeled so in the record: a
+       *  reader must not take it for the document. `source` names the text
+       *  it summarizes; `path` the sidecar holding the per-chunk entries. */
+      readonly kind: "digest";
+      readonly source: string;
+      readonly path: string;
+      readonly chunks: number;
+      readonly text: string;
     }
   | {
       /** The done-marker's conclusions (`↳ 结论:`) — the backend's own cited

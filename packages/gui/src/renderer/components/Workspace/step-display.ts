@@ -42,6 +42,7 @@ export const VERB_KEY: Record<string, MessageKey> = {
   "Saving memory": "activity.verb.savingMemory",
   Searching: "activity.verb.searching",
   Stopping: "activity.verb.stopping",
+  Digesting: "activity.verb.digesting",
 };
 
 /**
@@ -200,6 +201,12 @@ export function stepDisplayBody(
         d.format !== undefined ? [t("activity.attachment.extracted")] : [];
       return [head, ...extracted, lines, chars, ...outline].join(" · ");
     }
+    case "digest":
+      // "↳ digest <path> · 27 chunks (cached)" → localized chrome; the path is
+      // data (ADR 0043).
+      return `↳ ${t("activity.result.digest")} ${d.path} · ${d.chunks} ${t(
+        "activity.result.chunks",
+      )}${d.cached ? ` (${t("activity.result.cached")})` : ""}`;
     case "skip":
       // The patch-preview block (the only skip-digest producer): localize
       // its first-line label, keep the files + diff fence verbatim (the
@@ -270,6 +277,13 @@ export function stepDisplayDetail(
               : "";
           return `↳ ${t("evidence.outline").replace("{n}", String(s.total))}${shown}\n${s.items.join("\n")}`;
         }
+        case "digest":
+          // The "model-generated" label is part of the evidence (ADR 0043):
+          // without it a reader takes a flash précis for the document.
+          return `↳ ${t("evidence.digest")
+            .replace("{source}", s.source)
+            .replace("{n}", String(s.chunks))
+            .replace("{path}", s.path)}\n${s.text}`;
         case "matches": {
           // Same stance as the clipped note above: an omitted count is part
           // of the evidence, or the list reads as the whole result.

@@ -1530,12 +1530,17 @@ describe("Session — attachFiles (ADR 0033)", () => {
     expect(sidecar).toMatch(/\.pdf\.outline\.txt$/);
     expect(existsSync(join(backendWs, ...sidecar.split("/")))).toBe(true);
 
+    // A digest sidecar 板砖 built later (ADR 0043) goes with the text too.
+    const digestRel = rel.replace(/\.txt$/, ".digest.txt");
+    writeFileSync(join(backendWs, ...digestRel.split("/")), "# 文档摘要\n");
+
     expect(await session.removeAttachment(rel)).toEqual({
       ok: true,
       removed: 1,
     });
     expect(existsSync(join(backendWs, ...rel.split("/")))).toBe(false);
     expect(existsSync(join(backendWs, ...sidecar.split("/")))).toBe(false);
+    expect(existsSync(join(backendWs, ...digestRel.split("/")))).toBe(false);
     const after = session.record.find(
       (b) => b.kind === "system" && b.digest?.kind === "attachment",
     );

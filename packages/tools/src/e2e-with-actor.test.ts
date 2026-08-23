@@ -163,6 +163,9 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
       .sort();
     expect(readOnly).toEqual([
       "command_output",
+      // digest_document reads an attachment and writes only its own sidecar
+      // under .herta (ADR 0043) — nothing another read could observe change.
+      "digest_document",
       "git_diff",
       "git_status",
       "glob",
@@ -188,11 +191,12 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
     }
   });
 
-  it("registers all fifteen MVP tools via createMvpTools", () => {
+  it("registers all sixteen MVP tools via createMvpTools (fifteen + digest_document, ADR 0043)", () => {
     const tools = createMvpTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       "command_output",
       "command_stop",
+      "digest_document",
       "edit_file",
       "git_diff",
       "git_status",
@@ -209,14 +213,16 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
     ]);
   });
 
-  it("createMinimalTools (ADR 0040): four tools, and the record channels accept the shell's path spelling", async () => {
+  it("createMinimalTools (ADR 0040): the trained pair plus the record channels (and the digest tool, ADR 0043), and the record channels accept the shell's path spelling", async () => {
     ws = await mkTmpWorkspace({ "src/a.ts": "one\ntwo\nthree\n" });
     const tools = createMinimalTools({
       bashPath: "/nonexistent/bash",
       workspaceShellPath: () => ws.root,
+      digestModel: null,
     });
     expect(tools.map((t) => t.name).sort()).toEqual([
       "bash",
+      "digest_document",
       "report_finding",
       "show_excerpt",
       "str_replace_editor",

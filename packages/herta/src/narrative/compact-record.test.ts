@@ -153,6 +153,26 @@ describe("digestSystemBlock — 差分协处理器 entries", () => {
     );
   });
 
+  it("a digest result keeps the sidecar by citation once its overview is gone (ADR 0043)", () => {
+    const block: SystemBlock = {
+      kind: "system",
+      label: "差分协处理器",
+      body: "↳ digest .herta/attachments/s1/b.pdf.digest.txt · 27 chunks",
+      digest: {
+        kind: "digest",
+        source: ".herta/attachments/s1/b.pdf.txt",
+        path: ".herta/attachments/s1/b.pdf.digest.txt",
+        chunks: 27,
+        cached: false,
+      },
+      evidenceDetail: "↳ 摘要 …\nOVERVIEW-LINE",
+    };
+    expect(digestSystemBlock(block)).toBe(
+      "Digest .herta/attachments/s1/b.pdf.txt → .herta/attachments/s1/b.pdf.digest.txt · 27 chunks · 正文已略去",
+    );
+    expect(digestSystemBlock(block, "en")).toContain("body elided");
+  });
+
   it("digests a role:noop-marker block to （板砖无产出）", () => {
     const block: SystemBlock = {
       kind: "system",

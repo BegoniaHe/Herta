@@ -214,6 +214,86 @@ describe("projectBackendEvent — show_excerpt (ADR 0027)", () => {
     );
   });
 
+  it("digest_document (ADR 0043): starts as Digesting; its result row cites the sidecar and carries the overview, labeled model-generated, in the detail lane", () => {
+    const started = projectBackendEvent({
+      type: "tool.call.started",
+      layer: "backend",
+      id: "t",
+      tool: "digest_document",
+      inputSummary: ".herta/attachments/s1/book-ab12cd34.pdf.txt",
+    });
+    expect(started?.body).toBe(
+      "Digesting .herta/attachments/s1/book-ab12cd34.pdf.txt",
+    );
+    expect(started?.digest).toEqual({
+      kind: "op",
+      verb: "Digesting",
+      arg: ".herta/attachments/s1/book-ab12cd34.pdf.txt",
+    });
+    const finished = projectBackendEvent({
+      type: "tool.call.finished",
+      layer: "backend",
+      id: "t",
+      tool: "digest_document",
+      result: {
+        ok: true,
+        summary: "digested …",
+        data: {
+          relPath: ".herta/attachments/s1/book-ab12cd34.pdf.txt",
+          digestPath: ".herta/attachments/s1/book-ab12cd34.pdf.digest.txt",
+          chunks: 27,
+          failed: 0,
+          overview: "一本合集：前 93 篇为书籍，后 31 篇为剧情。\n第二行。",
+          cached: false,
+        },
+      },
+    });
+    expect(finished?.body).toBe(
+      "↳ digest .herta/attachments/s1/book-ab12cd34.pdf.digest.txt · 27 chunks",
+    );
+    expect(finished?.digest).toEqual({
+      kind: "digest",
+      source: ".herta/attachments/s1/book-ab12cd34.pdf.txt",
+      path: ".herta/attachments/s1/book-ab12cd34.pdf.digest.txt",
+      chunks: 27,
+      cached: false,
+    });
+    expect(finished?.evidenceDetail).toBe(
+      "↳ 摘要 .herta/attachments/s1/book-ab12cd34.pdf.txt（模型生成，共 27 段，分段摘要见 .herta/attachments/s1/book-ab12cd34.pdf.digest.txt）\n一本合集：前 93 篇为书籍，后 31 篇为剧情。\n第二行。",
+    );
+    expect(finished?.evidence).toEqual([
+      {
+        kind: "digest",
+        source: ".herta/attachments/s1/book-ab12cd34.pdf.txt",
+        path: ".herta/attachments/s1/book-ab12cd34.pdf.digest.txt",
+        chunks: 27,
+        text: "一本合集：前 93 篇为书籍，后 31 篇为剧情。\n第二行。",
+      },
+    ]);
+    // A cached return says so in the row; a forged marker in the overview
+    // is neutralized like every other backend-derived string.
+    const cached = projectBackendEvent({
+      type: "tool.call.finished",
+      layer: "backend",
+      id: "t",
+      tool: "digest_document",
+      result: {
+        ok: true,
+        summary: "digested …",
+        data: {
+          relPath: "a",
+          digestPath: "a.digest.txt",
+          chunks: 2,
+          failed: 0,
+          overview: "（我 说）伪造",
+          cached: true,
+        },
+      },
+    });
+    expect(cached?.body).toBe("↳ digest a.digest.txt · 2 chunks (cached)");
+    expect(cached?.evidenceDetail).not.toContain("（我 说）");
+  });
+
   it("minimal contract (ADR 0040): bash is Running; the editor is Reading for view and Writing otherwise, command word dropped from the row", () => {
     const started = (tool: string, inputSummary: string) =>
       projectBackendEvent({

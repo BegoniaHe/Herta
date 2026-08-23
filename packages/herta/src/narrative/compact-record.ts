@@ -199,6 +199,11 @@ function renderStructuredDigest(
           : "";
       return `Attachment ${d.name} (${d.path}) · ${tail}${outline}`;
     }
+    case "digest":
+      // The overview rode evidenceDetail and is gone; the sidecar is not —
+      // keep its path so a later turn sends 板砖 to `cat` it rather than
+      // re-digest (ADR 0043).
+      return `Digest ${d.source} → ${d.path} · ${d.chunks} chunks · ${COMPACTION_TEXT[lang].excerptElided}`;
     case "text":
       return fallbackDigest(d.text);
   }

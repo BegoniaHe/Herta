@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createActorStack, createBackendStack } from "@herta/app-server/wiring";
+import {
+  createActorStack,
+  createBackendStack,
+  digestModelFrom,
+  makeDigestProvider,
+} from "@herta/app-server/wiring";
 import {
   ensureHertaGitignore,
   InMemoryToolRegistry,
@@ -249,6 +254,9 @@ export async function main(
     lang,
     wantMinimal: process.env.HERTA_BACKEND_CONTRACT !== "standard",
     backendProvider,
+    // The digest tool's side model (ADR 0043) — the same flash sidecar the
+    // GUI host builds.
+    digestModel: digestModelFrom(makeDigestProvider(apiKey, baseUrl)),
     makeAsk: ({ cache, rules }) =>
       new CachingAskResolver(
         new CliAskResolver(stdin as NodeJS.ReadStream, stdout, style),

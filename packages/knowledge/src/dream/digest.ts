@@ -48,6 +48,11 @@ export function dreamRelevantSystemBody(b: SystemBlock): string | null {
  */
 export function dreamRelevantEvidenceDetail(b: SystemBlock): string | null {
   if (b.digest?.kind === "attachment") return null;
+  // A document digest's overview (ADR 0043) is the same document's contents
+  // one step removed — a model's précis of what the user handed over — and
+  // no more hers to keep than the head excerpt is. The row stays: she
+  // remembers having 板砖 digest the file.
+  if (b.digest?.kind === "digest") return null;
   return b.evidenceDetail ?? null;
 }
 

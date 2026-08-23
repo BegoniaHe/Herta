@@ -31,6 +31,9 @@ export function stepIcon(body: string): StepIconKey {
       return "run";
     case "Inspecting":
     case "Searching":
+    // A digest pass (ADR 0043) is the coprocessor looking through a whole
+    // document — the search glyph, not a read (it never shows the text).
+    case "Digesting":
       return "search";
     case "Saving":
       return "save";

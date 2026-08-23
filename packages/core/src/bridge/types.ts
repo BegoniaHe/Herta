@@ -123,6 +123,24 @@ export interface SearchTextData {
   truncated: boolean;
 }
 
+/**
+ * Result-data shape of the `digest_document` tool (ADR 0043), here for the
+ * same reason as the two above. The tool's own module re-exports it.
+ */
+export interface DigestDocumentData {
+  /** Workspace-relative source path (the attachment's stored text). */
+  relPath: string;
+  /** Workspace-relative `.digest.txt` sidecar path. */
+  digestPath: string;
+  chunks: number;
+  /** Chunks whose summary call failed (their entry says so). */
+  failed: number;
+  /** The reduce step's overview — bounded, for the record's detail lane. */
+  overview: string;
+  /** True when an existing sidecar was returned without any model call. */
+  cached: boolean;
+}
+
 export interface PermissionEventSummary {
   tool: string;
   /**

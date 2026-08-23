@@ -629,6 +629,55 @@ describe("stepDisplayDetail — the evidence pane localizes (2026-08-01)", () =>
     );
   });
 
+  it("a digest row and its overview pane localize, and the pane keeps the model-generated label (ADR 0043)", () => {
+    const block: SystemBlock = {
+      kind: "system",
+      label: "差分协处理器",
+      body: "↳ digest .herta/attachments/s/b-ab12cd34.pdf.digest.txt · 27 chunks (cached)",
+      digest: {
+        kind: "digest",
+        source: ".herta/attachments/s/b-ab12cd34.pdf.txt",
+        path: ".herta/attachments/s/b-ab12cd34.pdf.digest.txt",
+        chunks: 27,
+        cached: true,
+      },
+      evidenceDetail: "↳ 摘要 …\n总览一\n总览二",
+      evidence: [
+        {
+          kind: "digest",
+          source: ".herta/attachments/s/b-ab12cd34.pdf.txt",
+          path: ".herta/attachments/s/b-ab12cd34.pdf.digest.txt",
+          chunks: 27,
+          text: "总览一\n总览二",
+        },
+      ],
+    };
+    const tD = (key: MessageKey): string =>
+      key === "activity.result.digest"
+        ? "digest"
+        : key === "activity.result.chunks"
+          ? "chunks"
+          : key === "activity.result.cached"
+            ? "cached"
+            : key === "evidence.digest"
+              ? "digest of {source} (model-generated, {n} chunks — per-chunk entries in {path})"
+              : tEn(key);
+    expect(stepDisplayBody(block, tD)).toBe(
+      "↳ digest .herta/attachments/s/b-ab12cd34.pdf.digest.txt · 27 chunks (cached)",
+    );
+    expect(stepDisplayDetail(block, tD)).toBe(
+      "↳ digest of .herta/attachments/s/b-ab12cd34.pdf.txt (model-generated, 27 chunks — per-chunk entries in .herta/attachments/s/b-ab12cd34.pdf.digest.txt)\n总览一\n总览二",
+    );
+    // The op row's verb localizes through VERB_KEY like every other verb.
+    expect(
+      stepDisplayBody(
+        sys("Digesting x", { kind: "op", verb: "Digesting", arg: "x" }),
+        (key: MessageKey) =>
+          key === "activity.verb.digesting" ? "摘要" : tEn(key),
+      ),
+    ).toBe("摘要 x");
+  });
+
   it("falls back to the canonical string for records without sections", () => {
     // Every session persisted before `evidence` existed. The pane must keep
     // showing what it showed before rather than going blank.

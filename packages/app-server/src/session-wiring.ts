@@ -76,6 +76,7 @@ import {
 import {
   createMinimalTools,
   createMvpTools,
+  type DigestModel,
   findBash,
   PersistentShell,
   registerEditFileRule,
@@ -87,6 +88,53 @@ import {
 import type { AppServerConfig } from "./types.js";
 
 // ── Backend stack ───────────────────────────────────────────────────────────
+
+/**
+ * The digest tool's side model (ADR 0043): one chat call in, plain text out.
+ * Flash with thinking OFF — a chunk summary is extraction, not reasoning,
+ * and the reasoning chain would cost more tokens than the answer (the title
+ * provider's lesson: a reasoning model's maxTokens must cover the chain).
+ * `maxTokens` bounds a runaway summary; `temperature` low for stability
+ * across the parallel calls. Built from a ProviderAdapter so the chaos
+ * proxy / provider overrides see it like every other sidecar.
+ */
+export function digestModelFrom(provider: ProviderAdapter): DigestModel {
+  return async ({ system, user }, signal) => {
+    let out = "";
+    for await (const ev of provider.streamChat(
+      {
+        stableSystem: system,
+        repoInstructions: "",
+        memoryContext: "",
+        retrievedLore: "",
+        messages: [{ role: "user", text: user, ts: new Date().toISOString() }],
+        toolSchemas: [],
+      },
+      signal,
+    )) {
+      if (ev.type === "text-delta") out += ev.text;
+      else if (ev.type === "finish") {
+        if (ev.reason === "error") throw new Error("digest model error");
+        break;
+      }
+    }
+    return out;
+  };
+}
+
+export function makeDigestProvider(
+  apiKey: ApiKey,
+  baseUrl: { baseUrl?: string } = {},
+): ProviderAdapter {
+  return deepseekProvider({
+    apiKey,
+    model: "deepseek-v4-flash",
+    thinking: false,
+    maxTokens: 1024,
+    temperature: 0.2,
+    ...baseUrl,
+  });
+}
 
 export interface BackendStackOpts {
   /** The ONE mutable holder of the effective 板砖 workspace. Shared with the
@@ -101,6 +149,9 @@ export interface BackendStackOpts {
    *  `contract` / `bashPath` so the caller can warn where it sees fit. */
   readonly wantMinimal: boolean;
   readonly backendProvider: ProviderAdapter;
+  /** The digest tool's side model (ADR 0043); null mounts the tool as
+   *  `unavailable` (no key, tests). */
+  readonly digestModel: DigestModel | null;
   /** Builds the front-end's ask resolver once the cache and rule store it
    *  consults exist. The returned resolver is the permission engine's. */
   readonly makeAsk: (deps: {
@@ -164,10 +215,13 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
     for (const t of createMinimalTools({
       bashPath: bashPath as string,
       workspaceShellPath,
+      digestModel: opts.digestModel,
+      lang,
     }))
       backendTools.register(t);
   } else {
-    for (const t of createMvpTools()) backendTools.register(t);
+    for (const t of createMvpTools({ digestModel: opts.digestModel, lang }))
+      backendTools.register(t);
   }
 
   const backendBuilder = new BackendContextBuilder({

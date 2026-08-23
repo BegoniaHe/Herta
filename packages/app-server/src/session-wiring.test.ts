@@ -34,6 +34,7 @@ describe("createBackendStack", () => {
       lang: "zh",
       wantMinimal: false,
       backendProvider: new FakeProvider({ turns: [] }),
+      digestModel: null,
       makeAsk: ({ cache, rules }) => {
         seen = { cacheSize: cache.size(), rulesListed: rules.list().length };
         return noAsk;
@@ -48,6 +49,9 @@ describe("createBackendStack", () => {
     expect(names).toContain("edit_file");
     expect(names).toContain("run_command");
     expect(names).toContain("report_finding");
+    // Both contracts mount the digest tool (ADR 0043) — with a null model it
+    // answers `unavailable` instead of disappearing.
+    expect(names).toContain("digest_document");
     expect(names).not.toContain("bash");
     expect(names).not.toContain("str_replace_editor");
   });
@@ -63,6 +67,7 @@ describe("createBackendStack", () => {
       lang: "en",
       wantMinimal: true,
       backendProvider: new FakeProvider({ turns: [] }),
+      digestModel: null,
       makeAsk: () => noAsk,
     });
     expect(stack.contract).toBe("standard");

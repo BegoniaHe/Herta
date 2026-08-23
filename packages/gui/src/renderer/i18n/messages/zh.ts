@@ -224,6 +224,11 @@ export const zh = {
   "activity.verb.savingMemory": "保存记忆",
   "activity.verb.searching": "检索",
   "activity.verb.stopping": "停止",
+  /** digest_document (ADR 0043): a side-model pass over a whole document. */
+  "activity.verb.digesting": "摘要",
+  "activity.result.digest": "摘要",
+  "activity.result.chunks": "段",
+  "activity.result.cached": "已有",
   "activity.result.tests": "测试",
   "activity.result.failed": "失败",
   "activity.result.exit": "退出",
@@ -291,6 +296,8 @@ export const zh = {
   /** The search-hit pane (2026-08-17): `↳ 匹配 /pattern/:` + one line per hit. */
   "evidence.matches": "匹配",
   "evidence.matches.omitted": "（另有 {n} 处未列出）",
+  /** The digest overview pane (ADR 0043); "模型生成" is part of the evidence. */
+  "evidence.digest": "摘要 {source}（模型生成，共 {n} 段，分段摘要见 {path}）",
   /** The done-marker's conclusions section (ADR 0039). */
   "evidence.findings": "结论",
   /** A failed tool call's own suggestion (2026-08-17). */

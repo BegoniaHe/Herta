@@ -40,6 +40,7 @@ import {
   V2ActorDriver,
 } from "@herta/herta";
 import { type ApiKey, deepseekProvider } from "@herta/providers";
+import { digestSidecarFor } from "@herta/tools";
 import {
   attachmentDirFor,
   ingestAttachment,
@@ -59,7 +60,12 @@ import {
   synthesizeInitialTopic,
   topicAnchorText,
 } from "./session-topics.js";
-import { createActorStack, createBackendStack } from "./session-wiring.js";
+import {
+  createActorStack,
+  createBackendStack,
+  digestModelFrom,
+  makeDigestProvider,
+} from "./session-wiring.js";
 import type {
   ApprovalResult,
   AppServerConfig,
@@ -197,6 +203,9 @@ export interface SessionInternalDeps {
     readonly router?: ProviderAdapter;
     readonly supervisor?: ProviderAdapter;
     readonly title?: ProviderAdapter;
+    /** The digest tool's side model (ADR 0043). With `providerOverrides`
+     *  present and this absent, the tool mounts `unavailable`. */
+    readonly digest?: ProviderAdapter;
   };
   /** Skip the async buildStaticHertaPrefix disk scan. */
   readonly staticPrefixOverride?: StaticHertaPrefix;
@@ -1084,7 +1093,11 @@ export class SessionImpl implements Session {
       stored.outline.path.startsWith(prefix)
         ? stored.outline.path
         : null;
-    for (const rel of sidecar === null ? [relPath] : [relPath, sidecar]) {
+    // …and the digest sidecar (ADR 0043), if 板砖 ever built one: same
+    // directory, same prefix, derived from the text's own path.
+    const digest = digestSidecarFor(relPath);
+    const toRemove = [relPath, digest, ...(sidecar === null ? [] : [sidecar])];
+    for (const rel of toRemove) {
       try {
         await rm(join(this.wsHolder.current, ...rel.split("/")), {
           force: true,
@@ -1449,6 +1462,15 @@ export class SessionImpl implements Session {
       // made rather than as a record note.
       wantMinimal: config.backendContract === "minimal",
       backendProvider,
+      // The digest tool's side model (ADR 0043): flash, thinking off. A test
+      // override takes the place of the real provider; without one the tool
+      // mounts as `unavailable` rather than reaching the network under test.
+      digestModel:
+        deps.providerOverrides?.digest !== undefined
+          ? digestModelFrom(deps.providerOverrides.digest)
+          : deps.providerOverrides === undefined
+            ? digestModelFrom(makeDigestProvider(apiKey, baseUrl))
+            : null,
       makeAsk: ({ cache, rules }) => {
         overlayResolver = new OverlayAskResolver({
           cache,

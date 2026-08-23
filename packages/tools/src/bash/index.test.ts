@@ -188,6 +188,58 @@ d("bash tool (real bash)", () => {
     await ctx.bg.stopAll();
   });
 
+  it("the rule and the tool let a read-only command reach an ATTACHMENT (ADR 0033) and the harness evidence, and nothing else under .herta (large-document lab 2026-08-23)", async () => {
+    ws = await mkTmpWorkspace({
+      ".herta/attachments/sid/report-ab12cd34.pdf.txt":
+        "第1篇 · 甲\n正文甲\n第2篇 · 乙\n正文乙\n",
+      ".herta/logs/run-1.log": "exit 0\n",
+      ".herta/tool-results/t/c.json": "{}\n",
+      ".herta/keys/deepseek": "sk-secret",
+      ".herta/attachments/sid/id_rsa": "PRIVATE KEY",
+    });
+    const ctx = ctxFor(ws.root);
+    const engine = new RulePermissionEngine({
+      ask: { present: async () => "allow" },
+    });
+    registerBashRule(engine, { bashPath: BASH });
+    const doc = ".herta/attachments/sid/report-ab12cd34.pdf.txt";
+    // The whole reader toolkit a long document needs, allow-tier, no ask:
+    for (const cmd of [
+      `cat ${doc}`,
+      `sed -n '1,2p' ${doc}`,
+      `grep -n '^第[0-9]*篇' ${doc}`,
+      `wc -l ${doc}`,
+      `head -n 2 ${doc}`,
+      "cat .herta/logs/run-1.log",
+      "cat .herta/tool-results/t/c.json",
+    ]) {
+      expect((await engine.check(call(cmd), ctx)).kind, cmd).toBe("allow");
+    }
+    // …and the tool actually runs it (the execution-time backstop agrees).
+    const tool = bashTool({ bashPath: BASH as string });
+    const res = await tool.run(
+      call(`grep -n '^第' ${doc}`, "c2"),
+      ctx,
+      noopProgress,
+    );
+    expect(res.ok).toBe(true);
+    expect(res.modelText).toContain("1:第1篇 · 甲");
+    expect(res.modelText).toContain("3:第2篇 · 乙");
+    // The carve-out skips ONLY the structural `.herta` denial. The harness's
+    // own key dir is not a carve-out, so it stays a hard deny; a
+    // credential-shaped name planted inside the attachment dir is caught by
+    // the textual guard first (ask — the user sees the real target), and the
+    // realpath guard behind it would deny by basename regardless.
+    const keys = await engine.check(call("cat .herta/keys/deepseek"), ctx);
+    expect(keys.kind).toBe("deny");
+    const planted = await engine.check(
+      call("cat .herta/attachments/sid/id_rsa"),
+      ctx,
+    );
+    expect(planted.kind).not.toBe("allow");
+    await ctx.bg.stopAll();
+  });
+
   it("the rule previews a heredoc file write like a file write: diff + files on the ask, code command_ask_write, patch.preview on the bus", async () => {
     ws = await mkTmpWorkspace({ "notes.md": "one\n" });
     const ctx = ctxFor(ws.root);

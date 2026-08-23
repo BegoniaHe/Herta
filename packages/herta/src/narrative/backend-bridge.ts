@@ -1553,29 +1553,37 @@ function attachmentTaskLine(
       ? `[attachment] The Trailblazer tried to provide a file (${d.name}) but it could not be read. It is NOT on disk — do not look for it.`
       : `〔附件〕开拓者尝试提供文件（${d.name}），但读取失败，文件不在磁盘上——不要去找它。`;
   }
+  // The stored path is WORKSPACE-RELATIVE, and the line says so: in the
+  // large-document lab (2026-08-23) the actor re-spelled the citation as
+  // `~/.herta/attachments/…` in her dispatch and the backend spent four
+  // commands (one a `find /`) on a home directory that holds no such thing.
+  const where = en
+    ? `${d.path} (relative to the workspace root)`
+    : `${d.path}（相对工作区根目录）`;
   if (d.format !== undefined) {
     // Stored as extracted text. Say so, and say what "took no excerpt" means
-    // for a document — over the char cap, still readable/searchable in full.
+    // for a document — over the char cap, still readable/searchable in full,
+    // and long enough that locating first beats reading from the top.
     const noHead =
       d.unreadable !== undefined
         ? en
-          ? " The harness took no head excerpt from it (the text is long); the full text is on disk and you may still read or search it."
-          : "框架未取其开头（正文过长）；全文在磁盘上，仍可读取或检索。"
+          ? " The harness took no head excerpt from it (the text is long); the full text is on disk — search for headings or keywords to locate what the task needs, then read that range."
+          : "框架未取其开头（正文过长）；全文在磁盘上——先按标题或关键词检索定位，再分段读取需要的范围。"
         : en
           ? " Read it with your file tools if the task needs it."
           : "任务需要时用文件工具自行读取。";
     return en
-      ? `[attachment] The Trailblazer provided a document: ${d.name}${docNote}. The harness extracted its text to ${d.path} — that path IS the document, as plain text; there is no separate ${d.format} file.${noHead}`
-      : `〔附件〕开拓者提供了文档：${d.name}${docNote}。框架已将其正文提取为纯文本，存于 ${d.path}——该路径就是这份文档的文本版，没有另外的 ${d.format === "pdf" ? "PDF" : "docx"} 文件。${noHead}`;
+      ? `[attachment] The Trailblazer provided a document: ${d.name}${docNote}. The harness extracted its text to ${where} — that path IS the document, as plain text; there is no separate ${d.format} file.${noHead}`
+      : `〔附件〕开拓者提供了文档：${d.name}${docNote}。框架已将其正文提取为纯文本，存于 ${where}——该路径就是这份文档的文本版，没有另外的 ${d.format === "pdf" ? "PDF" : "docx"} 文件。${noHead}`;
   }
   if (d.unreadable !== undefined) {
     return en
-      ? `[attachment] The Trailblazer provided a file: ${d.name} — at ${d.path}. The harness took no excerpt from it (${d.unreadable}); it is on disk and you may still search it.`
-      : `〔附件〕开拓者提供了文件：${d.name}，位于 ${d.path}。框架未从中取正文（${d.unreadable}）；文件在磁盘上，仍可检索。`;
+      ? `[attachment] The Trailblazer provided a file: ${d.name} — at ${where}. The harness took no excerpt from it (${d.unreadable}); it is on disk and you may still search it.`
+      : `〔附件〕开拓者提供了文件：${d.name}，位于 ${where}。框架未从中取正文（${d.unreadable}）；文件在磁盘上，仍可检索。`;
   }
   return en
-    ? `[attachment] The Trailblazer provided a file: ${d.name} — at ${d.path}. Read it with your file tools if the task needs it.`
-    : `〔附件〕开拓者提供了文件：${d.name}，位于 ${d.path}。任务需要时用文件工具自行读取。`;
+    ? `[attachment] The Trailblazer provided a file: ${d.name} — at ${where}. Read it with your file tools if the task needs it.`
+    : `〔附件〕开拓者提供了文件：${d.name}，位于 ${where}。任务需要时用文件工具自行读取。`;
 }
 
 /** Why a document (ADR 0038) never reached disk, in words 板砖 can relay. */

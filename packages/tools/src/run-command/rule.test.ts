@@ -171,6 +171,39 @@ describe("run_command permission rule", () => {
     }
   });
 
+  it("lets a reader reach an attachment and the harness evidence, but not the rest of .herta (ADR 0033 carve-outs, 2026-08-23)", async () => {
+    ws = await mkTmpWorkspace({
+      ".herta/attachments/sid/spec-ab12cd34.docx.txt": "hi",
+      ".herta/logs/run.log": "exit 0",
+      ".herta/tool-results/t/c.json": "{}",
+      ".herta/memory/project.jsonl": "{}",
+    });
+    const engine = new RulePermissionEngine({ ask: new FakeAskResolver() });
+    registerRunCommandRule(engine);
+    for (const path of [
+      ".herta/attachments/sid/spec-ab12cd34.docx.txt",
+      ".herta/logs/run.log",
+      ".herta/tool-results/t/c.json",
+    ]) {
+      const decision = await engine.check(
+        { id: "1", tool: "run_command", input: { argv: ["cat", path] } },
+        ctxFor(ws.root),
+      );
+      expect(decision.kind, path).toBe("allow");
+    }
+    const memory = await engine.check(
+      {
+        id: "1",
+        tool: "run_command",
+        input: { argv: ["cat", ".herta/memory/project.jsonl"] },
+      },
+      ctxFor(ws.root),
+    );
+    expect(memory.kind).toBe("deny");
+    if (memory.kind !== "deny") throw new Error();
+    expect(memory.code).toBe("path_denied");
+  });
+
   it("denies a reader whose innocent-named operand is a SYMLINK escaping the workspace (audit T3.4)", async () => {
     if (!(await canCreateFileSymlinks())) return; // Windows w/o Developer Mode
     ws = await mkTmpWorkspace({});

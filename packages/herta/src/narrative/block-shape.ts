@@ -95,8 +95,17 @@ export function isUnusableBlock(text: string): boolean {
  *
  * Safe because `〔…〕` is reserved: it appears in hint files and nowhere in
  * her corpus (Bio, Guide, EnvSet, openings, 废案 seeds all verified clean),
- * so a leading or whole-wrap bracket is never her voice. A bracket appearing
- * mid-sentence is left alone — only a LEADING pair is scaffolding.
+ * so a leading, trailing or whole-wrap bracket is never her voice. A bracket
+ * appearing mid-sentence is left alone — only a pair at an EDGE is
+ * scaffolding.
+ *
+ * A third shape, trailing (large-document lab, 2026-08-23, twice in one
+ * session after a 13-minute backend turn had filled the record):
+ *
+ *   `真正的台词 〔到这里，只准停，…不得写任何命令。〕` — the answer, then a
+ *       bracketed directive the model wrote for its own NEXT step, in the
+ *       hint's register. Both reached the user's screen verbatim. Drop the
+ *       trailing pair; the answer is what precedes it.
  *
  * Runs BEFORE the usability check, which is what makes the nested case work:
  * `〔{需要说的话}〕` unwraps to `{需要说的话}`, which `isPlaceholderOnly`
@@ -114,6 +123,14 @@ export function stripHintScaffolding(text: string): string {
     const m = /^\s*〔[^〔〕]*〕\s*/.exec(out);
     if (m === null) break;
     const rest = out.slice(m[0].length);
+    if (rest.trim().length === 0) break; // whole-wrap — handled just below
+    out = rest;
+  }
+  // Trailing self-directives that FOLLOW real content, same bound.
+  for (let i = 0; i < 3; i += 1) {
+    const m = /\s*〔[^〔〕]*〕\s*$/.exec(out);
+    if (m === null) break;
+    const rest = out.slice(0, m.index);
     if (rest.trim().length === 0) break; // whole-wrap — handled just below
     out = rest;
   }

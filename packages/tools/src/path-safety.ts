@@ -183,14 +183,17 @@ function winCanonicalizeSegment(seg: string): string {
 export interface ResolveSafePathOpts {
   /**
    * Allow READ access to the harness-evidence subtrees
-   * (`.herta/logs/`, `.herta/tool-results/`). Passed ONLY by read_file —
-   * never by any mutating or listing tool. See HARNESS_READ_PREFIXES.
+   * (`.herta/logs/`, `.herta/tool-results/`). Passed by the READERS only —
+   * read_file, `str_replace_editor view`, report_finding's cite check, and
+   * the shell reader guard (the operands of an allow-listed `cat`/`sed`/…)
+   * — never by any mutating or listing tool. See HARNESS_READ_PREFIXES.
    */
   allowHarnessReadPaths?: boolean;
   /**
    * Allow READ access to session attachments (`.herta/attachments/`).
-   * Passed by read_file AND show_excerpt — the asymmetry with the flag above
-   * is the whole point of there being two. See ATTACHMENT_READ_PREFIXES.
+   * Passed by every reader INCLUDING show_excerpt and the shell reader guard
+   * — the asymmetry with show_excerpt NOT getting the flag above is the whole
+   * point of there being two. See ATTACHMENT_READ_PREFIXES.
    */
   allowAttachmentPaths?: boolean;
   /**

@@ -30,7 +30,30 @@ import { readerPathCandidates } from "./classifier.js";
  * Runs in the permission rule (where deny gates execution) AND at tool
  * execution time (defense-in-depth against a symlink swapped in the window
  * between the permission check and the spawn).
+ *
+ * Read carve-outs (large-document lab, 2026-08-23): this guard only ever
+ * judges the operands of a READ-ONLY command, so it carries the same three
+ * read carve-outs `str_replace_editor view` has — attachments (ADR 0033),
+ * harness evidence (ADR 0025 slice 2) and the redacted logs (ADR 0036). It
+ * did not, and under the minimal contract (the default since 2026-08-17)
+ * that was the ONLY reader without them: `sed -n '1,400p'
+ * .herta/attachments/<sid>/report.pdf.txt` was hard-denied with "denied
+ * segment: .herta", while `str_replace_editor view` of the same path passed.
+ * A one-screen document survived on `view` alone; anything longer hit the
+ * 16K clip whose note says "grep -n inside the file" — and grep was denied.
+ * 板砖 worked around it by `cp`-ing the document into the workspace root
+ * (an ask, and a copy of the user's document in their repo — the storage
+ * shape ADR 0033 rejected) or by hiding the path in a shell variable (an
+ * unrecognised command, so one approval card per chunk). The structural
+ * `.herta` denial is the only check the carve-outs skip: the credential
+ * basename/directory denylist still runs on the realpath'd target, and
+ * every shell output is redacted before it reaches the model or the record.
  */
+const READER_CARVE_OUTS = {
+  allowAttachmentPaths: true,
+  allowHarnessReadPaths: true,
+  allowEvidenceExcerptPaths: true,
+} as const;
 export async function checkReaderArgvPaths(
   workspaceRoot: string,
   effectiveCwd: string,
@@ -58,7 +81,7 @@ export async function checkReaderArgvPaths(
     // `real` is an existing canonical path; resolveSafePath re-realpaths it
     // (idempotent) and applies the SAME workspace-prefix + credential
     // denylist that guards read_file, inheriting its Windows case handling.
-    const r = await resolveSafePath(workspaceRoot, real);
+    const r = await resolveSafePath(workspaceRoot, real, READER_CARVE_OUTS);
     if (!r.ok) {
       return {
         ok: false,

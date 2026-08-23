@@ -111,6 +111,26 @@ describe("stripHintScaffolding — echoed 〔hint〕 wrappers (live lab 2026-08-
     expect(retryCause(stripHintScaffolding("〔〕"))).toBe("empty");
   });
 
+  it("drops a TRAILING self-directive and keeps the answer before it (large-document lab 2026-08-23)", () => {
+    // Verbatim from the lab: two speeches in one session, each ending in a
+    // bracketed instruction the model wrote for its own next step.
+    expect(
+      stripHintScaffolding(
+        "先别催，等我重新让它把输出写到当前目录。 〔到这里，只准停，只准说这一件事。不得启动新任务，不得写任何命令。〕",
+      ),
+    ).toBe("先别催，等我重新让它把输出写到当前目录。");
+    expect(
+      stripHintScaffolding(
+        "这事不是记得记不得的问题，是没文本可对就别谈精确。 〔这句之后，只准停。`@板砖` 不写：无命令。〕",
+      ),
+    ).toBe("这事不是记得记不得的问题，是没文本可对就别谈精确。");
+    // Leading and trailing together; a trailing pair on junk rescues nothing.
+    expect(stripHintScaffolding("〔先说〕台词。〔停〕")).toBe("台词。");
+    expect(isUnusableBlock(stripHintScaffolding("{需要说的话}〔停〕"))).toBe(
+      true,
+    );
+  });
+
   it("leaves ordinary speech untouched, byte for byte", () => {
     for (const s of [
       "记不得了，你说。",

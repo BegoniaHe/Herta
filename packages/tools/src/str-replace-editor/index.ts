@@ -27,6 +27,7 @@ import { PersistentShell, SHELL_BG_ID } from "../bash/persistent-shell.js";
 import { type ShellPaths, shellPathsFor } from "../bash/shell-paths.js";
 import { computeUnifiedDiff } from "../edit-file/engine.js";
 import { formatInputIssues } from "../input-issues.js";
+import { decodeUtf8 } from "../text-sniff.js";
 import {
   countDiffLines,
   formatFileView,
@@ -238,12 +239,18 @@ export function strReplaceEditorTool(
           target.resolved,
           createHash("sha256").update(buf).digest("hex"),
         );
+        const viewDecoded = decodeUtf8(buf);
         const view = formatFileView(
           target.display,
-          buf.toString("utf-8"),
+          viewDecoded.text,
           input.view_range,
         );
         if (!view.ok) return fail("invalid_input", view.message);
+        // Viewing a non-UTF-8 file is allowed; pretending the U+FFFD runs are
+        // what the file says is not. The edit commands refuse it outright.
+        const viewLossyNote = viewDecoded.lossy
+          ? " — WARNING: not valid UTF-8; unreadable bytes shown as U+FFFD and this file cannot be edited"
+          : "";
         return {
           ok: true,
           data: {
@@ -252,7 +259,7 @@ export function strReplaceEditorTool(
             from: view.from,
             to: view.to,
           },
-          summary: `viewed ${target.relative} (${view.from}-${view.to})`,
+          summary: `viewed ${target.relative} (${view.from}-${view.to})${viewLossyNote}`,
           modelText: view.text,
         };
       }
@@ -325,6 +332,17 @@ export function strReplaceEditorTool(
           `The file ${target.display} is binary and cannot be edited with this tool.`,
         );
       }
+      // A NUL sniff does not prove the bytes are UTF-8, and every command here
+      // rewrites the whole file from the decoded string — so editing a
+      // GBK/Big5/Shift-JIS source would replace its unreadable bytes with
+      // U+FFFD everywhere, not just where the edit landed (2026-08-24).
+      const decoded = decodeUtf8(buf);
+      if (decoded.lossy) {
+        return fail(
+          "non_utf8_file",
+          `The file ${target.display} is not valid UTF-8. Editing it would rewrite the entire file and replace every byte outside UTF-8 with U+FFFD, including parts this edit does not touch. Convert it to UTF-8 first, or make this change by hand.`,
+        );
+      }
       if (input.command === "insert") {
         // Line numbers are only meaningful relative to a view (see rule).
         const sha = createHash("sha256").update(buf).digest("hex");
@@ -342,7 +360,7 @@ export function strReplaceEditorTool(
           );
         }
       }
-      const before = buf.toString("utf-8");
+      const before = decoded.text;
       const plan = planEdit(input, before, target.display, target.relative);
       if (!plan.ok) return fail(plan.code, plan.message);
       const written = await atomicWrite(target.resolved, plan.after);

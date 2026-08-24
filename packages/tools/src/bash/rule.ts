@@ -16,6 +16,7 @@ import { bashInputSchema } from "./schema.js";
 import {
   classifyShellCommandDetailed,
   effectivePrograms,
+  peelReaderHead,
   singleProgramArgv,
   tokenize,
 } from "./shell-classifier.js";
@@ -130,10 +131,23 @@ export function makeBashRule(deps: BashRuleDeps): PermissionRule {
       };
     }
     // allow → realpath the reader operands of every segment (async guard).
+    //
+    // The words are peeled the same way the CLASSIFIER peels them. They were
+    // not, and the two layers disagreeing about where the command starts was
+    // enough to switch this guard off entirely: `time cat out/win.ini` (or
+    // `{ cat …; }`, `if cat …`, `! cat …`, `command cat …`) handed
+    // checkReaderArgvPaths a first word of `time`, which is not a
+    // PATH_READER_CMD, so it returned no candidates — and the junction-escape
+    // this guard exists for (audit T3.4) went unchecked behind one harmless
+    // extra word (red team 2026-08-24).
     for (const segment of splitShellSegments(parsed.data.command)) {
       const { words } = tokenize(segment);
       if (words.length === 0) continue;
-      const denial = await checkReaderArgvPaths(ctx.workspaceRoot, cwd, words);
+      const denial = await checkReaderArgvPaths(
+        ctx.workspaceRoot,
+        cwd,
+        peelReaderHead(words),
+      );
       if (denial !== null) {
         return { kind: "deny", code: denial.code, reason: denial.message };
       }

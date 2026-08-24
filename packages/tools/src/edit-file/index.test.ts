@@ -180,6 +180,47 @@ describe("editFileTool", () => {
     expect(r.error?.code).toBe("invalid_input");
   });
 
+  // 2026-08-24 (codex study, reproduced before the guard was written): the
+  // binary sniff only looks for a NUL, which a legacy-encoded source file
+  // never has. It decoded to U+FFFD, and because this tool rewrites the WHOLE
+  // file from that string, a hunk touching one ASCII line replaced every
+  // non-UTF-8 byte in the file — including bytes the patch never went near.
+  it("refuses a non-UTF-8 file instead of rewriting its unreadable bytes", async () => {
+    ws = await mkTmpWorkspace({ "legacy.c": "" });
+    const abs = join(ws.root, "legacy.c");
+    // `/* 测试注释 */` in GBK, then an ASCII line. No NUL anywhere.
+    const gbkComment = Buffer.from([
+      0x2f, 0x2a, 0x20, 0xb2, 0xe2, 0xca, 0xd4, 0xd7, 0xa2, 0xca, 0xcd, 0x20,
+      0x2a, 0x2f, 0x0a,
+    ]);
+    const original = Buffer.concat([
+      gbkComment,
+      Buffer.from("int main(void){ return 0; }\n", "ascii"),
+    ]);
+    await writeFile(abs, original);
+    const reads = new ReadLedger();
+    await recordSha(reads, abs);
+    const tool = editFileTool();
+    const r = await tool.run(
+      {
+        id: "1",
+        tool: "edit_file",
+        input: {
+          path: "legacy.c",
+          // Touches ONLY the ASCII line — the corruption was never local to
+          // the edit, which is what made it so easy to miss.
+          hunks: [{ search: "return 0", replace: "return 1" }],
+        },
+      },
+      ctxFor(ws.root, reads),
+      noopProgress,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error?.code).toBe("non_utf8_file");
+    // The decisive assertion: the file is byte-identical afterwards.
+    expect(await readFile(abs)).toEqual(original);
+  });
+
   it("summary names the file and counts hunks", async () => {
     ws = await mkTmpWorkspace({ "a.txt": "alpha\n" });
     const abs = join(ws.root, "a.txt");

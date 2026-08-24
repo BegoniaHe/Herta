@@ -84,6 +84,32 @@ export function isCredentialBasename(name: string): boolean {
   for (const suffix of CREDENTIAL_SUFFIXES) {
     if (n.endsWith(suffix)) return true;
   }
+  // A GLOB is matched against what it would EXPAND to, not against its own
+  // spelling: `cat .env*` read the workspace's secrets while `cat .env` asked,
+  // and no layer downstream could help — the literal `.env*` never realpaths,
+  // so the async guard skipped it too (red team 2026-08-24). Strip the
+  // wildcard tail and re-ask the question of the prefix.
+  if (/[*?[]/.test(n)) {
+    const prefix = n.split(/[*?[]/)[0] as string;
+    if (prefix.length > 0) {
+      if (EXACT_CREDENTIAL_BASENAMES.has(prefix)) return true;
+      if (prefix.startsWith(".env")) return true;
+      for (const base of EXACT_CREDENTIAL_BASENAMES) {
+        if (base.startsWith(prefix)) return true;
+      }
+    }
+    // `*env*`, `*secret*` — no usable prefix, but the literal fragments the
+    // glob does carry name credential material. Kept to words that do not
+    // appear in ordinary source names, so `*.ts` and `README*` stay allowed.
+    const literal = n.replace(/[*?]|\[[^\]]*\]/g, "");
+    if (
+      /(^|[^a-z])(env|secret|secrets|credential|credentials|passwd|password|token)([^a-z]|$)/.test(
+        literal,
+      )
+    ) {
+      return true;
+    }
+  }
   return false;
 }
 

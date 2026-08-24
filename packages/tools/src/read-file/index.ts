@@ -10,6 +10,7 @@ import type {
 } from "@herta/core";
 import { formatInputIssues } from "../input-issues.js";
 import { resolveSafePath } from "../path-safety.js";
+import { decodeUtf8 } from "../text-sniff.js";
 import { readFileInputSchema, readFileJsonSchema } from "./schema.js";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -19,7 +20,9 @@ export interface ReadFileData {
   content: string;
   totalLines: number;
   returnedRange: [number, number];
-  encoding: "utf-8";
+  /** `"utf-8 (lossy)"` when the bytes were not valid UTF-8 and unreadable
+   *  ones became U+FFFD — such a file is readable but not editable. */
+  encoding: "utf-8" | "utf-8 (lossy)";
 }
 
 export function readFileTool(): HertaTool {
@@ -154,7 +157,18 @@ export function readFileTool(): HertaTool {
       const sha256 = createHash("sha256").update(buf).digest("hex");
       ctx.reads.record(safe.resolved, sha256);
 
-      let text = buf.toString("utf-8");
+      // The NUL sniff above only rules out binaries; it says nothing about
+      // whether the bytes are UTF-8. When they are not (a GBK / Big5 /
+      // Shift-JIS source), every unreadable byte decodes to U+FFFD — so SAY
+      // so rather than handing back plausible-looking garbage the model would
+      // go on to quote and reason about. The editors refuse such a file
+      // outright; reading it stays possible, just honest (2026-08-24).
+      const decoded = decodeUtf8(buf);
+      const encoding = decoded.lossy ? "utf-8 (lossy)" : "utf-8";
+      const lossyNote = decoded.lossy
+        ? " — WARNING: not valid UTF-8; unreadable bytes shown as U+FFFD and this file cannot be edited"
+        : "";
+      let text = decoded.text;
       if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
 
       if (text.length === 0) {
@@ -164,7 +178,7 @@ export function readFileTool(): HertaTool {
             content: "",
             totalLines: 0,
             returnedRange: [1, 0],
-            encoding: "utf-8",
+            encoding,
           },
           summary: `read ${safe.relative} (empty file)`,
         };
@@ -182,7 +196,7 @@ export function readFileTool(): HertaTool {
             content: "",
             totalLines,
             returnedRange: [offset, offset - 1],
-            encoding: "utf-8",
+            encoding,
           },
           summary: `read ${safe.relative} (offset ${offset} past end of ${totalLines} lines)`,
         };
@@ -211,9 +225,9 @@ export function readFileTool(): HertaTool {
           content,
           totalLines,
           returnedRange: [offset, endIdx],
-          encoding: "utf-8",
+          encoding,
         },
-        summary: `read ${safe.relative} (${summaryRange})`,
+        summary: `read ${safe.relative} (${summaryRange})${lossyNote}`,
       };
     },
   };

@@ -644,13 +644,16 @@ describe("context budget + oversized-result persistence (ADR 0025 slice 2)", () 
 });
 
 describe("verification.finished producer (test-result beat, 2026-07-23)", () => {
-  function runCommandTurn(data: Record<string, unknown>) {
+  function runCommandTurn(
+    data: Record<string, unknown>,
+    tool: "run_command" | "bash" = "run_command",
+  ) {
     const provider = new FakeProvider({
       turns: [
         [
           {
             type: "tool-call-request",
-            call: { id: "r1", tool: "run_command", input: { argv: ["x"] } },
+            call: { id: "r1", tool, input: { argv: ["x"] } },
           },
           { type: "finish", reason: "tool_calls" },
         ],
@@ -659,8 +662,8 @@ describe("verification.finished producer (test-result beat, 2026-07-23)", () => 
     });
     const deps = buildDeps(provider);
     deps.tools.register({
-      name: "run_command",
-      schema: () => ({ name: "run_command", description: "", inputSchema: {} }),
+      name: tool,
+      schema: () => ({ name: tool, description: "", inputSchema: {} }),
       run: async () => ({ ok: true, summary: "ran", data }),
     });
     return { deps, provider };
@@ -686,6 +689,40 @@ describe("verification.finished producer (test-result beat, 2026-07-23)", () => 
 
   it("does NOT emit verification.finished for an ordinary command", async () => {
     const { deps } = runCommandTurn({ exitCode: 0, stdout: "hello" });
+    const events: AgentEvent[] = [];
+    for await (const e of runBackendTurnLoop(deps, sampleBrief, {
+      signal: new AbortController().signal,
+      userMessages: sampleUserMessages,
+    })) {
+      events.push(e);
+    }
+    expect(events.some((e) => e.type === "verification.finished")).toBe(false);
+  });
+
+  // 2026-08-24 (codex study): the emit was gated on the tool NAME, so the
+  // minimal contract becoming the default on 2026-08-17 made every test run
+  // invisible to Herta — `bash` reports `testRun` identically. Both tools, and
+  // still keyed on the data.
+  it("emits for the minimal contract's bash too — the default since 2026-08-17", async () => {
+    const { deps } = runCommandTurn(
+      { testRun: { status: "passed", summary: "3 passed" } },
+      "bash",
+    );
+    const events: AgentEvent[] = [];
+    for await (const e of runBackendTurnLoop(deps, sampleBrief, {
+      signal: new AbortController().signal,
+      userMessages: sampleUserMessages,
+    })) {
+      events.push(e);
+    }
+    const types = events.map((e) => e.type);
+    expect(types.indexOf("verification.finished")).toBeGreaterThan(
+      types.indexOf("tool.call.finished"),
+    );
+  });
+
+  it("does NOT emit for a bash call that ran no test", async () => {
+    const { deps } = runCommandTurn({ exitCode: 0, stdout: "hello" }, "bash");
     const events: AgentEvent[] = [];
     for await (const e of runBackendTurnLoop(deps, sampleBrief, {
       signal: new AbortController().signal,

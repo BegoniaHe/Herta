@@ -31,13 +31,190 @@ function hasRecursiveForce(argv: readonly string[]): boolean {
   return r && f;
 }
 
+/**
+ * Word-split a shell body for the BLOCK scan — quote-aware.
+ *
+ * This used to whitespace-split and then strip quotes off each token, which
+ * tore a QUOTED inner command into pieces: `bash -c "sh -c 'rm -rf /'"` became
+ * `[bash, -c, sh, -c, rm, -rf, /]`, so `extractShellReentry` read the body as
+ * the single word `sh` and the catastrophic payload never re-entered the scan.
+ * The no-override block tier degraded to a user-approvable ask (codex study
+ * 2026-08-24; the same class the 2026-07-10 `cmd /c` and 2026-08-05 `&&`
+ * findings closed in other spellings).
+ *
+ * Keeping a quoted run together is the whole point: the body must survive as
+ * ONE token so the re-entry can recurse into it.
+ */
 function shellBodyTokens(body: string): string[] {
-  return body
-    .trim()
-    .split(/\s+/)
-    .map((t) => t.replace(/^["']+|["']+$/g, ""))
-    .filter((t) => t.length > 0);
+  const out: string[] = [];
+  let cur = "";
+  let has = false;
+  let quote: "'" | '"' | null = null;
+  const s = body.trim();
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i] as string;
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+      else cur += ch;
+      has = true;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      has = true;
+      continue;
+    }
+    if (ch === "\\" && i + 1 < s.length) {
+      cur += s[i + 1];
+      has = true;
+      i += 1;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (has) {
+        out.push(cur);
+        cur = "";
+        has = false;
+      }
+      continue;
+    }
+    cur += ch;
+    has = true;
+  }
+  if (has) out.push(cur);
+  return out.filter((t) => t.length > 0);
 }
+
+/** How a wrapper program's own arguments are laid out before the command it
+ *  goes on to execute. */
+interface WrapperSpec {
+  /** Flags that consume the NEXT word as their value (`sudo -u root …`). */
+  valueFlags?: ReadonlySet<string>;
+  /** Bare operands the wrapper eats before the command (`timeout 5 …`). */
+  operands?: number;
+  /** Leading `K=V` words belong to the wrapper (`env FOO=bar …`). */
+  assignments?: boolean;
+}
+
+/**
+ * Programs whose job is to run ANOTHER program. Peeling them is what lets the
+ * catastrophic check see the real command underneath (codex study 2026-08-24;
+ * cf. Codex's recursive wrapper peel in `is_dangerous_command.rs`).
+ *
+ * Block tier only, and peeling only ever ESCALATES: a benign payload never
+ * upgrades a wrapper to allow, exactly as `extractShellReentry` is documented
+ * to work. Widening the ALLOW tier through these wrappers would be a different
+ * decision — `sudo npm test` must not become a silent allow — so the ask/allow
+ * classifier deliberately still sees `sudo` itself and asks.
+ */
+const EXEC_WRAPPERS: ReadonlyMap<string, WrapperSpec> = new Map<
+  string,
+  WrapperSpec
+>([
+  ["sudo", { valueFlags: new Set(["-u", "-g", "-p", "-C", "-U", "-t", "-r"]) }],
+  ["doas", { valueFlags: new Set(["-u", "-C", "-a"]) }],
+  ["pkexec", { valueFlags: new Set(["--user"]) }],
+  [
+    "env",
+    { valueFlags: new Set(["-u", "--unset", "-C", "-S"]), assignments: true },
+  ],
+  ["nice", { valueFlags: new Set(["-n", "--adjustment"]) }],
+  ["ionice", { valueFlags: new Set(["-c", "-n", "-p"]) }],
+  ["nohup", {}],
+  ["setsid", {}],
+  ["stdbuf", { valueFlags: new Set(["-i", "-o", "-e"]) }],
+  [
+    "timeout",
+    {
+      valueFlags: new Set(["-k", "-s", "--signal", "--kill-after"]),
+      operands: 1,
+    },
+  ],
+  [
+    "xargs",
+    {
+      valueFlags: new Set([
+        "-n",
+        "-P",
+        "-I",
+        "-i",
+        "-d",
+        "-s",
+        "-E",
+        "-a",
+        "-L",
+        "--max-args",
+        "--max-procs",
+        "--replace",
+        "--delimiter",
+      ]),
+    },
+  ],
+  ["command", { valueFlags: new Set() }],
+  ["builtin", {}],
+  ["time", {}],
+  // Second batch (red team 2026-08-24): every one of these reached ask with a
+  // CACHEABLE scope while carrying a catastrophic payload.
+  ["su", { valueFlags: new Set(["-c", "-s", "-l", "--command", "--shell"]) }],
+  ["runuser", { valueFlags: new Set(["-u", "-c", "-s"]) }],
+  ["chroot", { valueFlags: new Set(["--userspec", "--groups"]), operands: 1 }],
+  ["strace", { valueFlags: new Set(["-o", "-e", "-p", "-s"]) }],
+  ["ltrace", { valueFlags: new Set(["-o", "-e", "-p", "-s"]) }],
+  ["watch", { valueFlags: new Set(["-n", "--interval", "-d"]) }],
+  ["flock", { valueFlags: new Set(["-w", "--timeout", "-E"]), operands: 1 }],
+  ["script", { valueFlags: new Set(["-c", "--command", "-f", "-t"]) }],
+  ["taskset", { valueFlags: new Set(["-c", "-p"]), operands: 1 }],
+  [
+    "unshare",
+    { valueFlags: new Set(["--map-user", "--map-group", "-S", "-G"]) },
+  ],
+  ["busybox", { operands: 1 }],
+  ["proot", { valueFlags: new Set(["-r", "-b", "-w"]) }],
+]);
+
+/** Bounded wrapper peel: the command a chain of exec-wrappers ends up running,
+ *  or null when the head was not a wrapper. */
+function peelExecWrappers(tokens: readonly string[]): string[] | null {
+  let cur: readonly string[] = tokens;
+  let peeled = false;
+  for (let round = 0; round < 4 && cur.length > 0; round += 1) {
+    const spec = EXEC_WRAPPERS.get(interpreterName(cur[0] as string));
+    if (spec === undefined) break;
+    let i = 1;
+    let operands = spec.operands ?? 0;
+    while (i < cur.length) {
+      const t = cur[i] as string;
+      if (t === "--") {
+        i += 1;
+        break;
+      }
+      if (t.startsWith("-") && t.length > 1) {
+        i += 1;
+        if (spec.valueFlags?.has(t) === true && i < cur.length) i += 1;
+        continue;
+      }
+      if (spec.assignments === true && /^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) {
+        i += 1;
+        continue;
+      }
+      if (operands > 0) {
+        operands -= 1;
+        i += 1;
+        continue;
+      }
+      break;
+    }
+    if (i >= cur.length) break; // wrapper with no command behind it
+    cur = cur.slice(i);
+    peeled = true;
+  }
+  return peeled ? [...cur] : null;
+}
+
+/** A variable whose NAME says it holds a location, so `ls $HOME` is a path
+ *  claim even without a separator — unlike `sed -n $p`. */
+const PATHISH_VAR =
+  /\$\{?(HOME|USERPROFILE|APPDATA|LOCALAPPDATA|PWD|OLDPWD|TMP|TEMP|TMPDIR|XDG_[A-Z_]+|SystemRoot|windir|ProgramData|ProgramFiles[A-Za-z()0-9]*)\}?/i;
 
 /** Escape-hatch guard for allow-listed read-only commands: their ARGUMENTS
  *  took no path check at all, so absolute/parent-escaping paths and
@@ -51,20 +228,58 @@ function shellBodyTokens(body: string): string[] {
  *  the async checkReaderArgvPaths (reader-guard.ts) in the rule/tool, which
  *  the classifier structurally cannot see (audit T3.4). */
 function readerArgvGuard(argv: readonly string[]): Verdict | null {
-  for (const a of argv.slice(1)) {
-    if (a.startsWith("-")) continue; // flags
+  for (const raw of argv.slice(1)) {
+    // A path GLUED to an option is still a path. Skipping every `-`-prefixed
+    // token wholesale meant `wc --files0-from=/…/.ssh/id_rsa`,
+    // `grep -f/…/id_rsa .`, `pytest --basetemp=/outside`, `go test -o=/…` and
+    // `node --test --redirect-warnings=/…` all read as inert flags (red team
+    // round 3). Unglue the value and judge THAT; a flag with no path-shaped
+    // value is still skipped.
+    let a = raw;
+    if (raw.startsWith("-")) {
+      const eq = raw.indexOf("=");
+      const value =
+        eq > 0
+          ? raw.slice(eq + 1)
+          : /^-[A-Za-z]/.test(raw) && raw.length > 2
+            ? raw.slice(2)
+            : "";
+      if (value.length === 0 || !/[\\/~]|^\.{1,2}$|^\$/.test(value)) continue;
+      a = value;
+    }
+    // Windows-style switches (`tasklist //FI …`, `where /R …`) are flags, not
+    // absolute paths. UPPERCASE only: the first spelling of this rule accepted
+    // any letters and so swallowed `ls //etc`, which is the very thing the
+    // comment claimed it would not do.
+    if (/^\/\/[A-Z]+$|^\/[A-Z]$/.test(a)) continue;
     // Match a Windows drive prefix WITH OR WITHOUT a separator: `E:.env` is
     // DRIVE-RELATIVE (resolves against drive E's cwd, i.e. the workspace) yet
     // has no separator, so it slipped the old `X:[\/]` form and read a
     // workspace credential unprompted (audit T3.4 review).
     const absolute = /^([A-Za-z]:|[\\/]|~)/.test(a);
     const parentEscape = a === ".." || a.includes("../") || a.includes("..\\");
-    if (absolute || parentEscape || isCredentialPath(a)) {
+    // An operand the guard cannot evaluate is not an operand the guard may
+    // pass (red team 2026-08-24). Each spelling below read as an ordinary
+    // in-workspace relative path and defeated both this check and the async
+    // realpath half, which skips operands that do not resolve.
+    //
+    // Scoped to tokens that can actually BE a path: a bare `$p` is a sed
+    // script and `^第[0-9]*篇` is a grep pattern, and treating those as paths
+    // made six honest commands ask. So a variable counts only with a path
+    // separator or a path-ish name, and a plain glob is left to the credential
+    // denylist (which knows `.env*` from `*.ts`) rather than asked about here.
+    const unknowable =
+      a.includes("__SUBST__") ||
+      (/[$`]/.test(a) && (/[\\/]/.test(a) || PATHISH_VAR.test(a))) ||
+      (/\{[^}]*,[^}]*\}/.test(a) && /[\\/]|\.\./.test(a));
+    if (absolute || parentEscape || unknowable || isCredentialPath(a)) {
       return {
         kind: "ask",
         risk: "workspace_read",
         code: "command_ask_reader_path",
-        reason: `read-only command targets a sensitive or out-of-workspace path: ${a}`,
+        reason: unknowable
+          ? `read-only command targets a path the harness cannot resolve statically: ${a}`
+          : `read-only command targets a sensitive or out-of-workspace path: ${a}`,
       };
     }
   }
@@ -273,6 +488,8 @@ function textFilterVerdict(argv: readonly string[]): Verdict | null {
 }
 
 const SH_FAMILY = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+/** Not shells themselves, but they hand a shell command string to one. */
+const COMMAND_STRING_WRAPPERS = new Set(["su", "runuser", "script"]);
 const POWERSHELL_FAMILY = new Set(["powershell", "pwsh"]);
 
 /** Deletion commands Windows shells reach for; `Remove-Item -Recurse -Force
@@ -316,11 +533,43 @@ function extractShellReentry(argv: readonly string[]): Reentry | null {
     for (let i = 1; i < argv.length; i++) {
       const a = argv[i] as string;
       if (a === "--") continue;
+      // A shell also takes its script on STDIN, and `<<<` puts a string
+      // there: `bash <<< 'rm -rf /'` runs exactly what `bash -c` would, and
+      // recognising only `-c` let it through as a plain ask (red team round 3).
+      if (a === "<<<") {
+        const body = argv[i + 1];
+        return typeof body === "string" && body.length > 0
+          ? { kind: "body", via: `${name} <<<`, body }
+          : null;
+      }
       if (/^-[A-Za-z]+$/.test(a)) {
         if (a.includes("c")) sawC = true;
         continue;
       }
       return sawC ? { kind: "body", via: `${name} -c`, body: a } : null;
+    }
+    return null;
+  }
+
+  // Wrappers that take their payload as the VALUE of `-c` rather than as
+  // following operands, so the operand-style peel cannot reach it:
+  // `su -c 'rm -rf /'`, `runuser -u root -c '…'`, `script -qec '…' /dev/null`.
+  if (COMMAND_STRING_WRAPPERS.has(name)) {
+    for (let i = 1; i < argv.length; i++) {
+      const a = argv[i] as string;
+      if (a === "-c" || a === "--command") {
+        const body = argv[i + 1];
+        return typeof body === "string" && body.length > 0
+          ? { kind: "body", via: `${name} -c`, body }
+          : null;
+      }
+      // Bundled short options (`-qec`) and an attached value (`-c'…'`).
+      if (/^-[A-Za-z]+$/.test(a) && a.includes("c")) {
+        const body = argv[i + 1];
+        return typeof body === "string" && body.length > 0
+          ? { kind: "body", via: `${name} -c`, body }
+          : null;
+      }
     }
     return null;
   }
@@ -423,6 +672,28 @@ function isCatastrophic(argv: readonly string[]): {
   // the human-readable reason strings.
   const a0 = commandIdentity(raw);
 
+  // `find <system root> -delete` empties the machine just as `rm -rf /` does,
+  // and dispatching this tier on argv[0] alone meant it arrived as an ordinary
+  // approval card — one click from the same outcome (red team 2026-08-24).
+  // The repo already accepts this equivalence: WINDOWS_DELETE_CMDS exists
+  // because `Remove-Item -Recurse -Force C:\` is `rm -rf /` in another coat.
+  if (a0 === "find") {
+    const destructive = argv.some(
+      (a) => a === "-delete" || a === "-exec" || a === "-execdir",
+    );
+    if (destructive) {
+      for (const a of argv.slice(1)) {
+        if (a.startsWith("-")) continue;
+        if (isSystemRootPath(a)) {
+          return {
+            hit: true,
+            reason: `find with a delete/exec action on system path: ${a}`,
+          };
+        }
+      }
+    }
+  }
+
   if (a0 === "rm" && hasRecursiveForce(argv)) {
     for (const a of argv.slice(1)) {
       if (isSystemRootPath(a)) {
@@ -486,9 +757,14 @@ export function splitShellSegments(body: string): string[] {
   const out: string[] = [];
   let current = "";
   let quote: '"' | "'" | null = null;
-  for (let i = 0; i < body.length; i += 1) {
-    const ch = body[i] as string;
-    const prev = i > 0 ? body[i - 1] : "";
+  // A backslash-newline is a LINE CONTINUATION — bash joins the two halves
+  // into one command. Splitting on the newline regardless meant
+  // `rm \<newline>-rf /` was scanned as two harmless fragments and the
+  // catastrophic check never saw a whole command (red team round 3).
+  const joined = body.replace(/\\\r?\n/g, " ");
+  for (let i = 0; i < joined.length; i += 1) {
+    const ch = joined[i] as string;
+    const prev = i > 0 ? joined[i - 1] : "";
     if (quote !== null) {
       current += ch;
       // A backslash-escaped quote does not close the string (POSIX single
@@ -513,9 +789,150 @@ export function splitShellSegments(body: string): string[] {
   return out.map((s) => s.trim()).filter((s) => s.length > 0);
 }
 
-/** Block-tier scan of a whole shell body — every segment, nested
- *  interpreters unwrapped. Shared with the minimal contract's shell-string
- *  classifier (ADR 0040), which layers the ask/allow tiers on top. */
+/** How many interpreter layers the block scan will unwrap before it refuses
+ *  to keep guessing. */
+const MAX_REENTRY_DEPTH = 3;
+
+/** `find` predicates that RUN a program or WRITE a file for every match —
+ *  the whole family, not the two spellings that were enumerated first. */
+const FIND_ACTION_PREDICATES: ReadonlySet<string> = new Set([
+  "-delete",
+  "-exec",
+  "-execdir",
+  "-ok",
+  "-okdir",
+  "-fprint",
+  "-fprint0",
+  "-fprintf",
+  "-fls",
+]);
+
+/**
+ * Options that turn an allow-listed program into an arbitrary-program
+ * launcher, a file writer, or a config-injection vector — keyed by the
+ * program the allow tier trusts.
+ *
+ * Every entry is a knob the harness's mental model of that program did not
+ * account for: "git grep searches the tracked set" is true of its READS and
+ * silent about the pager it spawns; "npm test runs the workspace's tests" was
+ * never enforced by anything; `node --test`'s deny-list enumerated the
+ * module-loading flags it knew. Matched as an exact token or as `--flag=value`
+ * (both spellings shipped, and for `node --env-file` the space form asked
+ * while the `=` form allowed).
+ */
+const ESCAPE_HATCH_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map<
+  string,
+  ReadonlySet<string>
+>([
+  [
+    "git",
+    new Set([
+      "-O",
+      "--open-files-in-pager", // git grep: runs a command on the matches
+      "--output", // git diff/log/show: writes an arbitrary file
+      "--output-indicator-new",
+      "--contents", // git blame: reads an arbitrary file
+      "--upload-pack",
+      "--receive-pack",
+      "--exec-path",
+      // The external-diff / textconv family: each runs a command named by
+      // repo config, so a line that first appends to `.git/config` and then
+      // reads with one of these is arbitrary execution (red team round 3).
+      "--ext-diff",
+      "--textconv",
+      "--no-textconv",
+      "-c", // `git -c diff.external=… diff` — config on the command line
+      "--config-env",
+    ]),
+  ],
+  ["rg", new Set(["--pre", "--hostname-bin"])],
+  ["grep", new Set(["--devices"])],
+  [
+    "npm",
+    new Set([
+      "--prefix",
+      "-C",
+      "--script-shell",
+      "--node-options",
+      "--userconfig",
+      "--globalconfig",
+      "--ignore-scripts=false",
+    ]),
+  ],
+  [
+    "pnpm",
+    new Set([
+      "--prefix",
+      "-C",
+      "--dir",
+      "--script-shell",
+      "--use-node-version",
+    ]),
+  ],
+  ["yarn", new Set(["--cwd", "--use-yarnrc"])],
+  ["cargo", new Set(["--config", "--manifest-path", "--target-dir"])],
+  ["go", new Set(["-exec", "-toolexec", "-overlay", "-o"])],
+  [
+    "node",
+    new Set([
+      "--test-reporter",
+      "--env-file",
+      "--env-file-if-exists",
+      "--conditions",
+      "--watch-path",
+    ]),
+  ],
+  [
+    "pytest",
+    new Set(["-p", "--pyargs", "--rootdir", "-c", "--co", "--basetemp"]),
+  ],
+  // Text filters that can be pointed at a file list or an output path.
+  ["sort", new Set(["--files0-from", "--output", "--compress-program", "-o"])],
+  ["wc", new Set(["--files0-from"])],
+  ["du", new Set(["--files0-from"])],
+]);
+
+/** A token carrying a shell expansion the classifier cannot resolve, so any
+ *  deny-list decision made by reading argv LITERALLY is unsound. */
+function hasUnresolvedExpansion(argv: readonly string[]): boolean {
+  return argv
+    .slice(1)
+    .some(
+      (a) =>
+        a.includes("${") ||
+        a.includes("$(") ||
+        a.includes("`") ||
+        /\{[^}]*,[^}]*\}/.test(a),
+    );
+}
+
+/** The escape-hatch flag an argv carries for its own program, or null. */
+function escapeHatchFlag(argv: readonly string[]): string | null {
+  const flags = ESCAPE_HATCH_FLAGS.get(interpreterName(argv[0] as string));
+  if (flags === undefined) return null;
+  // A deny-list read against literal tokens cannot survive expansion: bash
+  // turns `${x:--r}` and `{-O./pager.sh,needle}` into the very flags this
+  // list exists to catch, and every literal comparison below misses them
+  // (red team round 3). For a program whose safety rests on such a list, an
+  // unresolvable token is itself the finding.
+  if (hasUnresolvedExpansion(argv)) return "an unresolved shell expansion";
+  for (const a of argv.slice(1)) {
+    if (flags.has(a)) return a;
+    const eq = a.indexOf("=");
+    if (eq > 0 && flags.has(a.slice(0, eq))) return a.slice(0, eq);
+    // Attached short-option value: `git grep -Ocurl`, `-O'sh -c "…"'`.
+    if (a.length > 2 && a.startsWith("-") && !a.startsWith("--")) {
+      const short = a.slice(0, 2);
+      if (flags.has(short)) return short;
+    }
+  }
+  return null;
+}
+
+/** Block-tier scan of a whole shell body — every segment, exec-wrappers
+ *  peeled, nested interpreters unwrapped. Shared with the minimal contract's
+ *  shell-string classifier (ADR 0040), which layers the ask/allow tiers on
+ *  top. */
 export function classifyShellBody(
   body: string,
   depth = 0,
@@ -527,19 +944,37 @@ export function classifyShellBody(
   for (const segment of splitShellSegments(body)) {
     const tokens = shellBodyTokens(segment);
     if (tokens.length === 0) continue;
-    const direct = isCatastrophic(tokens);
-    if (direct.hit) return direct;
-    // Nested wrapping (`cmd /c "powershell -Command shutdown /s"`) unwraps one
-    // interpreter per level; the depth cap bounds a crafted chain.
-    if (depth < 3) {
-      const nested = extractShellReentry(tokens);
-      if (nested?.kind === "body") {
-        const inner = classifyShellBody(nested.body, depth + 1);
-        if (inner.hit) return inner;
-      }
-      if (nested?.kind === "refused") {
+    // The segment as written, and the command it runs once exec-wrappers are
+    // peeled off (`sudo`/`env`/`timeout`/`nice`/`xargs`/`command` …). Both are
+    // checked: peeling only ever escalates.
+    const candidates: Array<readonly string[]> = [tokens];
+    const unwrapped = peelExecWrappers(tokens);
+    if (unwrapped !== null && unwrapped.length > 0) candidates.push(unwrapped);
+
+    for (const cand of candidates) {
+      const direct = isCatastrophic(cand);
+      if (direct.hit) return direct;
+      // Nested wrapping (`cmd /c "powershell -Command shutdown /s"`) unwraps
+      // one interpreter per level; the depth cap bounds a crafted chain.
+      const nested = extractShellReentry(cand);
+      if (nested === null) continue;
+      if (nested.kind === "refused") {
         return { hit: true, reason: nested.reason };
       }
+      if (depth < MAX_REENTRY_DEPTH) {
+        const inner = classifyShellBody(nested.body, depth + 1);
+        if (inner.hit) return inner;
+        continue;
+      }
+      // At the cap with an interpreter still to unwrap: FAIL CLOSED. The scan
+      // cannot see what runs down there, and "cannot see" must not read as
+      // "nothing catastrophic" — that is the one direction a block tier is
+      // never allowed to guess in. Legitimate work never nests shells this
+      // deep (codex study 2026-08-24; cf. Codex's depth-capped peel).
+      return {
+        hit: true,
+        reason: `shell nesting deeper than the classifier can inspect (via ${nested.via})`,
+      };
     }
   }
   return { hit: false, reason: "" };
@@ -680,12 +1115,39 @@ export function classifyCommand(argv: readonly string[]): Verdict {
       reason: `${reentry.via} with redirection`,
     };
   }
-  if (a0 === "find" && (argv.includes("-delete") || argv.includes("-exec"))) {
+  // `find`'s action predicates. This tested exactly two strings, so the four
+  // siblings that also spawn a process or write a file were invisible and fell
+  // through to the Phase-5 `find` allow: `-execdir` made find a general
+  // arbitrary-program launcher with no card at all, and `-fprintf` overwrote
+  // any file (red team 2026-08-24). Enumerating two members of a family is how
+  // that family gets used.
+  if (a0 === "find") {
+    const action = argv.find((a) => FIND_ACTION_PREDICATES.has(a));
+    if (action !== undefined) {
+      return {
+        kind: "ask",
+        risk: "workspace_write",
+        code: "command_ask_write",
+        reason: `find with ${action} — it runs a command or writes a file for every match`,
+      };
+    }
+  }
+
+  // An allow-listed program carrying one of its own escape hatches is not the
+  // program the allow tier was written for. Checked ONCE here, ahead of every
+  // Phase-5 branch, so a new allow entry cannot forget it (red team
+  // 2026-08-24: `git grep -Ocurl`, `git diff --output=/c/…/evil.bat`,
+  // `git blame --contents ~/.ssh/id_rsa`, `rg --pre ./x.sh`,
+  // `npm test --prefix ../evil`, `cargo test --config build.rustc-wrapper=…`,
+  // `go test -exec 'sh -c …'`, `node --test --test-reporter ./r.mjs` —
+  // all allow, all arbitrary execution or arbitrary file access).
+  const hatch = escapeHatchFlag(argv);
+  if (hatch !== null) {
     return {
       kind: "ask",
       risk: "workspace_write",
-      code: "command_ask_write",
-      reason: "find with -delete or -exec",
+      code: "command_ask_unknown",
+      reason: `${interpreterName(a0)} ${hatch} runs or loads something the harness cannot see — review it`,
     };
   }
 
@@ -704,9 +1166,14 @@ export function classifyCommand(argv: readonly string[]): Verdict {
   // does (which is allowed); the arbitrary-code shapes (`-e`/`--eval`/`-p`/
   // `--print`, an `--import`/`-r` preload, a script path) stay asks.
   // `node --version` / `npm -v` execute nothing.
+  // The deny regex below is anchored at `^` against LITERAL tokens, so an
+  // expansion that produces `-r` (`${x:--r}`, `{-r,./evil.cjs}`) walks past it
+  // and node preloads the module — arbitrary code, zero cards (red team round
+  // 3). An argv this branch cannot read literally is one it cannot clear.
   if (
     (a0 === "node" || a0 === "nodejs") &&
     argv[1] === "--test" &&
+    !hasUnresolvedExpansion(argv) &&
     !argv.some((a) =>
       /^(-e|--eval|-p|--print|--import|-r|--require|--loader|--experimental-loader)(=|$)/.test(
         a,
@@ -751,16 +1218,26 @@ export function classifyCommand(argv: readonly string[]): Verdict {
       "where",
     ].includes(a0)
   ) {
-    return { kind: "allow" };
+    // The one allow branch written without a reader guard, so `where /R
+    // C:\Users\victim *.pem` enumerated a stranger's private keys unprompted
+    // (red team 2026-08-24). Name disclosure is the same class find's
+    // `-L`/`-follow` ask already exists for.
+    return readerArgvGuard(argv) ?? { kind: "allow" };
   }
-  if (a0 === "pytest") return { kind: "allow" };
+  // These three ran the workspace's tests — as long as the operands ARE the
+  // workspace. Each was an unconditional allow with no path check at all, so
+  // `pytest ../evil` imported and executed arbitrary Python from outside it,
+  // and cargo/go compiled and ran an out-of-tree manifest.
+  if (a0 === "pytest") return readerArgvGuard(argv) ?? { kind: "allow" };
   if (
     a0 === "cargo" &&
     (argv[1] === "test" || argv[1] === "build" || argv[1] === "check")
   ) {
-    return { kind: "allow" };
+    return readerArgvGuard(argv) ?? { kind: "allow" };
   }
-  if (a0 === "go" && argv[1] === "test") return { kind: "allow" };
+  if (a0 === "go" && argv[1] === "test") {
+    return readerArgvGuard(argv) ?? { kind: "allow" };
+  }
   if (
     a0 === "git" &&
     typeof argv[1] === "string" &&

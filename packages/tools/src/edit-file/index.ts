@@ -12,6 +12,7 @@ import type {
 import { errResult } from "../errors.js";
 import { formatInputIssues } from "../input-issues.js";
 import { resolveSafePath } from "../path-safety.js";
+import { decodeUtf8 } from "../text-sniff.js";
 import {
   applyHunks,
   computeUnifiedDiff,
@@ -129,6 +130,20 @@ export function editFileTool(): HertaTool {
           `binary: ${safe.relative}`,
         );
       }
+      // The NUL sniff above passes a GBK / Big5 / Shift-JIS source file, and
+      // this tool rewrites the WHOLE file from the decoded string — so an edit
+      // to one ASCII line would re-encode every unreadable byte as U+FFFD,
+      // destroying regions the patch never touched. Refuse instead: the bytes
+      // we cannot read faithfully are the bytes we must not write.
+      const decoded = decodeUtf8(buf);
+      if (decoded.lossy) {
+        return errResult(
+          "non_utf8_file",
+          `${safe.relative} is not valid UTF-8; editing it would rewrite the whole file and replace every byte outside UTF-8 with U+FFFD`,
+          "convert the file to UTF-8 first, or make this change by hand",
+          `not utf-8: ${safe.relative}`,
+        );
+      }
 
       const oldSha256 = createHash("sha256").update(buf).digest("hex");
       const entry = ctx.reads.get(safe.resolved);
@@ -158,7 +173,7 @@ export function editFileTool(): HertaTool {
           parsedHunks.message,
         );
       }
-      const before = buf.toString("utf-8");
+      const before = decoded.text;
       const validated = validateHunks(before, parsedHunks.hunks);
       if (!validated.ok) {
         return errResult(

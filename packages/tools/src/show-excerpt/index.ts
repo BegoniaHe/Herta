@@ -12,7 +12,7 @@ import type {
 import { formatInputIssues } from "../input-issues.js";
 import { resolveSafePath } from "../path-safety.js";
 import { redactSecrets } from "../run-command/redactor.js";
-import { looksBinary } from "../text-sniff.js";
+import { decodeUtf8, looksBinary } from "../text-sniff.js";
 import { showExcerptInputSchema, showExcerptJsonSchema } from "./schema.js";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -217,7 +217,12 @@ export function showExcerptTool(opts: ShowExcerptToolOpts = {}): HertaTool {
         createHash("sha256").update(buf).digest("hex"),
       );
 
-      let text = buf.toString("utf-8");
+      // This excerpt goes into the record — the USER reads it. A non-UTF-8
+      // source decodes to U+FFFD runs, so the excerpt must say that rather
+      // than present the damage as the file's contents (2026-08-24).
+      const decoded = decodeUtf8(buf);
+      const lossyNote = decoded.lossy ? " (not valid UTF-8)" : "";
+      let text = decoded.text;
       if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
       const lines = text.split("\n");
       const totalLines = text.endsWith("\n") ? lines.length - 1 : lines.length;
@@ -314,7 +319,7 @@ export function showExcerptTool(opts: ShowExcerptToolOpts = {}): HertaTool {
         },
         // The summary is the RECORD BODY's argument (inputSummary drives the
         // op row); the excerpt itself rides evidenceDetail via the bridge.
-        summary: `${safe.relative}:${start}-${end}`,
+        summary: `${safe.relative}:${start}-${end}${lossyNote}`,
       };
     },
   };

@@ -676,8 +676,16 @@ export async function* runBackendTurnLoop(
         // but nothing ever emitted the event — 板砖 finishing a test run was
         // always silent. Emitted AFTER the tool.call.finished above, so the
         // "↳ tests:" record block lands before the beat that reacts to it.
+        //
+        // Both command tools, keyed on the DATA rather than the tool name
+        // (2026-08-24, codex study): this read `call.tool === "run_command"`,
+        // so when the minimal contract became the default on 2026-08-17 the
+        // beat silently stopped firing — `bash` computes `testRun` exactly the
+        // same way, and a test run went invisible to Herta on every default
+        // session for a week. A tool-name gate on a per-contract tool is the
+        // bug; the shape of the result is the honest condition.
         if (
-          call.tool === "run_command" &&
+          (call.tool === "run_command" || call.tool === "bash") &&
           result.ok &&
           (result.data as { testRun?: unknown } | undefined)?.testRun !==
             undefined

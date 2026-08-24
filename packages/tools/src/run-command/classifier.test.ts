@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { classifyCommand, readerPathCandidates } from "./classifier.js";
+import {
+  classifyCommand,
+  classifyShellBody,
+  readerPathCandidates,
+} from "./classifier.js";
 
 describe("classifyCommand — block phase", () => {
   it("blocks rm -rf /", () => {
@@ -750,6 +754,79 @@ describe("classifyShellBody — every command in a compound body (audit S4)", ()
       "cat a | grep x",
     ]) {
       expect(classifyCommand(["sh", "-c", body]).kind).toBe("ask");
+    }
+  });
+});
+
+describe("classifyShellBody — exec-wrappers and quoted nesting (2026-08-24)", () => {
+  // A wrapper is a program whose job is to run another program. The block tier
+  // was reading the WRAPPER's name and concluding nothing catastrophic was
+  // happening, so six spellings downgraded the no-override tier to a plain
+  // "unrecognized command" ask (codex study; cf. Codex's recursive peel).
+  it("peels exec-wrappers before the catastrophic check", () => {
+    for (const body of [
+      "sudo rm -rf /",
+      "sudo -u root rm -rf /",
+      "doas rm -rf /",
+      "env rm -rf /",
+      "env FOO=bar rm -rf /",
+      "nice rm -rf /",
+      "nice -n 19 rm -rf /",
+      "nohup rm -rf /",
+      "setsid rm -rf /",
+      "stdbuf -oL rm -rf /",
+      "timeout 5 rm -rf /",
+      "timeout -k 1 5 rm -rf /",
+      "xargs rm -rf /",
+      "command rm -rf /",
+      "builtin rm -rf /",
+      "sudo env timeout 5 rm -rf /", // a chain, peeled to the end
+    ]) {
+      expect(classifyCommand(["bash", "-c", body]).kind).toBe("block");
+    }
+  });
+
+  it("a quoted inner command survives as one token so re-entry can recurse", () => {
+    // Whitespace-splitting tore the body apart, so the re-entry read `sh` as
+    // the whole inner command and found nothing.
+    expect(classifyCommand(["bash", "-c", `sh -c 'rm -rf /'`]).kind).toBe(
+      "block",
+    );
+    expect(classifyCommand(["bash", "-c", `sudo sh -c "rm -rf ~"`]).kind).toBe(
+      "block",
+    );
+  });
+
+  it("fails closed once the nesting outruns the depth cap", () => {
+    // Each layer wraps the previous one as a single backslash-escaped word.
+    // A few layers still resolve to the benign innermost command; past the cap
+    // the scan refuses rather than reporting "nothing catastrophic found",
+    // which is what it used to do. Four interpreter layers is not something
+    // honest work does.
+    const esc = (s: string) => s.replace(/([\\"' `])/g, "\\$1");
+    const nest = (layers: number) => {
+      let body = "echo x";
+      for (let i = 0; i < layers; i += 1) body = `bash -c ${esc(body)}`;
+      return body;
+    };
+    expect(classifyShellBody(nest(2), 0).hit).toBe(false);
+    const deep = classifyShellBody(nest(4), 0);
+    expect(deep.hit).toBe(true);
+    expect(deep.reason).toMatch(/deeper than the classifier can inspect/);
+    expect(classifyCommand(["bash", "-c", nest(4)]).kind).toBe("block");
+  });
+
+  it("does not blanket-block ordinary wrapper use", () => {
+    // False positives here are unappealable, so the benign twins are pinned.
+    for (const body of [
+      "sudo npm test",
+      "env NODE_ENV=test npm test",
+      "timeout 600 npm test",
+      "nice -n 10 npm run build",
+      "xargs grep foo",
+      "command -v git",
+    ]) {
+      expect(classifyCommand(["bash", "-c", body]).kind).toBe("ask");
     }
   });
 });

@@ -364,6 +364,70 @@ describe("str_replace_editor tool", () => {
     // Not a str_replace_editor input → generic fallback.
     expect(tool().summarize?.({ command: "create" }, ctx)).toBeUndefined();
   });
+
+  // 2026-08-24 (codex study). This is the DEFAULT contract's editor, so the
+  // whole-file U+FFFD rewrite landed here first. A legacy-encoded source has
+  // no NUL, so the binary sniff passed it; every command in this tool writes
+  // the whole file back from the decoded string.
+  describe("non-UTF-8 files", () => {
+    /** `/* 测试注释 *\/` in GBK + an ASCII line. No NUL byte anywhere. */
+    const legacyBytes = () =>
+      Buffer.concat([
+        Buffer.from([
+          0x2f, 0x2a, 0x20, 0xb2, 0xe2, 0xca, 0xd4, 0xd7, 0xa2, 0xca, 0xcd,
+          0x20, 0x2a, 0x2f, 0x0a,
+        ]),
+        Buffer.from("int main(void){ return 0; }\n", "ascii"),
+      ]);
+
+    it("refuses to edit one, and leaves the bytes untouched", async () => {
+      ws = await mkTmpWorkspace({ "legacy.c": "" });
+      const original = legacyBytes();
+      await writeFile(abs("legacy.c"), original);
+      const r = await tool().run(
+        call({
+          command: "str_replace",
+          path: abs("legacy.c"),
+          // Touches only the ASCII line; the damage was never local to it.
+          old_str: "return 0",
+          new_str: "return 1",
+        }),
+        ctxFor(ws.root),
+        noopProgress,
+      );
+      expect(r.ok).toBe(false);
+      expect(r.error?.code).toBe("non_utf8_file");
+      expect(await readFile(abs("legacy.c"))).toEqual(original);
+    });
+
+    it("still VIEWS one, but says the text is lossy", async () => {
+      ws = await mkTmpWorkspace({ "legacy.c": "" });
+      await writeFile(abs("legacy.c"), legacyBytes());
+      const r = await tool().run(
+        call({ command: "view", path: abs("legacy.c") }),
+        ctxFor(ws.root),
+        noopProgress,
+      );
+      expect(r.ok).toBe(true);
+      expect(r.summary).toContain("not valid UTF-8");
+    });
+
+    it("leaves ordinary UTF-8 files — including non-ASCII ones — alone", async () => {
+      ws = await mkTmpWorkspace({ "u.txt": "α 测试 alpha\n" });
+      const r = await tool().run(
+        call({
+          command: "str_replace",
+          path: abs("u.txt"),
+          old_str: "alpha",
+          new_str: "ALPHA",
+        }),
+        ctxFor(ws.root),
+        noopProgress,
+      );
+      expect(r.ok).toBe(true);
+      expect(await readFile(abs("u.txt"), "utf-8")).toBe("α 测试 ALPHA\n");
+    });
+  });
 });
 
 describe("str_replace_editor rule", () => {

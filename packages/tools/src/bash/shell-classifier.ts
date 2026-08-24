@@ -30,8 +30,13 @@ import type { ShellPaths } from "./shell-paths.js";
  *          keeps relative-path reasoning honest only inside the workspace;
  *        - `source`/`.`/`eval`/`exec` ASK (they run text the classifier
  *          cannot see);
- *        - other builtins (`export`, `set`, `unset`, `alias`, `shopt`,
- *          `exit`, `true`, `:`, `[`/`test`, `printf`, `read`…) allow;
+ *        - builtins that RUN, ASSIGN or EVALUATE something are handled one by
+ *          one — `command`/`builtin` peeled, `trap`/`alias` recursed into,
+ *          `jobs -x` peeled, `hash -p` asked, `readonly`/`local`/`printf -v`/
+ *          `read` routed through the env allow-list, `let`/`[[` scanned for
+ *          substitutions that arithmetic would expand (see STATE_BUILTINS);
+ *        - genuinely inert builtins (`set`, `unset`, `shopt`, `exit`, `true`,
+ *          `:`, `echo`, `pwd`…) allow;
  *        - everything else → `classifyCommand(argv)` after ABSOLUTE PATHS
  *          INSIDE THE WORKSPACE are rewritten relative (the model spells
  *          `/e/repo/src/x` because that is what `pwd` printed; the reader
@@ -61,7 +66,32 @@ const RISK_RANK: Record<RiskLevel, number> = {
   workspace_destructive: 4,
 };
 
-/** Builtins that only touch shell state — allowed outright. */
+/**
+ * Builtins that only touch shell state — allowed once nothing above them in
+ * `classifySegment` claimed the segment first.
+ *
+ * The INVARIANT this set is supposed to encode is: *this word runs no command,
+ * assigns no variable, and evaluates no arithmetic.* It was written as a flat
+ * name list and quietly accumulated members that do all three, each of which
+ * then reached allow with `argv[1..]` completely unread (2026-08-24, codex
+ * study and the red team that followed it):
+ *
+ *   - `command`, `builtin`  — exec-wrappers; REMOVED, peeled via EXEC_PEELS.
+ *   - `trap`                — stores an action the shell runs later; REMOVED,
+ *                             recursed via classifyAction.
+ *   - `jobs -x`, `hash -p`  — exec / re-point a command name.
+ *   - `readonly`, `local`   — assign, exactly like `export`.
+ *   - `printf -v`, `read`   — assign.
+ *   - `let`, `[[`, `test`   — evaluate arithmetic, which expands (and so RUNS)
+ *                             a command substitution even inside single
+ *                             quotes.
+ *
+ * The last four groups keep their membership because their ordinary spellings
+ * really are inert; each is intercepted ABOVE this check and only falls
+ * through to it once the dangerous shape has been ruled out. Anything added
+ * here in future must satisfy the invariant in all of its argument forms, not
+ * just its common one.
+ */
 const STATE_BUILTINS = new Set([
   "export",
   "unset",
@@ -89,7 +119,6 @@ const STATE_BUILTINS = new Set([
   "fg",
   "bg",
   "type",
-  "command",
   "hash",
   "umask",
   "ulimit",
@@ -103,7 +132,6 @@ const STATE_BUILTINS = new Set([
   "pwd",
   "dirs",
   "popd",
-  "trap",
   "help",
   "sleep",
 ]);
@@ -162,12 +190,18 @@ export function classifyShellCommandDetailed(
     };
   }
 
-  // 2. strip heredoc bodies; pull substitutions out as their own commands
-  const withoutHeredocs = stripHeredocBodies(trimmed);
+  // 2. strip heredoc bodies; pull substitutions out as their own commands.
+  // A body with an UNQUOTED delimiter is expanded by bash, so its
+  // substitutions are commands too and get classified alongside the outer
+  // ones (the body's plain text is still data, not a command).
+  const { text: withoutHeredocs, expanded } = splitHeredocs(trimmed);
   const { text, inner } = extractSubstitutions(withoutHeredocs);
+  const heredocInner = expanded.flatMap((b) => extractSubstitutions(b).inner);
   const segments = [
     ...splitShellSegments(normalizeFdRedirects(text)),
-    ...inner.flatMap((s) => splitShellSegments(normalizeFdRedirects(s))),
+    ...[...inner, ...heredocInner].flatMap((s) =>
+      splitShellSegments(normalizeFdRedirects(s)),
+    ),
   ];
 
   const asks: Array<Extract<Verdict, { kind: "ask" }>> = [];
@@ -254,7 +288,15 @@ export function singleProgramArgv(
     if (leavesWorkspace(r.target, { ...opts, cwd: root })) return null;
   }
   if (words.length === 0) return null;
-  if (PREFIX_KEYWORDS.has(words[0] as string)) return null;
+  const head = words[0] as string;
+  if (PREFIX_KEYWORDS.has(head)) return null;
+  // A head that runs, arms, or resolves something ELSE means the argv the user
+  // would be granting is not the argv that runs. Fail closed rather than
+  // derive a rule for the wrong program: `trap 'mkdir -p build' EXIT` approved
+  // "for this task" silently covered `trap 'cp ~/.ssh/id_rsa build/k' EXIT`,
+  // because both scoped to "trap" (red team 2026-08-24).
+  if (SCOPE_OPAQUE_HEADS.has(basename(head)) || isDefinitionHead(words))
+    return null;
   return words.map((w, idx) =>
     idx === 0 ? w : relativizeInsideWorkspace(w, { ...opts, cwd: root }),
   );
@@ -273,19 +315,26 @@ function scopeNoise(): Set<string> {
     ...STATE_BUILTINS,
     ...PREFIX_KEYWORDS,
     ...STANDALONE_KEYWORDS,
+    ...EXEC_PEELS,
+    "function",
+    "trap",
     "ls",
     "cat",
     "head",
     "tail",
     "wc",
     "grep",
-    "rg",
-    "find",
     "date",
     "whoami",
     "cd",
     "pushd",
   ]);
+  // `rg` and `find` were here on the premise that "their own asks, if any, are
+  // workspace_read and the cache only remembers workspace_write". That premise
+  // died once `find -execdir` and `rg --pre` were understood as EXEC wrappers:
+  // erased from the scope, they let a co-located `git commit` supply the
+  // cacheable write tier and carried arbitrary execution in under it
+  // (red team 2026-08-24). They are programs now, not noise.
   return scopeNoiseSet;
 }
 
@@ -318,17 +367,36 @@ export function effectivePrograms(
       if (r.kind === "out" && isDevNull(r.target)) continue;
       if (leavesWorkspace(r.target, { ...opts, cwd: root })) return null;
     }
+    // Same head peel the classifier applies, so the scope names the program
+    // that RUNS: `command curl …` is a curl line, not a "command" line.
     let ws = words;
-    while (ws.length > 0 && PREFIX_KEYWORDS.has(ws[0] as string))
-      ws = ws.slice(1);
+    for (let peel = 0; peel <= 4; peel += 1) {
+      while (ws.length > 0 && PREFIX_KEYWORDS.has(ws[0] as string))
+        ws = ws.slice(1);
+      const h = ws[0];
+      if (h === undefined) break;
+      if (basename(h) === "function") {
+        ws = ws.slice(ws.length > 1 ? 2 : 1);
+        continue;
+      }
+      if (EXEC_PEELS.has(basename(h))) {
+        let rest = ws.slice(1);
+        while (rest.length > 0 && /^-[pvV]+$/.test(rest[0] as string))
+          rest = rest.slice(1);
+        if (rest.length === 0) break;
+        ws = rest;
+        continue;
+      }
+      break;
+    }
     const a0 = ws[0];
     if (a0 === undefined) continue;
-    const name =
-      a0
-        .split(/[\\/]/)
-        .pop()
-        ?.toLowerCase()
-        .replace(/\.exe$/, "") ?? a0;
+    const name = basename(a0);
+    // The whole LINE is uncharacterizable if any segment runs something the
+    // head does not name — otherwise `git commit -m wip && find ~ -execdir rm
+    // -rf {} +` scoped to "git" and rode a remembered `git` approval with no
+    // card at all.
+    if (SCOPE_OPAQUE_HEADS.has(name) || isDefinitionHead(ws)) return null;
     if (scopeNoise().has(name)) continue;
     if (!programs.includes(a0)) programs.push(a0);
   }
@@ -353,7 +421,13 @@ const PREFIX_KEYWORDS = new Set([
   "}",
 ]);
 /** Control-flow words that ARE the whole segment (or head an iteration
- *  header) — no program runs from them; their bodies are separate segments. */
+ *  header) — no program runs from them; their bodies are separate segments.
+ *
+ *  `function` was here until 2026-08-24 and should never have been: it heads a
+ *  DEFINITION whose body is a command, and `function git { curl … ; }` was
+ *  therefore allowed outright — then the next allow-tier `git` ran the body.
+ *  It is peeled in `classifySegment` now (keyword + name), so what follows
+ *  classifies. */
 const STANDALONE_KEYWORDS = new Set([
   "fi",
   "done",
@@ -362,7 +436,83 @@ const STANDALONE_KEYWORDS = new Set([
   "select",
   "case",
   "in",
+]);
+/** Builtins that evaluate ARITHMETIC, where bash expands an array subscript —
+ *  and therefore runs a command substitution inside it — regardless of the
+ *  quoting that hid it from `extractSubstitutions`. */
+const ARITHMETIC_BUILTINS = new Set(["let", "[[", "((", "test", "["]);
+/** Exec-wrappers the ask/allow tier peels: they run the command behind them,
+ *  so the tier must be that command's. (`sudo`/`env`/`timeout` and friends are
+ *  deliberately NOT here — peeling them at this tier would turn `sudo npm
+ *  test` into a silent allow. They keep asking; the BLOCK scan peels them.) */
+const EXEC_PEELS = new Set(["command", "builtin"]);
+/** Guards the `trap`/`alias` recursion below. */
+const MAX_ACTION_DEPTH = 3;
+/**
+ * Heads whose line must yield NO cache scope and NO persisted rule.
+ *
+ * What these have in common is that the program a user would think they are
+ * granting is not what actually runs: a wrapper runs its payload, an arming
+ * builtin runs text later, a definition rebinds a name. A remembered
+ * approval keyed on the head therefore covers arbitrary different payloads —
+ * the most severe class the 2026-08-24 red team found, because it turns ONE
+ * honest approval into a standing grant. Returning null (no scope) is always
+ * the safe answer here; a plausible-but-wrong name is not.
+ */
+const SCOPE_OPAQUE_HEADS = new Set([
+  ...EXEC_PEELS,
   "function",
+  "trap",
+  "alias",
+  "jobs",
+  "hash",
+  "readonly",
+  "local",
+  "declare",
+  "typeset",
+  "export",
+  "printf",
+  "read",
+  "let",
+  "[[",
+  "((",
+  "case",
+  "for",
+  "select",
+  "eval",
+  "source",
+  ".",
+  "exec",
+  // Wrapper programs: the payload is the argument, not the head.
+  "sudo",
+  "doas",
+  "pkexec",
+  "su",
+  "runuser",
+  "env",
+  "nice",
+  "ionice",
+  "nohup",
+  "setsid",
+  "stdbuf",
+  "timeout",
+  "xargs",
+  "watch",
+  "flock",
+  "script",
+  "chroot",
+  "strace",
+  "ltrace",
+  "taskset",
+  "unshare",
+  "busybox",
+  "time",
+  // Taken out of scopeNoise() when `-execdir` / `--pre` were understood as
+  // exec knobs — but removing them from "noise" only made them NAME the
+  // scope. They have to be opaque: a remembered `find` covered
+  // `find . -execdir sh -c 'curl …|sh' {} ;`.
+  "find",
+  "rg",
 ]);
 
 interface SegmentVerdict {
@@ -385,32 +535,51 @@ function envAsk(verb: string, key: string): Extract<Verdict, { kind: "ask" }> {
 function classifySegment(
   rawSeg: string,
   opts: ShellClassifyOpts,
+  depth = 0,
 ): SegmentVerdict {
-  // subshell / group punctuation glued to the segment: `(cd x`, `ls)`
-  const seg = rawSeg
-    .replace(/^[({\s]+/, "")
-    .replace(/[)}\s]+$/, "")
-    .trim();
+  // subshell / group punctuation glued to the segment: `(cd x`, `ls)`.
+  //
+  // Only UNBALANCED trailing punctuation is group syntax. Stripping it
+  // unconditionally ate the closing brace of a brace EXPANSION when it was the
+  // last word, so `cat {/etc/passwd,x}` and `node --test {-r,./evil.cjs}` were
+  // left as un-closed fragments that no brace rule could recognise (red team
+  // rounds 2-3).
+  let seg = rawSeg.replace(/^[({\s]+/, "").trim();
+  while (/[)}]$/.test(seg)) {
+    const close = seg.at(-1) as string;
+    const open = close === ")" ? "(" : "{";
+    const opens = seg.split(open).length - 1;
+    const closes = seg.split(close).length - 1;
+    if (closes <= opens) break;
+    seg = seg.slice(0, -1).trim();
+  }
   if (seg.length === 0) return { verdict: { kind: "allow" } };
   const tokenized = tokenize(seg);
   let { words } = tokenized;
   const { assignments, redirects } = tokenized;
-  while (words.length > 0 && PREFIX_KEYWORDS.has(words[0] as string)) {
-    words = words.slice(1);
-  }
-  if (words.length > 0 && STANDALONE_KEYWORDS.has(words[0] as string)) {
-    return { verdict: { kind: "allow" } };
-  }
-  // `case x in pattern) cmd ;;` — the pattern label rides the command word
-  if (words.length > 0 && /\)$/.test(words[0] as string) && words.length > 1) {
-    words = words.slice(1);
-  }
 
+  // Collected BEFORE the head peel, so every exit below — including the
+  // control-flow ones — carries the segment's redirect and assignment asks.
+  // A `for … done > <path>` returned from the standalone branch before the
+  // redirect loop ever ran, so a loop could write the user's Startup folder
+  // with no card (red team round 3).
   const asks: Array<Extract<Verdict, { kind: "ask" }>> = [];
   // env assignments (prefix `K=V …` or bare `K=V`)
-  if (assignments.length > 0) {
-    const env: Record<string, string> = {};
-    for (const a of assignments) env[a.key] = a.value;
+  const env: Record<string, string> = {};
+  for (const a of assignments) env[a.key] = a.value;
+  // `${VAR:=value}` / `${VAR=value}` ASSIGN too, and they are ordinary WORDS —
+  // so they never reached the assignment table and the env allow-list was
+  // never consulted. With `set -a` in the same line that exports them, which
+  // made `: ${GIT_CONFIG_VALUE_0:=touch PWNED}; git diff` and
+  // `: ${NODE_OPTIONS:=--require ./e.js}; npm test` arbitrary execution
+  // behind an allow-tier command (red team round 3).
+  // Scanned over the RAW segment, not the words: the value may contain spaces
+  // (`${NODE_OPTIONS:=--require ./e.js}`), which tokenization splits across
+  // two words and would hide the closing brace from a per-word match.
+  for (const m of seg.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*):?=([^}]*)\}/g)) {
+    env[m[1] as string] = m[2] ?? "";
+  }
+  if (Object.keys(env).length > 0) {
     const bad = findDisallowedEnvKey(env);
     if (bad !== null) asks.push(envAsk("sets", bad));
   }
@@ -439,20 +608,125 @@ function classifySegment(
     }
   }
 
+  // Peel every wrapper word off the head until what is left is the command
+  // that actually runs. Single-pass stripping was the shape of two bypasses:
+  // `function` ended the walk with a verdict of its own, and `command` was
+  // waved through as a state builtin (codex study 2026-08-24).
+  let standalone = false;
+  for (let peel = 0; peel <= MAX_ACTION_DEPTH + 3; peel += 1) {
+    while (words.length > 0 && PREFIX_KEYWORDS.has(words[0] as string)) {
+      words = words.slice(1);
+    }
+    const head = words[0];
+    if (head === undefined) break;
+    if (STANDALONE_KEYWORDS.has(head)) {
+      standalone = true;
+      break;
+    }
+    // `case x in pattern) cmd ;;` — the pattern label rides the command word
+    if (/\)$/.test(head) && words.length > 1) {
+      words = words.slice(1);
+      continue;
+    }
+    const headName = basename(head);
+    // `function NAME { body` / `function NAME() { body` — drop the keyword and
+    // the name it binds; the body behind them is what runs.
+    if (headName === "function") {
+      words = words.slice(words.length > 1 ? 2 : 1);
+      continue;
+    }
+    // POSIX definition, every spacing: `git(){ … }`, `git() { … }`, and
+    // `git () { … }` — the last one puts `()` in its OWN word, which both the
+    // `)$` rule and the glued regex missed, so the head stayed the bare
+    // program name and the definition classified (and SCOPED) as if it were a
+    // real `git` invocation (red team round 3).
+    if (/^[A-Za-z_][A-Za-z0-9_]*\(\)\s*\{?$/.test(head) && words.length > 1) {
+      words = words.slice(1);
+      continue;
+    }
+    if (
+      /^[A-Za-z_][A-Za-z0-9_]*$/.test(head) &&
+      /^\(\)\s*\{?$/.test(words[1] ?? "") &&
+      words.length > 2
+    ) {
+      words = words.slice(2);
+      continue;
+    }
+    if (EXEC_PEELS.has(headName)) {
+      let rest = words.slice(1);
+      let query = false;
+      while (rest.length > 0 && /^-[pvV]+$/.test(rest[0] as string)) {
+        if (/[vV]/.test(rest[0] as string)) query = true;
+        rest = rest.slice(1);
+      }
+      // `command -v git` asks WHERE git is; it runs nothing.
+      if (query) return { verdict: { kind: "allow" } };
+      if (rest.length === 0) break;
+      words = rest;
+      continue;
+    }
+    break;
+  }
+  if (standalone) {
+    const kw = basename(words[0] as string);
+    // `for x in LIST` / `select x in LIST`: the ITERATION LIST is the set of
+    // operands the body will act on, and it was classified NOWHERE — the
+    // comment claimed "their bodies are separate segments", which is true and
+    // says nothing about the list. `for f in /c/Users/victim/.ssh/*; do cat
+    // $f; done` therefore allowed (red team 2026-08-24).
+    if (kw === "for" || kw === "select") {
+      const inIdx = words.indexOf("in");
+      if (inIdx >= 0) {
+        for (const t of words.slice(inIdx + 1)) {
+          if (t === "do" || t === ";") break;
+          if (leavesWorkspace(t, opts) || isCredentialPath(t)) {
+            asks.push({
+              kind: "ask",
+              risk: "workspace_read",
+              code: "command_ask_reader_path",
+              reason: `iterates over a sensitive or out-of-workspace path: ${t}`,
+            });
+          }
+        }
+      }
+      return { verdict: combine(asks) };
+    }
+    // `case X in PATTERN) CMD ;;` — later branches split off on `;;`, but the
+    // FIRST one rides the same segment as the keyword, so it was never
+    // classified. Take the raw text after the pattern label (not the
+    // re-joined tokens, which would lose the quoting a nested `-c` needs).
+    if (kw === "case") {
+      const close = seg.indexOf(")");
+      const branch = close >= 0 ? seg.slice(close + 1).trim() : "";
+      if (branch.length > 0) {
+        const inner = classifyAction(branch, opts, depth, "case branch");
+        if (inner.kind === "block") return { verdict: inner };
+        if (inner.kind === "ask") asks.push(inner);
+      }
+    }
+    return { verdict: combine(asks) };
+  }
+
+  // redirections
   if (words.length === 0) {
     // bare assignment or bare redirect
     return { verdict: combine(asks) };
   }
   const a0 = words[0] as string;
-  const name =
-    a0
-      .split(/[\\/]/)
-      .pop()
-      ?.toLowerCase()
-      .replace(/\.exe$/, "") ?? a0;
+  const name = basename(a0);
 
-  // `export K=V` also goes through the env allow-list
-  if (name === "export" || name === "declare" || name === "typeset") {
+  // `export K=V` also goes through the env allow-list.
+  // `readonly` and `local` assign exactly the same way and were NOT routed
+  // here, so `readonly PATH=/tmp/evil:$PATH` and `local BASH_ENV=./h.sh` were
+  // allowed outright — and in a PERSISTENT shell that poisons every later
+  // command's resolution (red team 2026-08-24).
+  if (
+    name === "export" ||
+    name === "declare" ||
+    name === "typeset" ||
+    name === "readonly" ||
+    name === "local"
+  ) {
     const env: Record<string, string> = {};
     for (const w of words.slice(1)) {
       const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(w);
@@ -464,7 +738,26 @@ function classifySegment(
   }
 
   if (name === "cd" || name === "pushd") {
-    const target = words[1];
+    // Skip `cd`'s own options (`-P`, `-L`, `-e`, `-@`, `--`, and `pushd -n`).
+    // Reading words[1] blindly took the OPTION as the destination: `cd -P
+    // /c/Users/victim` resolved "-P" to an in-workspace path, so the escape
+    // was allowed AND the tracked cwd became `<workspace>/-P`, which made
+    // every later relative operand on the line look local too (red team
+    // 2026-08-24).
+    let ti = 1;
+    while (
+      ti < words.length &&
+      /^-[a-zA-Z@]*$|^--$/.test(words[ti] as string)
+    ) {
+      const w = words[ti] as string;
+      ti += 1;
+      if (w === "--") break;
+      if (w === "-") {
+        ti -= 1; // `cd -` is the previous directory, not an option
+        break;
+      }
+    }
+    const target = words[ti];
     if (
       target === undefined ||
       target === "~" ||
@@ -490,6 +783,141 @@ function classifySegment(
       code: "command_ask_interpreter",
       reason: `${name} runs text the harness cannot classify — review it`,
     });
+    return { verdict: combine(asks) };
+  }
+
+  // `trap ACTION SIGSPEC` — the shell runs ACTION later, and the persistent
+  // shell of the minimal contract DOES exit, so `trap 'rm -rf /' EXIT` was a
+  // real deferred payload sitting behind an allow (codex study 2026-08-24).
+  // Classify the action as the command it is; a reset/ignore/query runs
+  // nothing.
+  if (name === "trap") {
+    // Skip trap's own options — `trap -- 'rm -rf /' EXIT` put `--` in this
+    // slot and the action went unread.
+    let ai = 1;
+    while (ai < words.length && /^-[plP-]$/.test(words[ai] as string)) {
+      const w = words[ai] as string;
+      ai += 1;
+      if (w === "--") break;
+      if (w === "-") {
+        ai -= 1; // `trap - EXIT` resets the handler
+        break;
+      }
+    }
+    const action = words[ai];
+    if (
+      action === undefined ||
+      action === "-" ||
+      action.trim().length === 0 ||
+      /^-[plP]$/.test(action)
+    ) {
+      return { verdict: combine(asks) };
+    }
+    const inner = classifyAction(action, opts, depth, `trap ${action}`);
+    if (inner.kind === "block") return { verdict: inner };
+    if (inner.kind === "ask") asks.push(inner);
+    return { verdict: combine(asks) };
+  }
+
+  // `alias name=value` stores command text the shell substitutes later.
+  // Weaker than `trap`/`function` (this shell runs `--noprofile --norc` over
+  // pipes, so it is non-interactive and expands no aliases until someone runs
+  // `shopt -s expand_aliases`) — but the value is still command text nobody
+  // was looking at, and the enabling shopt is itself allow-tier.
+  if (name === "alias") {
+    for (const w of words.slice(1)) {
+      const eq = w.indexOf("=");
+      if (eq <= 0) continue; // `alias` / `alias name` are queries
+      const value = w.slice(eq + 1).trim();
+      if (value.length === 0) continue;
+      const inner = classifyAction(value, opts, depth, `alias ${w}`);
+      if (inner.kind === "block") return { verdict: inner };
+      if (inner.kind === "ask") asks.push(inner);
+    }
+    return { verdict: combine(asks) };
+  }
+
+  // ── builtins that DO take a command, a variable, or an expression ──
+  //
+  // STATE_BUILTINS means "runs no command of its own, assigns no variable,
+  // evaluates no arithmetic". These members violated it and were allowed with
+  // argv[1..] unread (red team 2026-08-24). Each is handled rather than
+  // removed, so the honest spelling of each still allows.
+
+  // `jobs -x CMD [args]` substitutes jobspecs and then EXECS CMD — an
+  // undocumented-looking but fully documented exec wrapper.
+  if (name === "jobs") {
+    const xi = words.indexOf("-x");
+    if (xi >= 0 && words.length > xi + 1) {
+      const inner = classifyAction(
+        words.slice(xi + 1).join(" "),
+        opts,
+        depth,
+        "jobs -x",
+      );
+      if (inner.kind === "block") return { verdict: inner };
+      if (inner.kind === "ask") asks.push(inner);
+    }
+    return { verdict: combine(asks) };
+  }
+
+  // `hash -p FILE NAME` points NAME at FILE for the rest of the session, so a
+  // later allow-tier `git` runs whatever was planted. Same class as poisoning
+  // PATH, hence the env ask.
+  if (name === "hash" && words.includes("-p")) {
+    asks.push({
+      kind: "ask",
+      risk: "workspace_write",
+      code: "command_ask_env",
+      reason: `hash -p re-points a command name at ${words[words.indexOf("-p") + 1] ?? "a file"} for the rest of the session — later commands would run it instead`,
+    });
+    return { verdict: combine(asks) };
+  }
+
+  // `printf -v VAR` and `read [-r] VAR …` both ASSIGN, so their targets go
+  // through the same env allow-list an `export` would.
+  if (name === "printf" || name === "read") {
+    const targets: string[] = [];
+    if (name === "printf") {
+      const vi = words.indexOf("-v");
+      if (vi >= 0 && words.length > vi + 1)
+        targets.push(words[vi + 1] as string);
+    } else {
+      let seenFormat = false;
+      for (let i = 1; i < words.length; i += 1) {
+        const w = words[i] as string;
+        if (w.startsWith("-")) {
+          // `-p PROMPT`, `-d DELIM`, `-n N`, `-N N`, `-t T`, `-u FD`, `-a ARR`
+          if (/^-[pdnNtua]$/.test(w)) i += 1;
+          continue;
+        }
+        if (!seenFormat && name !== "read") {
+          seenFormat = true;
+          continue;
+        }
+        targets.push(w);
+      }
+    }
+    const env: Record<string, string> = {};
+    for (const t of targets) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(t)) env[t] = "";
+    }
+    const bad = Object.keys(env).length > 0 ? findDisallowedEnvKey(env) : null;
+    if (bad !== null) asks.push(envAsk("assigns", bad));
+    return { verdict: combine(asks) };
+  }
+
+  // Arithmetic evaluation expands array subscripts, so a command substitution
+  // RUNS even inside single quotes — `let 'y[$(curl …)]=1'` executed with no
+  // card because extractSubstitutions passes single-quoted spans through
+  // verbatim. Re-scan the raw segment for substitutions the outer pass could
+  // not see.
+  if (ARITHMETIC_BUILTINS.has(name)) {
+    for (const sub of substitutionsInsideQuotes(seg)) {
+      const inner = classifyAction(sub, opts, depth, `${name} ${sub}`);
+      if (inner.kind === "block") return { verdict: inner };
+      if (inner.kind === "ask") asks.push(inner);
+    }
     return { verdict: combine(asks) };
   }
 
@@ -533,6 +961,147 @@ function cdAsk(target: string): Extract<Verdict, { kind: "ask" }> {
   };
 }
 
+/**
+ * `$( … )` / backtick spans that `extractSubstitutions` deliberately skipped
+ * because they sit inside single quotes.
+ *
+ * Normally that skip is correct — single quotes make a substitution inert.
+ * Inside an ARITHMETIC evaluation they are not inert: bash expands array
+ * subscripts, so `let 'y[$(cmd)]=1'` runs `cmd`. Only the arithmetic builtins
+ * consult this.
+ */
+function substitutionsInsideQuotes(segment: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < segment.length; i += 1) {
+    const ch = segment[i] as string;
+    const isDollar = ch === "$" && segment[i + 1] === "(";
+    if (!isDollar && ch !== "`") continue;
+    if (ch === "`") {
+      const j = segment.indexOf("`", i + 1);
+      if (j === -1) break;
+      const inner = segment.slice(i + 1, j).trim();
+      if (inner.length > 0) out.push(inner);
+      i = j;
+      continue;
+    }
+    let depth = 0;
+    let j = i + 1;
+    for (; j < segment.length; j += 1) {
+      const c = segment[j];
+      if (c === "(") depth += 1;
+      else if (c === ")") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    const inner = segment.slice(i + 2, j).trim();
+    if (inner.length > 0) out.push(inner);
+    i = j;
+  }
+  return out;
+}
+
+/**
+ * Strip the control-flow and wrapper words off a segment's head, so a caller
+ * sees the command that actually runs.
+ *
+ * Exported because the ASYNC reader guard (bash/rule.ts) must start where the
+ * classifier starts. When it did not, `time cat out/win.ini` was enough to
+ * disable it — the guard looked up `time` in its reader table, found nothing,
+ * and checked no paths at all.
+ */
+export function peelReaderHead(words: readonly string[]): string[] {
+  let ws = [...words];
+  for (let peel = 0; peel <= 6; peel += 1) {
+    while (ws.length > 0 && PREFIX_KEYWORDS.has(ws[0] as string))
+      ws = ws.slice(1);
+    const head = ws[0];
+    if (head === undefined) break;
+    const name = basename(head);
+    if (name === "function" && ws.length > 1) {
+      ws = ws.slice(2);
+      continue;
+    }
+    if (EXEC_PEELS.has(name) && ws.length > 1) {
+      let rest = ws.slice(1);
+      while (rest.length > 0 && /^-[pvV]+$/.test(rest[0] as string))
+        rest = rest.slice(1);
+      if (rest.length === 0) break;
+      ws = rest;
+      continue;
+    }
+    break;
+  }
+  return ws;
+}
+
+/**
+ * True when these words DEFINE a function rather than invoke a program —
+ * every spacing of the POSIX form (`f(){`, `f() {`, `f () {`).
+ *
+ * A definition rebinds a name, so the program a scope would report is not what
+ * anything runs. Both scope functions must refuse it, not just the classifier.
+ */
+function isDefinitionHead(words: readonly string[]): boolean {
+  const head = words[0];
+  if (head === undefined) return false;
+  if (/^[A-Za-z_][A-Za-z0-9_]*\(\)/.test(head)) return true;
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(head) && /^\(\)/.test(words[1] ?? "");
+}
+
+/** Program identity of an argv[0]: basename, lowercased, `.exe` stripped. */
+function basename(a0: string): string {
+  return (
+    a0
+      .split(/[\\/]/)
+      .pop()
+      ?.toLowerCase()
+      .replace(/\.exe$/, "") ?? a0
+  );
+}
+
+/**
+ * Classify command text a builtin STORES for the shell to run later
+ * (`trap`'s action, an `alias` value) — the same tiers the text would get if
+ * it had been typed directly.
+ *
+ * Fails CLOSED at the depth cap: text the harness stopped following is not
+ * text the harness may call safe.
+ */
+function classifyAction(
+  text: string,
+  opts: ShellClassifyOpts,
+  depth: number,
+  label: string,
+): Verdict {
+  if (depth >= MAX_ACTION_DEPTH) {
+    return {
+      kind: "ask",
+      risk: "workspace_write",
+      code: "command_ask_interpreter",
+      reason: `${label} — stored command text nested deeper than the harness follows; review it`,
+    };
+  }
+  const blocked = classifyShellBody(text);
+  if (blocked.hit) {
+    return { kind: "block", code: "command_blocked", reason: blocked.reason };
+  }
+  const { text: outer, inner } = extractSubstitutions(stripHeredocBodies(text));
+  const segments = [
+    ...splitShellSegments(normalizeFdRedirects(outer)),
+    ...inner.flatMap((s) => splitShellSegments(normalizeFdRedirects(s))),
+  ];
+  const asks: Array<Extract<Verdict, { kind: "ask" }>> = [];
+  for (const raw of segments) {
+    const s = raw.trim();
+    if (s.length === 0) continue;
+    const r = classifySegment(s, opts, depth + 1);
+    if (r.verdict.kind === "block") return r.verdict;
+    if (r.verdict.kind === "ask") asks.push(r.verdict);
+  }
+  return combine(asks);
+}
+
 function combine(asks: Array<Extract<Verdict, { kind: "ask" }>>): Verdict {
   if (asks.length === 0) return { kind: "allow" };
   asks.sort((a, b) => RISK_RANK[b.risk] - RISK_RANK[a.risk]);
@@ -556,7 +1125,13 @@ function isDevNull(target: string): boolean {
 function leavesWorkspace(token: string, opts: ShellClassifyOpts): boolean {
   const t = token.replace(/^["']|["']$/g, "");
   if (t.startsWith("~")) return true;
-  if (/[$`]/.test(t)) return false; // variables: unknowable, not a path claim
+  // A variable or substitution is UNKNOWABLE, and this returned false for it —
+  // reading "I cannot tell" as "it stays inside". That is the one direction a
+  // containment check may not guess in: `cat $HOME/.config/gh/hosts.yml` and
+  // `npm test > $HOME/.bashrc` both rode it (red team 2026-08-24). Unknowable
+  // now means treated as leaving, which costs an approval card on the honest
+  // `> $LOG` and buys the guarantee back.
+  if (/[$`]/.test(t)) return true;
   const native = opts.paths.toNative(t);
   if (native !== null) return !isInside(opts.workspaceRoot, native);
   if (/^[\\/]/.test(t)) return true; // some other absolute spelling
@@ -617,27 +1192,117 @@ function relativePath(root: string, p: string): string {
 
 // ───────────────────────── lexical helpers ─────────────────────────
 
-/** Remove heredoc BODIES (`<<WORD` … `WORD`), keep the command lines. */
+/**
+ * Remove heredoc BODIES (`<<WORD` … `WORD`), keep the command lines.
+ *
+ * The `<<` that opens a heredoc has to be a real redirection operator. Finding
+ * it with a regex over the raw line was worse than imprecise, it was SILENTLY
+ * LOSSY: any `<<` inside a quoted string or a comment started a heredoc that
+ * never terminated, so every remaining line was dropped before segmentation
+ * and never classified at all. `git grep -n "<<<<<<< HEAD"` followed by
+ * anything — the shape a model reaches for while resolving a merge conflict —
+ * discarded the rest of the command and returned allow (2026-08-24 red team).
+ *
+ * So: scan character by character with quote state, skip `#` comments, and
+ * require a genuine `<<` that is not the `<<<` here-string operator.
+ */
 export function stripHeredocBodies(body: string): string {
+  return splitHeredocs(body).text;
+}
+
+/**
+ * Heredoc bodies removed, and the ones bash would EXPAND handed back.
+ *
+ * A quoted delimiter (`<<'EOF'`) makes the body literal text — that is the
+ * case the "bodies are data, not commands" rule was written for. An UNQUOTED
+ * delimiter (`<<EOF`) does not: bash expands the body, so a `$( … )` inside it
+ * runs. Stripping both alike, before `extractSubstitutions` ever looked, meant
+ * `cat <<EOF` / `$(rm -rf /)` / `EOF` classified as a plain `cat` (red team
+ * round 3).
+ */
+function splitHeredocs(body: string): { text: string; expanded: string[] } {
   const lines = body.split("\n");
   const out: string[] = [];
+  const expanded: string[] = [];
   let terminator: string | null = null;
   let stripTabs = false;
+  let quotedDelimiter = false;
+  let current: string[] = [];
   for (const line of lines) {
     if (terminator !== null) {
       const probe = stripTabs ? line.replace(/^\t+/, "") : line;
-      if (probe === terminator) terminator = null;
+      if (probe === terminator) {
+        if (!quotedDelimiter && current.length > 0)
+          expanded.push(current.join("\n"));
+        current = [];
+        terminator = null;
+      } else if (!quotedDelimiter) {
+        current.push(line);
+      }
       continue;
     }
     out.push(line);
-    const m =
-      /<<(-?)\s*(?:'([^']+)'|"([^"]+)"|\\?([A-Za-z_][A-Za-z0-9_]*))/.exec(line);
-    if (m) {
-      stripTabs = m[1] === "-";
-      terminator = (m[2] ?? m[3] ?? m[4]) as string;
+    const opener = findHeredocOpener(line);
+    if (opener !== null) {
+      stripTabs = opener.stripTabs;
+      terminator = opener.terminator;
+      quotedDelimiter = opener.quoted;
     }
   }
-  return out.join("\n");
+  // An unterminated heredoc still had its lines consumed; keep whatever the
+  // expandable one accumulated rather than dropping it silently.
+  if (!quotedDelimiter && current.length > 0) expanded.push(current.join("\n"));
+  return { text: out.join("\n"), expanded };
+}
+
+/** The heredoc `<<WORD` a line really opens (unquoted, uncommented, and not
+ *  the `<<<` here-string), or null. */
+function findHeredocOpener(
+  line: string,
+): { terminator: string; stripTabs: boolean; quoted: boolean } | null {
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i] as string;
+    if (quote !== null) {
+      if (ch === "\\" && quote === '"' && i + 1 < line.length) {
+        i += 1;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "\\") {
+      i += 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    // An unquoted `#` at a word boundary starts a comment: nothing after it
+    // is an operator.
+    if (ch === "#" && (i === 0 || /\s/.test(line[i - 1] as string)))
+      return null;
+    if (ch !== "<" || line[i + 1] !== "<") continue;
+    // `<<<` is a here-string — its operand is data on the SAME line, and it
+    // opens no body to strip.
+    if (line[i + 2] === "<") {
+      i += 2;
+      continue;
+    }
+    const rest = line.slice(i + 2);
+    const m =
+      /^(-?)\s*(?:'([^']*)'|"([^"]*)"|\\?([A-Za-z_][A-Za-z0-9_]*))/.exec(rest);
+    if (m === null) continue;
+    const terminator = (m[2] ?? m[3] ?? m[4]) as string;
+    if (terminator.length === 0) continue;
+    // `<<'EOF'` / `<<"EOF"` (and `<<\EOF`) suppress expansion; a bare word
+    // does not.
+    const quoted =
+      m[2] !== undefined || m[3] !== undefined || /^-?\s*\\/.test(rest);
+    return { terminator, stripTabs: m[1] === "-", quoted };
+  }
+  return null;
 }
 
 /** Pull `$( … )` and backtick substitutions out (nesting-aware); the text
@@ -671,7 +1336,15 @@ export function extractSubstitutions(body: string): {
       i += 1;
       continue;
     }
-    if (ch === "$" && body[i + 1] === "(" && prev !== "\\") {
+    // `$( … )` command substitution, and `<( … )` / `>( … )` PROCESS
+    // substitution — all three run the text inside as a command. Process
+    // substitution was missed until 2026-08-24, and it read as harmless twice
+    // over: the body never classified, and the leftover `<` made the outer
+    // command look like a redirect from a file (`cat <(curl …)` allowed).
+    const isCmdSubst = ch === "$" && body[i + 1] === "(" && prev !== "\\";
+    const isProcSubst =
+      (ch === "<" || ch === ">") && body[i + 1] === "(" && prev !== "\\";
+    if (isCmdSubst || isProcSubst) {
       // find the matching paren, nesting-aware
       let depth = 0;
       let j = i + 1;
@@ -715,6 +1388,67 @@ export function normalizeFdRedirects(text: string): string {
   return text.replace(/\d*>&\d+/g, " ").replace(/&>\s*\/dev\/null/g, " ");
 }
 
+/** Index of the closing quote of an ANSI-C `$'…'` literal (backslash-aware). */
+function findAnsiCEnd(s: string, from: number): number {
+  for (let j = from; j < s.length; j += 1) {
+    if (s[j] === "\\") {
+      j += 1;
+      continue;
+    }
+    if (s[j] === "'") return j;
+  }
+  return s.length;
+}
+
+/** The C escapes bash resolves inside `$'…'`. Anything unrecognized keeps its
+ *  literal character, which is what bash does too. */
+function decodeAnsiC(body: string): string {
+  let out = "";
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i] as string;
+    if (ch !== "\\") {
+      out += ch;
+      continue;
+    }
+    const n = body[i + 1];
+    if (n === undefined) break;
+    i += 1;
+    if (n === "x" || n === "u" || n === "U") {
+      const width = n === "x" ? 2 : n === "u" ? 4 : 8;
+      const hex = body.slice(i + 1, i + 1 + width).match(/^[0-9a-fA-F]+/)?.[0];
+      if (hex !== undefined && hex.length > 0) {
+        out += String.fromCodePoint(Number.parseInt(hex, 16));
+        i += hex.length;
+        continue;
+      }
+      out += n;
+      continue;
+    }
+    const oct = /^[0-7]{1,3}/.exec(n + body.slice(i + 1, i + 3))?.[0];
+    if (n >= "0" && n <= "7" && oct !== undefined) {
+      out += String.fromCharCode(Number.parseInt(oct, 8));
+      i += oct.length - 1;
+      continue;
+    }
+    const simple: Record<string, string> = {
+      n: "\n",
+      t: "\t",
+      r: "\r",
+      a: "\x07",
+      b: "\b",
+      f: "\f",
+      v: "\v",
+      e: "\x1b",
+      E: "\x1b",
+      "\\": "\\",
+      "'": "'",
+      '"': '"',
+    };
+    out += simple[n] ?? n;
+  }
+  return out;
+}
+
 export interface Tokenized {
   words: string[];
   assignments: Array<{ key: string; value: string }>;
@@ -732,6 +1466,17 @@ export function tokenize(segment: string): Tokenized {
   const s = segment.trim();
   for (let i = 0; i < s.length; i += 1) {
     const ch = s[i] as string;
+    // ANSI-C quoting: `$'…'` is a STRING LITERAL with C escapes, and bash
+    // expands it before anything else sees it. Left undecoded, `$'\x72\x6d'`
+    // reached the catastrophic check as the word `$\x72\x6d` (never `rm`) and
+    // `cat $'.env'` never matched the credential denylist (red team round 3).
+    if (ch === "$" && s[i + 1] === "'" && quote === null) {
+      const end = findAnsiCEnd(s, i + 2);
+      cur += decodeAnsiC(s.slice(i + 2, end));
+      has = true;
+      i = end;
+      continue;
+    }
     if (quote === "'") {
       if (ch === "'") quote = null;
       else cur += ch;

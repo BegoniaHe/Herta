@@ -227,7 +227,10 @@ const PATHISH_VAR =
  *  innocent-basename symlink whose realpath leaves the repo — is caught by
  *  the async checkReaderArgvPaths (reader-guard.ts) in the rule/tool, which
  *  the classifier structurally cannot see (audit T3.4). */
-function readerArgvGuard(argv: readonly string[]): Verdict | null {
+function readerArgvGuard(
+  argv: readonly string[],
+  live = false,
+): Verdict | null {
   for (const raw of argv.slice(1)) {
     // A path GLUED to an option is still a path. Skipping every `-`-prefixed
     // token wholesale meant `wc --files0-from=/…/.ssh/id_rsa`,
@@ -270,7 +273,7 @@ function readerArgvGuard(argv: readonly string[]): Verdict | null {
     // denylist (which knows `.env*` from `*.ts`) rather than asked about here.
     const unknowable =
       a.includes("__SUBST__") ||
-      (/[$`]/.test(a) && (/[\\/]/.test(a) || PATHISH_VAR.test(a))) ||
+      (live && /[$`]/.test(a) && (/[\\/]/.test(a) || PATHISH_VAR.test(a))) ||
       (/\{[^}]*,[^}]*\}/.test(a) && /[\\/]|\.\./.test(a));
     if (absolute || parentEscape || unknowable || isCredentialPath(a)) {
       return {
@@ -427,7 +430,10 @@ const SED_READ_FLAGS = new Set([
  * these, or when the shape is not the read-only one — the caller's later
  * phases (the generic ask) then apply.
  */
-function textFilterVerdict(argv: readonly string[]): Verdict | null {
+function textFilterVerdict(
+  argv: readonly string[],
+  live = false,
+): Verdict | null {
   const a0 = argv[0] as string;
   const writeAsk = (reason: string): Verdict => ({
     kind: "ask",
@@ -446,16 +452,16 @@ function textFilterVerdict(argv: readonly string[]): Verdict | null {
       // Bundled short flags: `-o FILE`, `-uo FILE`, `-oFILE`.
       if (/^-[a-zA-Z]*o/.test(a)) return writeAsk("sort -o writes a file");
     }
-    return readerArgvGuard(argv) ?? { kind: "allow" };
+    return readerArgvGuard(argv, live) ?? { kind: "allow" };
   }
   if (a0 === "uniq") {
     let operands = 0;
     for (const a of argv.slice(1)) if (!a.startsWith("-")) operands += 1;
     if (operands >= 2) return writeAsk("uniq with an OUTPUT operand");
-    return readerArgvGuard(argv) ?? { kind: "allow" };
+    return readerArgvGuard(argv, live) ?? { kind: "allow" };
   }
   if (a0 === "cut" || a0 === "tr" || a0 === "nl") {
-    return readerArgvGuard(argv) ?? { kind: "allow" };
+    return readerArgvGuard(argv, live) ?? { kind: "allow" };
   }
   if (a0 === "sed") {
     const scripts: string[] = [];
@@ -482,7 +488,7 @@ function textFilterVerdict(argv: readonly string[]): Verdict | null {
     }
     if (scripts.length === 0) return null;
     if (!scripts.every((s) => SED_PRINT_SCRIPT.test(s))) return null;
-    return readerArgvGuard(argv) ?? { kind: "allow" };
+    return readerArgvGuard(argv, live) ?? { kind: "allow" };
   }
   return null;
 }
@@ -895,27 +901,73 @@ const ESCAPE_HATCH_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map<
 /** A token carrying a shell expansion the classifier cannot resolve, so any
  *  deny-list decision made by reading argv LITERALLY is unsound. */
 function hasUnresolvedExpansion(argv: readonly string[]): boolean {
-  return argv
-    .slice(1)
-    .some(
-      (a) =>
-        a.includes("${") ||
-        a.includes("$(") ||
-        a.includes("`") ||
-        /\{[^}]*,[^}]*\}/.test(a),
-    );
+  return argv.slice(1).some(isUnresolvable);
 }
 
+function isUnresolvable(a: string): boolean {
+  return (
+    a.includes("${") ||
+    a.includes("$(") ||
+    a.includes("`") ||
+    /\$[A-Za-z_]/.test(a) ||
+    /\{[^}]*,[^}]*\}/.test(a)
+  );
+}
+
+/**
+ * What the classifier cannot resolve about the PROGRAM NAME — so it cannot
+ * know what will run at all.
+ *
+ * `${x:-rm} -rf /`, `{rm,-rf,/}` and `/bin/r?` each reached the ask tier only
+ * because no rule recognised them, and landed on `command_ask_unknown`, which
+ * is both cacheable and rule-eligible. An unknowable program is the one thing
+ * that must never be either.
+ */
+export function unresolvedProgramName(a0: string): string | null {
+  if (/[$`]/.test(a0)) return "a variable or command substitution";
+  if (/\{[^}]*,[^}]*\}/.test(a0)) return "a brace expansion";
+  if (/[*?]|\[[^\]]*\]/.test(a0)) return "a glob";
+  return null;
+}
+
+/**
+ * Programs whose ARGUMENTS cannot change what they do to the machine.
+ *
+ * The allow tier is earned by reading a command; these are the few where
+ * there is nothing in the arguments left to read. Everything else must be
+ * able to account for its operands before it may skip the approval card.
+ */
+const ARG_INDEPENDENT_PROGRAMS: ReadonlySet<string> = new Set([
+  "echo",
+  "true",
+  "false",
+  ":",
+  "pwd",
+  "date",
+  "whoami",
+  "hostname",
+  "uname",
+  "sleep",
+  "printenv",
+  "id",
+  "tty",
+]);
+
 /** The escape-hatch flag an argv carries for its own program, or null. */
-function escapeHatchFlag(argv: readonly string[]): string | null {
+function escapeHatchFlag(
+  argv: readonly string[],
+  shell: boolean,
+): string | null {
   const flags = ESCAPE_HATCH_FLAGS.get(interpreterName(argv[0] as string));
   if (flags === undefined) return null;
   // A deny-list read against literal tokens cannot survive expansion: bash
   // turns `${x:--r}` and `{-O./pager.sh,needle}` into the very flags this
   // list exists to catch, and every literal comparison below misses them
   // (red team round 3). For a program whose safety rests on such a list, an
-  // unresolvable token is itself the finding.
-  if (hasUnresolvedExpansion(argv)) return "an unresolved shell expansion";
+  // unresolvable token is itself the finding — under a shell, at least; an
+  // argv spawned with shell:false expands nothing.
+  if (shell && hasUnresolvedExpansion(argv))
+    return "an unresolved shell expansion";
   for (const a of argv.slice(1)) {
     if (flags.has(a)) return a;
     const eq = a.indexOf("=");
@@ -980,7 +1032,28 @@ export function classifyShellBody(
   return { hit: false, reason: "" };
 }
 
-export function classifyCommand(argv: readonly string[]): Verdict {
+/** `shell: true` when a SHELL will expand this argv before running it — the
+ *  minimal contract's `bash`. `run_command` spawns argv directly (shell:false),
+ *  where an unexpanded `$VAR` is literal text and must not be treated as an
+ *  expansion. */
+export interface ClassifyCommandOpts {
+  shell?: boolean;
+  /** Whether the shell will actually PERFORM an expansion in this command —
+   *  the caller decides, because quoting settles it and only the caller still
+   *  has the raw text (`sed -n '$p'` expands nothing). Defaults to false, so
+   *  `run_command`'s literal argv is never treated as expanding. */
+  unresolved?: boolean;
+}
+
+export function classifyCommand(
+  argv: readonly string[],
+  opts?: ClassifyCommandOpts,
+): Verdict {
+  // Whether an expansion in this argv is LIVE (a shell will perform it). The
+  // caller settles it, because quoting decides and only the caller still has
+  // the raw text. `run_command` passes nothing: its argv is spawned with
+  // shell:false and expands nothing at all.
+  const live = opts?.unresolved === true;
   if (argv.length === 0) {
     return {
       kind: "block",
@@ -1141,7 +1214,10 @@ export function classifyCommand(argv: readonly string[]): Verdict {
   // `npm test --prefix ../evil`, `cargo test --config build.rustc-wrapper=…`,
   // `go test -exec 'sh -c …'`, `node --test --test-reporter ./r.mjs` —
   // all allow, all arbitrary execution or arbitrary file access).
-  const hatch = escapeHatchFlag(argv);
+  const hatch = escapeHatchFlag(
+    argv,
+    opts?.shell === true && opts.unresolved === true,
+  );
   if (hatch !== null) {
     return {
       kind: "ask",
@@ -1149,6 +1225,46 @@ export function classifyCommand(argv: readonly string[]): Verdict {
       code: "command_ask_unknown",
       reason: `${interpreterName(a0)} ${hatch} runs or loads something the harness cannot see — review it`,
     };
+  }
+
+  // ── PHASE 4b — AN ALLOW MUST BE EARNED (ADR 0045, the inversion) ──
+  //
+  // Everything past this point can return `allow`, which runs with NO approval
+  // card at all. The tier therefore may only rest on tokens the classifier
+  // actually READ. Three sweeps of this file found 83 ways to hand it a token
+  // that was never read; the rule below stops the CLASS rather than the
+  // instances — whatever the next unmodelled construct turns out to be, it
+  // arrives as an ask instead of an allow.
+  //
+  // Only under a SHELL. `run_command` spawns an argv with shell:false, so a
+  // `$HOME` in its arguments is the four literal characters and expands to
+  // nothing — gating on it there would be a pure false positive.
+  //
+  // Deliberately not the block tier either: refusing outright would be
+  // unappealable and these are honest shapes most of the time. The user sees
+  // the verbatim command and decides.
+  if (opts?.shell === true && opts.unresolved === true) {
+    const unresolvedHead = unresolvedProgramName(a0);
+    if (unresolvedHead !== null) {
+      return {
+        kind: "ask",
+        risk: "workspace_write",
+        code: "command_ask_unresolved",
+        reason: `the program name is ${unresolvedHead} — the harness cannot tell what would run`,
+      };
+    }
+    if (
+      !ARG_INDEPENDENT_PROGRAMS.has(interpreterName(a0)) &&
+      hasUnresolvedExpansion(argv)
+    ) {
+      return {
+        kind: "ask",
+        risk: "workspace_read",
+        code: "command_ask_unresolved",
+        reason:
+          "an argument expands to something the harness cannot read, so it cannot vouch for what this touches",
+      };
+    }
   }
 
   // PHASE 5 — ALLOW
@@ -1173,14 +1289,14 @@ export function classifyCommand(argv: readonly string[]): Verdict {
   if (
     (a0 === "node" || a0 === "nodejs") &&
     argv[1] === "--test" &&
-    !hasUnresolvedExpansion(argv) &&
+    !(opts?.unresolved === true && hasUnresolvedExpansion(argv)) &&
     !argv.some((a) =>
       /^(-e|--eval|-p|--print|--import|-r|--require|--loader|--experimental-loader)(=|$)/.test(
         a,
       ),
     )
   ) {
-    return readerArgvGuard(argv) ?? { kind: "allow" };
+    return readerArgvGuard(argv, live) ?? { kind: "allow" };
   }
   if (
     ["node", "nodejs", "npm", "pnpm", "npx", "git"].includes(a0) &&
@@ -1196,7 +1312,7 @@ export function classifyCommand(argv: readonly string[]): Verdict {
     (argv[1] === "--check" || argv[1] === "-c") &&
     argv.length === 3
   ) {
-    return readerArgvGuard(argv) ?? { kind: "allow" };
+    return readerArgvGuard(argv, live) ?? { kind: "allow" };
   }
   // Read-only process / port listings — the server-flow briefs check whether
   // the thing they started is up and which pid owns the port; today's
@@ -1222,21 +1338,21 @@ export function classifyCommand(argv: readonly string[]): Verdict {
     // C:\Users\victim *.pem` enumerated a stranger's private keys unprompted
     // (red team 2026-08-24). Name disclosure is the same class find's
     // `-L`/`-follow` ask already exists for.
-    return readerArgvGuard(argv) ?? { kind: "allow" };
+    return readerArgvGuard(argv, live) ?? { kind: "allow" };
   }
   // These three ran the workspace's tests — as long as the operands ARE the
   // workspace. Each was an unconditional allow with no path check at all, so
   // `pytest ../evil` imported and executed arbitrary Python from outside it,
   // and cargo/go compiled and ran an out-of-tree manifest.
-  if (a0 === "pytest") return readerArgvGuard(argv) ?? { kind: "allow" };
+  if (a0 === "pytest") return readerArgvGuard(argv, live) ?? { kind: "allow" };
   if (
     a0 === "cargo" &&
     (argv[1] === "test" || argv[1] === "build" || argv[1] === "check")
   ) {
-    return readerArgvGuard(argv) ?? { kind: "allow" };
+    return readerArgvGuard(argv, live) ?? { kind: "allow" };
   }
   if (a0 === "go" && argv[1] === "test") {
-    return readerArgvGuard(argv) ?? { kind: "allow" };
+    return readerArgvGuard(argv, live) ?? { kind: "allow" };
   }
   if (
     a0 === "git" &&
@@ -1344,7 +1460,8 @@ export function classifyCommand(argv: readonly string[]): Verdict {
   }
   if (a0 === "grep" || a0 === "rg" || a0 === "ripgrep") {
     return (
-      recursiveContentRead(argv) ?? readerArgvGuard(argv) ?? { kind: "allow" }
+      recursiveContentRead(argv) ??
+      readerArgvGuard(argv, live) ?? { kind: "allow" }
     );
   }
   if (a0 === "find") {
@@ -1362,9 +1479,9 @@ export function classifyCommand(argv: readonly string[]): Verdict {
           "find -L/-follow dereferences symlinks during traversal, escaping the workspace guard",
       };
     }
-    return readerArgvGuard(argv) ?? { kind: "allow" };
+    return readerArgvGuard(argv, live) ?? { kind: "allow" };
   }
-  const filter = textFilterVerdict(argv);
+  const filter = textFilterVerdict(argv, live);
   if (filter !== null) return filter;
   if (
     [
@@ -1382,7 +1499,7 @@ export function classifyCommand(argv: readonly string[]): Verdict {
       "whoami",
     ].includes(a0)
   ) {
-    return readerArgvGuard(argv) ?? { kind: "allow" };
+    return readerArgvGuard(argv, live) ?? { kind: "allow" };
   }
 
   // PHASE 6 — DEFAULT

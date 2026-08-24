@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { classifyCommand } from "../run-command/classifier.js";
 import {
   classifyShellCommand,
   classifyShellCommandDetailed,
@@ -735,6 +736,71 @@ describe("no ALLOW without accounting for the whole segment — round 2", () => 
     }
   });
 
+  /**
+   * ADR 0045, the inversion: an ALLOW must be earned, so a token the
+   * classifier cannot read costs a card instead of buying one.
+   *
+   * Measured before shipping, by replaying the 89 real bash calls the
+   * permission lab recorded from DeepSeek across 15 briefs: ONE gained a card
+   * (1.1%). It is the row below — and it is honest, because nothing in the
+   * harness knows what `$f` holds.
+   */
+  describe("an allow must be earned (the inversion)", () => {
+    it("asks when a token cannot be read, rather than allowing on faith", () => {
+      // The measured cost: a loop body reading a variable path.
+      expect(
+        kind(`ls test && for f in test/*; do sed -n '1,200p' "$f"; done`),
+      ).toBe("ask");
+      // An unknowable PROGRAM is the strongest form — it cannot even be named.
+      for (const body of [
+        "${x:-rm} -rf build",
+        "{rm,-rf,build}",
+        "/bin/r? -rf build",
+      ]) {
+        const v = classifyShellCommand(body, opts);
+        expect(v.kind, body).not.toBe("allow");
+      }
+      // …and it must never become a remembered grant, because there is no
+      // program name to remember.
+      expect(singleProgramArgv("${x:-rm} -rf build", opts)).toBeNull();
+      expect(effectivePrograms("${x:-rm} -rf build", opts)).toBeNull();
+    });
+
+    it("an unmodelled builtin OPTION asks — that was every builtin bypass", () => {
+      // `jobs -x` / `hash -p` / `printf -v` are handled by name above; the
+      // point here is the ones nobody has thought of yet.
+      expect(kind("jobs -Z")).toBe("ask");
+      expect(kind("type -Q foo")).toBe("ask");
+      expect(kind("unalias -Z")).toBe("ask");
+      // The forms actually modelled still allow.
+      expect(kind("jobs -l")).toBe("allow");
+      expect(kind("type -t git")).toBe("allow");
+      expect(kind("unalias -a")).toBe("allow");
+    });
+
+    it("does not fire on the model's own idioms, or where no shell expands", () => {
+      // `echo '---'` is the separator DeepSeek prints constantly; treating a
+      // leading dash as a flag made it ask (caught by the lab replay).
+      expect(kind("echo '---'")).toBe("allow");
+      expect(kind("echo '---README---'")).toBe("allow");
+      expect(kind("git status --short && echo '---' && git diff --stat")).toBe(
+        "allow",
+      );
+      expect(kind("cat package.json && echo '---' && npm test")).toBe("allow");
+      // run_command spawns argv with shell:false, so `$HOME` there is five
+      // literal characters and expands to nothing — gating it would be a pure
+      // false positive. The caller says whether an expansion is LIVE, because
+      // quoting settles it: `sed -n '$p'` expands nothing either.
+      expect(classifyCommand(["cat", "$HOME/x"]).kind).toBe("allow");
+      expect(
+        classifyCommand(["cat", "$HOME/x"], { shell: true, unresolved: true })
+          .kind,
+      ).toBe("ask");
+      expect(kind("cat $HOME/x")).toBe("ask"); // unquoted → live
+      expect(kind("sed -n '$p' a")).toBe("allow"); // single-quoted → inert
+    });
+  });
+
   // The async reader guard (bash/rule.ts) realpaths reader operands to catch a
   // junction/symlink out of the workspace. It looked up the RAW first word in
   // its reader table while the classifier peeled prefix words first, so the
@@ -769,8 +835,9 @@ describe("no ALLOW without accounting for the whole segment — round 2", () => 
       // the substitution below never runs and must not be classified.
       "cat <<'EOF'\n$(rm -rf build)\nEOF",
       'git grep -n "TODO" src',
-      // Control flow over workspace paths.
-      "for f in src/*.ts; do cat $f; done",
+      // Control flow over workspace paths. (The loop BODY reading `$f` is the
+      // inversion's one measured cost — see the cost test below.)
+      "for f in src/*.ts; do echo hello; done",
       "case $1 in start) npm test ;; esac",
       // Inert builtins keep their allow.
       "jobs",

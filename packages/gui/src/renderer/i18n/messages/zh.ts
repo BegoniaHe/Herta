@@ -168,6 +168,8 @@ export const zh = {
   "approval.reason.commandProcess": "该命令会结束进程，请核对目标",
   "approval.reason.commandCwdEscape":
     "该命令会切到工作区之外，之后的相对路径不受工作区保护",
+  "approval.reason.commandUnresolved":
+    "这条命令里有黑塔读不出来的部分（变量、通配、展开），不能确定它到底会做什么",
   // A chained line with more than one ask class: the other classes, named.
   "approval.alsoClasses": "另含：{list}",
   "app.fanNotice":

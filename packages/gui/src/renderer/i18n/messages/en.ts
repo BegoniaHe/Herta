@@ -188,6 +188,8 @@ export const en = {
     "This command ends processes — check the target",
   "approval.reason.commandCwdEscape":
     "This command leaves the workspace directory — later relative paths are unguarded",
+  "approval.reason.commandUnresolved":
+    "Part of this command is unreadable to Herta (a variable, glob or expansion) — it cannot tell what it would do",
   "approval.alsoClasses": "Also: {list}",
   "app.fanNotice":
     "Herta is a character from Honkai: Star Rail, © HoYoverse. Unofficial fan project, unaffiliated with and not endorsed by HoYoverse.",

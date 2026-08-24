@@ -5,6 +5,7 @@ import {
   classifyCommand,
   classifyShellBody,
   splitShellSegments,
+  unresolvedProgramName,
   type Verdict,
 } from "../run-command/classifier.js";
 import { findDisallowedEnvKey } from "../run-command/env-guard.js";
@@ -138,6 +139,129 @@ const STATE_BUILTINS = new Set([
 
 /** Builtins that execute text the classifier cannot see. */
 const OPAQUE_BUILTINS = new Set(["source", ".", "eval", "exec"]);
+
+/**
+ * The OPTION forms of each state builtin that are known to be inert
+ * (ADR 0045, the inversion). `null` means "no option of this builtin can make
+ * it run, assign, or evaluate anything", so its flags need no enumeration.
+ *
+ * Every builtin bypass found in three sweeps arrived as an OPTION nobody had
+ * modelled — `command`'s payload, `trap`'s action, `jobs -x`, `hash -p`,
+ * `printf -v`, `read`'s target, `let`'s expression. Listing the safe forms and
+ * asking about the rest inverts that: a flag we have never considered is a
+ * question for the user, not a silent allow.
+ */
+const INERT_BUILTIN_FLAGS: ReadonlyMap<string, ReadonlySet<string> | null> =
+  new Map<string, ReadonlySet<string> | null>([
+    // Options cannot make these exec or assign.
+    ["set", null],
+    ["shopt", null],
+    ["ulimit", null],
+    ["umask", null],
+    ["true", null],
+    ["false", null],
+    [":", null],
+    ["test", null],
+    ["[", null],
+    ["[[", null],
+    ["let", null],
+    ["read", null], // its assignment targets are checked above
+    ["printf", null], // `-v` is checked above
+    ["getopts", null],
+    ["shift", null],
+    ["exit", null],
+    ["return", null],
+    ["break", null],
+    ["continue", null],
+    ["times", null],
+    ["sleep", null],
+    ["wait", null],
+    ["fg", null],
+    ["bg", null],
+    // Enumerated: these have an option that DOES change what runs later.
+    ["unset", new Set(["-v", "-f", "-n"])],
+    ["export", new Set(["-p", "-f", "-n"])],
+    ["readonly", new Set(["-p", "-f", "-a", "-A"])],
+    ["local", new Set(["-a", "-A", "-i", "-n", "-r", "-x", "-p"])],
+    [
+      "declare",
+      new Set([
+        "-a",
+        "-A",
+        "-i",
+        "-n",
+        "-r",
+        "-x",
+        "-p",
+        "-f",
+        "-F",
+        "-g",
+        "-l",
+        "-u",
+        "-t",
+        "-c",
+      ]),
+    ],
+    [
+      "typeset",
+      new Set([
+        "-a",
+        "-A",
+        "-i",
+        "-n",
+        "-r",
+        "-x",
+        "-p",
+        "-f",
+        "-F",
+        "-g",
+        "-l",
+        "-u",
+        "-t",
+        "-c",
+      ]),
+    ],
+    ["alias", new Set(["-p"])],
+    ["unalias", new Set(["-a"])],
+    // `echo` runs nothing whatever its flags, and `echo '---'` is the model's
+    // standard separator — enumerating its options only produced false asks.
+    ["echo", null],
+    ["type", new Set(["-a", "-t", "-P", "-p", "-f"])],
+    ["hash", new Set(["-r", "-l", "-t", "-d"])], // `-p` is checked above
+    ["jobs", new Set(["-l", "-p", "-n", "-r", "-s"])], // `-x` is checked above
+    ["history", new Set(["-c", "-d", "-a", "-n", "-r", "-w", "-p", "-s"])],
+    ["pwd", new Set(["-L", "-P"])],
+    ["dirs", new Set(["-c", "-l", "-p", "-v"])],
+    ["popd", new Set(["-n"])],
+    ["help", new Set(["-d", "-m", "-s"])],
+  ]);
+
+/** The first option of `name` that is not on its inert list, or null. Short
+ *  bundles (`jobs -lp`) are checked letter by letter; `-3` / `+2` are counts,
+ *  not options. */
+function unmodelledBuiltinFlag(
+  name: string,
+  words: readonly string[],
+): string | null {
+  if (!INERT_BUILTIN_FLAGS.has(name)) return null;
+  const inert = INERT_BUILTIN_FLAGS.get(name);
+  if (inert === null || inert === undefined) return null;
+  for (const w of words.slice(1)) {
+    // Only an OPTION SHAPE counts: one or two dashes then a letter. `---` and
+    // `---README---` are separator strings the model prints, `-` and `--` are
+    // conventional operands, `-5`/`+2` are counts. Treating any leading dash
+    // as a flag made `echo '---'` ask (measured on the permission lab corpus).
+    if (!/^--?[A-Za-z]/.test(w) && !/^\+[A-Za-z]/.test(w)) continue;
+    if (inert.has(w)) continue;
+    if (/^-[A-Za-z]+$/.test(w)) {
+      const bad = [...w.slice(1)].find((c) => !inert.has(`-${c}`));
+      if (bad === undefined) continue;
+      return `-${bad}`;
+    }
+    return w;
+  }
+  return null;
+}
 
 /** Redirection operators (with an optional fd prefix stripped by caller). */
 const OUT_REDIRECT = /^(&>>?|\d*>{1,2}\|?)$/;
@@ -295,7 +419,11 @@ export function singleProgramArgv(
   // derive a rule for the wrong program: `trap 'mkdir -p build' EXIT` approved
   // "for this task" silently covered `trap 'cp ~/.ssh/id_rsa build/k' EXIT`,
   // because both scoped to "trap" (red team 2026-08-24).
-  if (SCOPE_OPAQUE_HEADS.has(basename(head)) || isDefinitionHead(words))
+  if (
+    SCOPE_OPAQUE_HEADS.has(basename(head)) ||
+    isDefinitionHead(words) ||
+    unresolvedProgramName(head) !== null
+  )
     return null;
   return words.map((w, idx) =>
     idx === 0 ? w : relativizeInsideWorkspace(w, { ...opts, cwd: root }),
@@ -396,7 +524,12 @@ export function effectivePrograms(
     // head does not name — otherwise `git commit -m wip && find ~ -execdir rm
     // -rf {} +` scoped to "git" and rode a remembered `git` approval with no
     // card at all.
-    if (SCOPE_OPAQUE_HEADS.has(name) || isDefinitionHead(ws)) return null;
+    if (
+      SCOPE_OPAQUE_HEADS.has(name) ||
+      isDefinitionHead(ws) ||
+      unresolvedProgramName(a0) !== null
+    )
+      return null;
     if (scopeNoise().has(name)) continue;
     if (!programs.includes(a0)) programs.push(a0);
   }
@@ -715,6 +848,18 @@ function classifySegment(
   const a0 = words[0] as string;
   const name = basename(a0);
 
+  // ADR 0045, the inversion — checked BEFORE the per-builtin handlers below,
+  // because several of them return early and would otherwise skip it.
+  const unmodelled = unmodelledBuiltinFlag(name, words);
+  if (unmodelled !== null) {
+    asks.push({
+      kind: "ask",
+      risk: "workspace_write",
+      code: "command_ask_unresolved",
+      reason: `${name} ${unmodelled} is an option the harness has not accounted for — review it`,
+    });
+  }
+
   // `export K=V` also goes through the env allow-list.
   // `readonly` and `local` assign exactly the same way and were NOT routed
   // here, so `readonly PATH=/tmp/evil:$PATH` and `local BASH_ENV=./h.sh` were
@@ -928,7 +1073,14 @@ function classifySegment(
   const argv = words.map((w, i) =>
     i === 0 ? w : relativizeInsideWorkspace(w, opts),
   );
-  const v = classifyCommand(argv);
+  // `shell: true` — this argv is about to be EXPANDED by bash, so the
+  // inversion's unresolved-token rules apply here and only here. `unresolved`
+  // is computed from the RAW segment because quoting decides it and the words
+  // above have already lost their quotes.
+  const v = classifyCommand(argv, {
+    shell: true,
+    unresolved: hasLiveExpansion(seg),
+  });
   if (v.kind === "block") return { verdict: v };
   if (v.kind === "ask") asks.push(v);
   return { verdict: combine(asks) };
@@ -1047,6 +1199,47 @@ function isDefinitionHead(words: readonly string[]): boolean {
   if (head === undefined) return false;
   if (/^[A-Za-z_][A-Za-z0-9_]*\(\)/.test(head)) return true;
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(head) && /^\(\)/.test(words[1] ?? "");
+}
+
+/**
+ * Does this segment contain an expansion the shell will actually PERFORM?
+ *
+ * Quoting decides. Single quotes suppress every expansion, so `sed -n '$p' a`
+ * passes bash the two literal characters `$p` — a sed script, not a variable.
+ * The tokenizer strips quotes before the classifier sees a word, which loses
+ * exactly the fact that matters, so this reads the RAW segment instead.
+ * Getting it wrong in the safe direction still costs a card on a very common
+ * idiom, which is how it was caught (permission-lab replay).
+ */
+function hasLiveExpansion(seg: string): boolean {
+  for (let i = 0; i < seg.length; i += 1) {
+    const ch = seg[i] as string;
+    if (ch === "\\") {
+      i += 1;
+      continue;
+    }
+    if (ch === "'") {
+      const end = seg.indexOf("'", i + 1);
+      i = end === -1 ? seg.length : end;
+      continue;
+    }
+    if (ch === "$" && seg[i + 1] === "'") {
+      // ANSI-C literal: decoded by tokenize, expands nothing.
+      i = findAnsiCEnd(seg, i + 2);
+      continue;
+    }
+    if (ch === '"') {
+      // Double quotes still expand — walk INTO them.
+      const end = seg.indexOf('"', i + 1);
+      const inner = seg.slice(i + 1, end === -1 ? seg.length : end);
+      if (/\$\{|\$\(|`|\$[A-Za-z_]/.test(inner)) return true;
+      i = end === -1 ? seg.length : end;
+      continue;
+    }
+    if (ch === "`") return true;
+    if (ch === "$" && /[{(A-Za-z_]/.test(seg[i + 1] ?? "")) return true;
+  }
+  return /\{[^}'"]*,[^}'"]*\}/.test(seg);
 }
 
 /** Program identity of an argv[0]: basename, lowercased, `.exe` stripped. */

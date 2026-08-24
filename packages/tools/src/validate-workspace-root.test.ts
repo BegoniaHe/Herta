@@ -1,4 +1,6 @@
+import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
@@ -135,6 +137,72 @@ describe("a symlinked root is canonicalized (audit S8)", () => {
     if (!r.ok) expect(r.code).toBe("ws_forbidden_root");
   });
 });
+
+// win32-only: `subst` maps a drive letter onto a directory — the shape of a
+// user's F: workspace ("挂在F盘", user report 2026-08-24). The JS realpathSync
+// walk cannot see through it (a mapping is not a reparse point), while the
+// native realpath `resolveSafePath` uses resolves it — so a root left in the
+// mapped spelling denies EVERY candidate, `run_command`'s own cwd "." first.
+describe.skipIf(process.platform !== "win32")(
+  "a subst-mapped drive root is canonicalized like the files inside it",
+  () => {
+    let tmp: string;
+    let drive: string | null = null;
+    beforeEach(() => {
+      tmp = realpathSync.native(mkdtempSync(join(tmpdir(), "ws-subst-")));
+      mkdirSync(join(tmp, "ws"));
+      writeFileSync(join(tmp, "ws", "a.ts"), "x", "utf8");
+      // A free letter, scanned high to low; `subst` needs no elevation but a
+      // policy may still refuse it — then the tests no-op (canSymlink pattern).
+      drive = null;
+      for (const letter of "ZYXWVUTSRQPONMLKJHG") {
+        if (existsSync(`${letter}:\\`)) continue;
+        const r = spawnSync("subst", [`${letter}:`, tmp], {
+          windowsHide: true,
+        });
+        if (r.status === 0) {
+          drive = `${letter}:`;
+          break;
+        }
+      }
+    });
+    afterEach(() => {
+      if (drive !== null) {
+        spawnSync("subst", [drive, "/D"], { windowsHide: true });
+        drive = null;
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    });
+
+    it("resolves the mapping to the native spelling", () => {
+      if (drive === null) return;
+      expect(canonicalWorkspaceRoot(`${drive}\\ws`)).toBe(join(tmp, "ws"));
+    });
+
+    it("the symptom: file operations under a mapped root now resolve", async () => {
+      if (drive === null) return;
+      const mapped = `${drive}\\ws`;
+
+      // The bug, verbatim: a root kept in the mapped spelling can contain
+      // nothing — the candidate realpaths to the underlying path.
+      const raw = await resolveSafePath(mapped, "a.ts");
+      expect(raw.ok).toBe(false);
+      if (!raw.ok) expect(raw.code).toBe("path_outside_workspace");
+
+      const check = validateWorkspaceRoot(mapped, { home: join(tmp, "home") });
+      expect(check.ok).toBe(true);
+      if (check.ok) {
+        expect(check.resolved).toBe(join(tmp, "ws"));
+        // run_command resolves its cwd "." before anything else — this exact
+        // call failing is what "板砖本地命令都调不出来" looked like.
+        const cwd = await resolveSafePath(check.resolved, ".");
+        expect(cwd.ok).toBe(true);
+        const file = await resolveSafePath(check.resolved, "a.ts");
+        expect(file.ok).toBe(true);
+      }
+    });
+  },
+);
 
 describe("canonicalWorkspaceRoot", () => {
   it("falls back to the lexical resolve for a path that does not exist", () => {

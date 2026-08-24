@@ -36,6 +36,19 @@ const SYSTEM_DIRS = [
  * Windows junction. The test suite already knew: `testing/tmp-workspace.ts`
  * realpaths its own root precisely so the suite does not hit this.
  *
+ * NATIVE realpath first (user report 2026-08-24): `resolveSafePath` uses
+ * `fsPromises.realpath`, which has native semantics — on Windows it resolves
+ * subst and mapped network drives (`F:\ws` → `C:\real\ws` or `\\srv\share\ws`),
+ * which the JS `realpathSync` walk does not (a drive mapping is not a reparse
+ * point on any path component). A root canonicalized with the JS walk while
+ * candidates canonicalize natively re-creates the S8 symptom wholesale for a
+ * workspace on a mapped drive: even `resolveSafePath(root, ".")` is denied,
+ * so 板砖 cannot run a single command. Both sides must share ONE semantics.
+ * The JS walk stays as the middle fallback: on filesystems where the native
+ * call fails (some network redirectors), candidate realpaths fail too and
+ * `resolveSafePath` degrades to lexical prefix checks — the JS result keeps
+ * the root in that same un-resolved spelling, so the two still agree.
+ *
  * Falls back to the lexical resolve when the path does not exist — the caller
  * is about to reject it anyway, and a fallback keeps the error "no such
  * directory" instead of an EIO from deep inside a resolver.
@@ -43,9 +56,13 @@ const SYSTEM_DIRS = [
 export function canonicalWorkspaceRoot(input: string): string {
   const lexical = resolve(input);
   try {
-    return realpathSync(lexical);
+    return realpathSync.native(lexical);
   } catch {
-    return lexical;
+    try {
+      return realpathSync(lexical);
+    } catch {
+      return lexical;
+    }
   }
 }
 

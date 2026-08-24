@@ -168,6 +168,8 @@ describe("BanzhuanSettings", () => {
       await waitFor(() =>
         expect(queryByText(/No bash was found on this machine/)).toBeTruthy(),
       );
+      // ADR 0044: the sentence names the remedy, not just the problem.
+      expect(queryByText(/Install Git for Windows/)).toBeTruthy();
     });
 
     it("hides the row when the bridge's config carries no contract (older bridge / website demo)", async () => {

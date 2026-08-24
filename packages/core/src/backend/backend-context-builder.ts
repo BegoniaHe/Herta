@@ -376,6 +376,40 @@ export function minimalBackendContract(
   return (lang === "en" ? en : zh).join("\n");
 }
 
+/**
+ * Host-environment note for the STANDARD contract on Windows (ADR 0044,
+ * un-deferring the Slice 11 platform deferral by owner decision 2026-08-24).
+ *
+ * On a bash-less Windows machine the standard contract is what actually runs
+ * (the minimal contract needs Git Bash, and its absence falls back here), and
+ * the backend's training bias is Unix: it reaches for grep/sed/ls, every one
+ * a `not_found`, and the user reads "很多命令执行不了". One section says what
+ * the host is and where each of those habits should go instead.
+ *
+ * The base contract constants stay platform-free — the WIRING decides when
+ * this note applies (platform === "win32" and contract === "standard"); core
+ * only owns the text. The minimal contract never carries it: it runs on bash
+ * by construction, so the Unix habits work there.
+ */
+export function windowsBackendHostNote(lang: "zh" | "en"): string {
+  return lang === "en"
+    ? `# Host environment
+
+This machine runs Windows and has no bash: Unix utilities (grep, sed, ls,
+cat) do not exist here, and run_command executes an argv directly — no shell
+expansion, no pipes, no redirection. Search content with search_text, find
+files with glob / list_files, read with read_file, edit with edit_file /
+write_new_file; a command that must run (node, npm test, …) gets its argv
+directly. Do not reach for Unix tools or try to compose pipelines.`
+    : `# 主机环境
+
+这台机器是 Windows，没有 bash：grep、sed、ls、cat 这类 Unix 命令不存在，
+run_command 直接按 argv 执行，没有 shell 展开、管道和重定向。搜内容用
+search_text，找文件用 glob / list_files，读文件用 read_file，改文件用
+edit_file / write_new_file；要跑的命令（node、npm test 等）直接给 argv。
+不要试 Unix 工具，也不要拼管道。`;
+}
+
 export interface BackendContextBuilderDeps {
   tools: ToolRegistry;
   /** Defaults to "standard". */
@@ -387,6 +421,14 @@ export interface BackendContextBuilderDeps {
    * "" → the line is omitted.
    */
   workspaceHint?: () => string | undefined;
+  /**
+   * Host-environment section appended to the STANDARD contract (ADR 0044) —
+   * the wiring passes `windowsBackendHostNote(lang)` on win32 and nothing
+   * elsewhere. Ignored under the minimal contract (bash exists there by
+   * construction). Undefined / "" → the section is omitted and the frame is
+   * byte-identical to before.
+   */
+  hostNote?: string;
 }
 
 export interface BackendBuildInput {
@@ -428,11 +470,13 @@ export class BackendContextBuilder {
   private readonly tools: ToolRegistry;
   private readonly contractKind: BackendContract;
   private readonly workspaceHint: (() => string | undefined) | undefined;
+  private readonly hostNote: string | undefined;
 
   constructor(deps: BackendContextBuilderDeps) {
     this.tools = deps.tools;
     this.contractKind = deps.contract ?? "standard";
     this.workspaceHint = deps.workspaceHint;
+    this.hostNote = deps.hostNote;
   }
 
   /** Which contract this builder emits (ADR 0040). */
@@ -447,12 +491,16 @@ export class BackendContextBuilder {
       lang,
       input.omittedUserMessages ?? 0,
     );
+    const standardBase =
+      lang === "en"
+        ? BACKEND_EXECUTION_CONTRACT_EN
+        : BACKEND_EXECUTION_CONTRACT;
     const contract =
       this.contractKind === "minimal"
         ? minimalBackendContract(lang, this.workspaceHint?.())
-        : lang === "en"
-          ? BACKEND_EXECUTION_CONTRACT_EN
-          : BACKEND_EXECUTION_CONTRACT;
+        : this.hostNote !== undefined && this.hostNote.length > 0
+          ? `${standardBase}\n\n${this.hostNote}`
+          : standardBase;
     const workingHeader =
       lang === "en" ? WORKING_HISTORY_HEADER_EN : WORKING_HISTORY_HEADER;
     const recentHeader =

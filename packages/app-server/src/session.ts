@@ -248,6 +248,20 @@ export interface SessionInternalDeps {
 /** Easter-egg voice throttle: ≤1 play per session per hour. */
 const EASTER_EGG_COOLDOWN_MS = 60 * 60 * 1000;
 
+/**
+ * ADR 0044: the record note a NEW session carries when the configured
+ * `minimal` contract fell back to `standard` because no bash exists on this
+ * machine. Names the remedy — before this, the only surfaces were a
+ * console.warn no GUI user sees and a Settings sentence that named the
+ * problem but not the fix. Static harness text (the appendSystemNote caller
+ * owns sanitizing; there is no user input here).
+ */
+function contractFallbackNote(lang: PromptLang): string {
+  return lang === "en"
+    ? 'no bash found — the "minimal" tool contract is unavailable, running "standard" this session. Install Git for Windows (or set HERTA_BASH) and restart.'
+    : "未检测到 bash：工具契约「极简」不可用，本次按「标准」运行。安装 Git for Windows（或设置 HERTA_BASH）后重启生效。";
+}
+
 // ── SessionImpl ─────────────────────────────────────────────────────────────
 
 export class SessionImpl implements Session {
@@ -317,6 +331,12 @@ export class SessionImpl implements Session {
   // resumed sessions and new sessions with no opening. Cleared (one-shot) once
   // playOpening commits it.
   private pendingOpening: TerminalRecordBlock | null;
+
+  // ADR 0044: deferred contract-fallback record note (minimal asked for, no
+  // bash found) — null when the contract ran as configured or the session is
+  // resumed. Flushed one-shot by flushContractNote (see its doc for why it is
+  // deferred rather than appended at create).
+  private pendingContractNote: string | null;
 
   // Voice clipId for the pending opening (its filename stem, e.g.
   // "004-late-night-audit"), or null when there's no opening / no voice. Emitted
@@ -412,6 +432,7 @@ export class SessionImpl implements Session {
     deepSeekKey: () => string;
     lang: PromptLang;
     lastTurnEnd?: LastTurnEnd;
+    pendingContractNote: string | null;
   }) {
     this.lastTurnEnd = opts.lastTurnEnd;
     this.sessionId = opts.sessionId;
@@ -443,6 +464,30 @@ export class SessionImpl implements Session {
     this.easterEggRandom = opts.easterEggRandom;
     this.easterEggNow = opts.easterEggNow;
     this.lang = opts.lang;
+    this.pendingContractNote = opts.pendingContractNote;
+  }
+
+  /**
+   * ADR 0044: flush the deferred contract-fallback note (minimal asked for,
+   * no bash on this machine) as an out-of-turn `→ 系统` record note — the
+   * shared record per D7, so the user learns the remedy where they live and
+   * Herta can answer "why is 板砖 on the standard contract" from the record.
+   *
+   * Deferred rather than appended at create because the record's block order
+   * must match the persisted order: a NEW session's opening seed is persisted
+   * at create but only committed to the in-memory record when playOpening
+   * streams it, so a create-time note would land BEFORE the opening in memory
+   * and AFTER it on disk. One-shot; between turns only (appendSystemNote's
+   * contract). Called from playOpening (GUI — the note lands right after the
+   * opening) and from submitText (a front-end that never plays openings, e.g.
+   * the CLI — the note lands before the first user block).
+   */
+  private flushContractNote(): void {
+    const note = this.pendingContractNote;
+    if (note === null || this.currentTurn !== null) return;
+    this.pendingContractNote = null;
+    this.driver.appendSystemNote("系统", note);
+    this._record = this.driver.getRecord();
   }
 
   /**
@@ -515,6 +560,10 @@ export class SessionImpl implements Session {
     if (this.currentTurn !== null) {
       throw new Error("a turn is already in progress");
     }
+    // ADR 0044: a front-end that never calls playOpening (the CLI) still gets
+    // the contract-fallback note — between turns, before this turn's user
+    // block. One-shot no-op everywhere else.
+    this.flushContractNote();
     const turnId = randomUUID();
     const abortController = new AbortController();
     let settleTurn: () => void = () => {};
@@ -673,7 +722,12 @@ export class SessionImpl implements Session {
    */
   async playOpening(): Promise<void> {
     const block = this.pendingOpening;
-    if (block === null) return;
+    if (block === null) {
+      // No seed to stream (resumed session, or a new one without an opening)
+      // — but a deferred contract note still wants the record (ADR 0044).
+      this.flushContractNote();
+      return;
+    }
     // Single-turn invariant (see submitText): don't stream the opening over an
     // in-flight turn. In practice currentTurn is null here (playOpening fires on
     // create before any turn), so this is a defensive backstop.
@@ -729,6 +783,10 @@ export class SessionImpl implements Session {
       settleTurn();
       if (this.currentTurn?.turnId === turnId) this.currentTurn = null;
     }
+    // After the opening settles (success, skip, or failure — the seed is
+    // durable either way): the contract-fallback note follows it into the
+    // record, so the user reads the opening first and the notice second.
+    this.flushContractNote();
   }
 
   async interrupt(opts?: {
@@ -1458,8 +1516,8 @@ export class SessionImpl implements Session {
       // The contract the setting asks for (ADR 0040). `minimal` needs a bash
       // on this machine; without one the session runs `standard`. The
       // Settings row shows the detection result (the GUI's getBackendContract
-      // reports `bashFound`), so the fallback is visible where the choice is
-      // made rather than as a record note.
+      // reports `bashFound`), and since ADR 0044 a NEW session also carries
+      // one `→ 系统` record note naming the remedy (see contractFallbackNote).
       wantMinimal: config.backendContract === "minimal",
       backendProvider,
       // The digest tool's side model (ADR 0043): flash, thinking off. A test
@@ -1500,7 +1558,9 @@ export class SessionImpl implements Session {
     if (overlayResolver === undefined) {
       throw new Error("createBackendStack did not build the ask resolver");
     }
-    if (config.backendContract === "minimal" && backend.bashPath === null) {
+    const contractFellBack =
+      config.backendContract === "minimal" && backend.bashPath === null;
+    if (contractFellBack) {
       console.warn(
         "[herta] backendContract=minimal requested but no bash found (install Git for Windows or set HERTA_BASH); running the standard contract",
       );
@@ -1841,6 +1901,12 @@ export class SessionImpl implements Session {
       easterEggNow,
       deepSeekKey,
       lang,
+      // ADR 0044: NEW sessions only — a resumed record already carried the
+      // note when it was new (and the machine state may have changed since).
+      pendingContractNote:
+        contractFellBack && initialRecord.length === 0
+          ? contractFallbackNote(lang)
+          : null,
     });
     sessionHolder.session = session;
     return session;

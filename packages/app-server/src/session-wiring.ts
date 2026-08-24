@@ -43,6 +43,7 @@ import {
   SessionApprovalCache,
   type TerminalRecord,
   type TerminalRecordBlock,
+  windowsBackendHostNote,
   wireTaskScopedApprovalCache,
 } from "@herta/core";
 import {
@@ -152,6 +153,11 @@ export interface BackendStackOpts {
   /** The digest tool's side model (ADR 0043); null mounts the tool as
    *  `unavailable` (no key, tests). */
   readonly digestModel: DigestModel | null;
+  /** Test seam for the host-note decision (ADR 0044); defaults to
+   *  `process.platform`. On "win32" the STANDARD contract carries
+   *  `windowsBackendHostNote` — the minimal contract never does (it runs on
+   *  bash by construction). */
+  readonly platform?: NodeJS.Platform;
   /** Builds the front-end's ask resolver once the cache and rule store it
    *  consults exist. The returned resolver is the permission engine's. */
   readonly makeAsk: (deps: {
@@ -231,6 +237,14 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
       contract === "minimal"
         ? shellWorkspaceHint(bashPath, wsHolder.current, lang)
         : undefined,
+    // ADR 0044: the standard contract on Windows says what the host is —
+    // without it the backend's Unix habits (grep/sed/ls) are a not_found
+    // each, which is what a bash-less machine's user reads as "很多命令
+    // 执行不了". win32-only, standard-only; the note text lives in core.
+    ...((opts.platform ?? process.platform) === "win32" &&
+    contract === "standard"
+      ? { hostNote: windowsBackendHostNote(lang) }
+      : {}),
   });
 
   // Permission rules attach to the shared engine.

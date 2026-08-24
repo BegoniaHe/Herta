@@ -141,7 +141,8 @@ export const zh = {
   "banzhuan.contract": "工具契约",
   "banzhuan.contractDesc":
     "板砖使用的工具组合。标准：一套专用工具集；极简：精简工具组，大幅降低执行成本，需要本机已安装 bash。下次启动生效。",
-  "banzhuan.contract.noBash": "本机未检测到 bash，选极简也会按标准运行。",
+  "banzhuan.contract.noBash":
+    "本机未检测到 bash，选极简也会按标准运行；装上 Git for Windows 后重启即可用。",
   "banzhuan.contract.standard": "标准",
   "banzhuan.contract.minimal": "极简",
   "approval.title": "请求权限",

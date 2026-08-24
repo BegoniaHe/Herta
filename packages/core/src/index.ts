@@ -14,6 +14,7 @@ export {
   type BackendContract,
   minimalBackendContract,
   serializeUserHistory,
+  windowsBackendHostNote,
 } from "./backend/backend-context-builder.js";
 export {
   type BackendTurnDeps,

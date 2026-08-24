@@ -11,6 +11,7 @@ import {
   serializeUserHistory,
   WORKING_HISTORY_HEADER,
   WORKING_HISTORY_HEADER_EN,
+  windowsBackendHostNote,
 } from "./backend-context-builder.js";
 
 const sampleBrief: HertaToAgentBrief = { taskId: "t-1" };
@@ -110,7 +111,7 @@ describe("BACKEND_EXECUTION_CONTRACT", () => {
 
   // -- Negative assertions: deferred features must NOT leak in --
 
-  it("does not contain platform-specific wording (Slice 11 defers platform handling)", () => {
+  it("stays platform-free as a CONSTANT (ADR 0044: the platform note is injected by the wiring on win32, never baked in here)", () => {
     expect(BACKEND_EXECUTION_CONTRACT).not.toMatch(/cmd \/c/i);
     expect(BACKEND_EXECUTION_CONTRACT).not.toMatch(/windows/i);
     expect(BACKEND_EXECUTION_CONTRACT).not.toMatch(/darwin/i);
@@ -554,5 +555,70 @@ describe("minimal contract (ADR 0040)", () => {
     expect(sys).toContain("report_finding");
     expect(sys).not.toContain(BACKEND_EXECUTION_CONTRACT_EN);
     expect(sys).not.toMatch(/# Scope classification/);
+  });
+});
+
+describe("host note (ADR 0044)", () => {
+  const common = {
+    brief: sampleBrief,
+    userMessages: sampleUserMessages,
+    scopedRepoInstructions: "",
+    scopedMemory: "",
+    messages: [],
+  };
+
+  it("windowsBackendHostNote names the host and where the Unix habits go, both languages", () => {
+    const zh = windowsBackendHostNote("zh");
+    expect(zh).toContain("# 主机环境");
+    expect(zh).toContain("Windows");
+    expect(zh).toContain("没有 bash");
+    expect(zh).toContain("search_text");
+    expect(zh).toContain("run_command");
+    const en = windowsBackendHostNote("en");
+    expect(en).toContain("# Host environment");
+    expect(en).toContain("Windows");
+    expect(en).toContain("search_text");
+  });
+
+  it("appends the note to the STANDARD contract as its own section, after the base", () => {
+    const tools = new InMemoryToolRegistry();
+    const builder = new BackendContextBuilder({
+      tools,
+      hostNote: windowsBackendHostNote("zh"),
+    });
+    const sys = builder.build(common).backendSystem;
+    expect(sys).toContain(BACKEND_EXECUTION_CONTRACT);
+    expect(sys).toContain("# 主机环境");
+    expect(sys.indexOf("# 主机环境")).toBeGreaterThan(
+      sys.indexOf("# 分寸"), // the base contract's last section comes first
+    );
+  });
+
+  it("without a hostNote the standard frame is byte-identical to before", () => {
+    const tools = new InMemoryToolRegistry();
+    const withNote = new BackendContextBuilder({
+      tools,
+      hostNote: windowsBackendHostNote("zh"),
+    });
+    const without = new BackendContextBuilder({ tools });
+    const empty = new BackendContextBuilder({ tools, hostNote: "" });
+    expect(without.build(common).backendSystem).not.toContain("# 主机环境");
+    // "" behaves like absent (the wiring's spread-nothing path).
+    expect(empty.build(common).backendSystem).toBe(
+      without.build(common).backendSystem,
+    );
+    expect(withNote.build(common).backendSystem).not.toBe(
+      without.build(common).backendSystem,
+    );
+  });
+
+  it("the minimal contract never carries it (bash exists there by construction)", () => {
+    const tools = new InMemoryToolRegistry();
+    const builder = new BackendContextBuilder({
+      tools,
+      contract: "minimal",
+      hostNote: windowsBackendHostNote("zh"),
+    });
+    expect(builder.build(common).backendSystem).not.toContain("# 主机环境");
   });
 });

@@ -35,6 +35,7 @@ import {
   registerVoiceProtocol,
   registerVoiceScheme,
 } from "./voice-protocol.js";
+import { applyWindowsPath } from "./win-path.js";
 import { captureWindowState, restoreWindowBounds } from "./window-state.js";
 
 // Privileged-scheme registration MUST happen before app ready (Electron
@@ -528,6 +529,12 @@ void app.whenReady().then(async () => {
   // downgrades to the JS walker. No-op off darwin and when launched from a
   // terminal; bounded so a slow rc file cannot delay startup.
   await applyLoginPath({ platform: process.platform, env: process.env });
+  // Windows PATH recovery (ADR 0044) — same seam, same reason: the app
+  // inherits Explorer's PATH snapshot, so a node/git installed after that
+  // snapshot resolves in every fresh terminal but not here. Appends the
+  // registry's machine+user PATH entries; never removes or reorders what was
+  // inherited. No-op off win32; bounded by the reg-query timeouts.
+  await applyWindowsPath({ platform: process.platform, env: process.env });
   closeToTray = s.closeToTray ?? true;
   lastTheme = s.theme ?? "system";
   // Native surfaces (tray context menu, system dialogs) follow Chromium's

@@ -154,7 +154,7 @@ export const en = {
   "banzhuan.contractDesc":
     "The toolset Brick works with. Standard: a full set of dedicated tools; Minimal: a lean toolset that cuts running cost sharply and needs bash installed on this machine. Applies on the next launch.",
   "banzhuan.contract.noBash":
-    "No bash was found on this machine; Minimal will run as Standard.",
+    "No bash was found on this machine; Minimal will run as Standard. Install Git for Windows and restart to enable it.",
   "banzhuan.contract.standard": "Standard",
   "banzhuan.contract.minimal": "Minimal",
   "approval.title": "Permission request",

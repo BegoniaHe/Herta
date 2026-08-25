@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -398,6 +399,45 @@ describe("str_replace_editor tool", () => {
       expect(r.ok).toBe(false);
       expect(r.error?.code).toBe("non_utf8_file");
       expect(await readFile(abs("legacy.c"))).toEqual(original);
+    });
+
+    it("preserves a UTF-8 BOM, and the ledger hashes what was WRITTEN", async () => {
+      // A BOM is valid UTF-8, so this file is accepted and `lossy` is false —
+      // and then the decoder eats the three bytes and the whole-file rewrite
+      // never restores them. Same property as the refusal above: an editor
+      // does not change bytes the edit never addressed.
+      ws = await mkTmpWorkspace({ "conf.ps1": "" });
+      await writeFile(
+        abs("conf.ps1"),
+        Buffer.concat([
+          Buffer.from([0xef, 0xbb, 0xbf]),
+          Buffer.from('$port = 8080\nWrite-Host "端口配置"\n', "utf-8"),
+        ]),
+      );
+      const ctx = ctxFor(ws.root);
+      await tool().run(
+        call({ command: "view", path: abs("conf.ps1") }),
+        ctx,
+        noopProgress,
+      );
+      const r = await tool().run(
+        call({
+          command: "str_replace",
+          path: abs("conf.ps1"),
+          old_str: "$port = 8080",
+          new_str: "$port = 9090",
+        }),
+        ctx,
+        noopProgress,
+      );
+      expect(r.ok).toBe(true);
+      const after = await readFile(abs("conf.ps1"));
+      expect(after.subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
+      expect(after.toString("utf-8")).toContain("端口配置");
+      // The read ledger must hash the BYTES ON DISK, or the next edit fails
+      // its own freshness check against our own write.
+      const onDisk = createHash("sha256").update(after).digest("hex");
+      expect(ctx.reads.get(abs("conf.ps1"))?.sha256).toBe(onDisk);
     });
 
     it("still VIEWS one, but says the text is lossy", async () => {

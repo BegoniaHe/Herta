@@ -261,11 +261,13 @@ function diffBody(a: string[], b: string[]): string {
       render(diffOps(midA, midB, longestCommonSubsequence(midA, midB))),
     );
   } else {
-    parts.push(
-      "\\ changed span too large to align line by line — shown as one replacement",
-    );
-    for (const line of midA) parts.push(`-${line}`);
-    for (const line of midB) parts.push(`+${line}`);
+    const refined = anchoredOps(midA, midB, 0);
+    if (refined.coarse) {
+      parts.push(
+        "\\ part of this span was too large to align line by line — shown as one replacement",
+      );
+    }
+    parts.push(render(refined.ops));
   }
 
   for (const line of a.slice(a.length - suffix, a.length - suffix + tailKeep)) {
@@ -275,6 +277,123 @@ function diffBody(a: string[], b: string[]): string {
     parts.push(`\\ ${suffix - tailKeep} unchanged lines omitted`);
   }
   return parts.filter((s) => s.length > 0).join("\n");
+}
+
+/** How many times the anchor split may recurse before giving up on a gap. */
+const MAX_ANCHOR_DEPTH = 4;
+
+/**
+ * Align a span too big for the LCS table by splitting it on lines that occur
+ * exactly ONCE on each side (patience anchoring), then walking the gaps.
+ *
+ * Emitting the whole span as "delete everything, insert everything" is correct
+ * as a rendering but LIES about magnitude, and `countDiffLines` derives the
+ * `+N -M` that Herta narrates as ground truth from exactly this text. Measured
+ * before this existed: a 3,000-line span sharing 1,500 lines reported
+ * `+2999 -2999` where the true churn was `+1500 -1500`.
+ *
+ * A line unique on both sides can only correspond to itself, so anchors are
+ * unambiguous; keeping the longest increasing run of them yields an alignment
+ * no crossing match can improve on. Each gap is then small enough for the
+ * exact walk, and the coarse form survives only for a span with no unique line
+ * in common at all — where "one replacement" is the honest description.
+ *
+ * The residue is stated rather than hidden: in that last case the counts are
+ * still the coarse ones, so a span sharing only REPEATED lines over-reports.
+ * It over-reports, never under — and it is the case where nothing in the text
+ * distinguishes one candidate alignment from another, so there is no better
+ * number to give. The rendering says so on its own line.
+ */
+function anchoredOps(
+  a: readonly string[],
+  b: readonly string[],
+  depth: number,
+): { ops: DiffOp[]; coarse: boolean } {
+  if (a.length * b.length <= MAX_LCS_CELLS) {
+    return {
+      ops: diffOps([...a], [...b], longestCommonSubsequence([...a], [...b])),
+      coarse: false,
+    };
+  }
+  const anchors = depth < MAX_ANCHOR_DEPTH ? uniqueCommonAnchors(a, b) : [];
+  if (anchors.length === 0) {
+    return {
+      ops: [
+        ...a.map((line): DiffOp => ({ kind: "del", line })),
+        ...b.map((line): DiffOp => ({ kind: "add", line })),
+      ],
+      coarse: true,
+    };
+  }
+  const ops: DiffOp[] = [];
+  let coarse = false;
+  let ai = 0;
+  let bi = 0;
+  for (const [aAt, bAt] of anchors) {
+    const gap = anchoredOps(a.slice(ai, aAt), b.slice(bi, bAt), depth + 1);
+    ops.push(...gap.ops);
+    coarse = coarse || gap.coarse;
+    ops.push({ kind: "ctx", line: a[aAt] as string });
+    ai = aAt + 1;
+    bi = bAt + 1;
+  }
+  const tail = anchoredOps(a.slice(ai), b.slice(bi), depth + 1);
+  ops.push(...tail.ops);
+  return { ops, coarse: coarse || tail.coarse };
+}
+
+/**
+ * Positions of lines appearing exactly once in each side, kept as the longest
+ * run that increases on BOTH sides (two anchors that cross cannot both hold).
+ */
+function uniqueCommonAnchors(
+  a: readonly string[],
+  b: readonly string[],
+): Array<[number, number]> {
+  const onlyOnce = (lines: readonly string[]): Map<string, number> => {
+    const seen = new Map<string, number>();
+    lines.forEach((line, i) => {
+      seen.set(line, seen.has(line) ? -1 : i);
+    });
+    return seen;
+  };
+  const inA = onlyOnce(a);
+  const inB = onlyOnce(b);
+  const pairs: Array<[number, number]> = [];
+  for (const [line, at] of inA) {
+    if (at < 0) continue;
+    const other = inB.get(line);
+    if (other === undefined || other < 0) continue;
+    pairs.push([at, other]);
+  }
+  pairs.sort((x, y) => x[0] - y[0]);
+
+  // Longest strictly increasing subsequence by the b-coordinate (patience
+  // sorting): O(n log n), and the tails array holds indices so the chain can
+  // be walked back.
+  const tails: number[] = [];
+  const prev: number[] = new Array<number>(pairs.length).fill(-1);
+  for (let i = 0; i < pairs.length; i += 1) {
+    const v = (pairs[i] as [number, number])[1];
+    let lo = 0;
+    let hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if ((pairs[tails[mid] as number] as [number, number])[1] < v)
+        lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0) prev[i] = tails[lo - 1] as number;
+    if (lo === tails.length) tails.push(i);
+    else tails[lo] = i;
+  }
+  const out: Array<[number, number]> = [];
+  let k = tails.length > 0 ? (tails[tails.length - 1] as number) : -1;
+  while (k >= 0) {
+    out.push(pairs[k] as [number, number]);
+    k = prev[k] as number;
+  }
+  return out.reverse();
 }
 
 function render(ops: readonly DiffOp[]): string {

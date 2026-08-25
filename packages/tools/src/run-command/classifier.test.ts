@@ -833,6 +833,88 @@ describe("git shapes that discard work or rewrite history (2026-08-25)", () => {
     }
   });
 
+  it("a tree-ish plus a path is path mode, without needing `--`", () => {
+    // The spelling an agent reaches for to revert one file. Reading only `--`
+    // and a bare `.` left these on the rule-eligible tier, where a remembered
+    // `git checkout:*` auto-approved them with no card (2026-08-25).
+    for (const argv of [
+      ["git", "checkout", "main", "src/foo.ts"],
+      ["git", "checkout", "HEAD~1", "notes.md"],
+      ["git", "checkout", "HEAD", "a.ts", "b.ts"],
+      ["git", "switch", "main", "src/foo.ts"],
+    ]) {
+      expect(code(argv), argv.join(" ")).toBe("command_ask_destructive");
+    }
+    // The benign twins: one operand is branch-vs-path ambiguous and stays
+    // ordinary, and creating a branch takes a name plus a start point.
+    for (const argv of [
+      ["git", "checkout", "main"],
+      ["git", "checkout", "-b", "feature/x", "origin/main"],
+      ["git", "switch", "-c", "feature/x", "origin/main"],
+    ]) {
+      expect(code(argv), argv.join(" ")).toBe("command_ask_vcs");
+    }
+  });
+
+  it("`git clean` force is a BUNDLED short flag, not the exact token `-f`", () => {
+    // Bare `-f` will not remove a directory, so the only spelling the exact
+    // match caught was the one nobody types; `-fd` and `-fdx` classified as an
+    // ordinary repository change and rode a `git clean:*` rule (2026-08-25).
+    for (const argv of [
+      ["git", "clean", "-f"],
+      ["git", "clean", "-fd"],
+      ["git", "clean", "-fdx"],
+      ["git", "clean", "-df"],
+      ["git", "clean", "--force"],
+    ]) {
+      expect(code(argv), argv.join(" ")).toBe("command_ask_destructive");
+    }
+    for (const argv of [
+      ["git", "clean", "-n"],
+      ["git", "clean", "--dry-run"],
+      ["git", "clean", "-nd"],
+    ]) {
+      expect(code(argv), argv.join(" ")).toBe("command_ask_vcs");
+    }
+  });
+
+  it("a global option does not hide the subcommand", () => {
+    // Every destructive check read `argv[1]`, so one leading global option hid
+    // the subcommand from all of them at once — and `-C` is exactly how an
+    // agent works on a sub-repository.
+    for (const argv of [
+      ["git", "-C", "subdir", "checkout", "--", "."],
+      ["git", "-C", "subdir", "reset", "--hard"],
+      ["git", "-C", "subdir", "clean", "-fd"],
+      ["git", "--no-pager", "checkout", "--", "."],
+      ["git", "--git-dir=.git", "reset", "--hard"],
+      ["git", "-c", "k=v", "checkout", "--", "."],
+      ["git", "--work-tree", "..", "clean", "-fdx"],
+    ]) {
+      expect(code(argv), argv.join(" ")).toBe("command_ask_destructive");
+    }
+    // `-C` steps over its VALUE, so the subcommand is read correctly rather
+    // than off by one — `commit` is still ordinary vcs.
+    expect(code(["git", "-C", "subdir", "commit", "-m", "x"])).toBe(
+      "command_ask_vcs",
+    );
+    // But the READ allow-list is deliberately NOT taught about global options:
+    // `-C` names another directory, so `git -C ../../other-repo log -p` would
+    // read a tree outside the workspace. Escalating the destructive tier
+    // through the prefix while leaving the allow tier anchored is the correct
+    // asymmetry — peeling only ever makes a verdict stricter.
+    expect(code(["git", "-C", "subdir", "status"])).toBe("command_ask_vcs");
+  });
+
+  it("an unresolvable PROGRAM NAME asks even with no shell expansion", () => {
+    // A glob needs no variable, so it never set `unresolved` and skipped the
+    // earned-allow gate entirely: `/bin/r? -rf /` landed on the cacheable,
+    // rule-eligible unknown class while its bare spelling blocked.
+    expect(classifyCommand(["/bin/r?", "-rf", "/"]).kind).toBe("ask");
+    expect(code(["/bin/r?", "-rf", "/"])).toBe("command_ask_unresolved");
+    expect(classifyCommand(["rm", "-rf", "/"]).kind).toBe("block");
+  });
+
   it("keeps the two shapes deliberately pinned as NON-destructive", () => {
     // `stash pop` RESTORES work; `branch -d` refuses an unmerged branch.
     // Both were settled on 2026-08-17 and must not drift into destructive.

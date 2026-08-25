@@ -17,6 +17,41 @@ const GIT_AVAILABLE = (() => {
 // multi-spawn cases were measured at 1.7-3.3s against the 5s default — the
 // next one armed to flake, so it gets the guard before it does.
 describe.skipIf(!GIT_AVAILABLE)("spawnGit", { timeout: 20_000 }, () => {
+  // The cap used to drop whichever chunk crossed it and keep appending the
+  // ones after, so stdout could be two non-adjacent spans spliced together
+  // with nothing saying so — a record garbled at the seam. What survives must
+  // be a contiguous PREFIX, and `truncated` must admit it happened.
+  it("truncates to a contiguous prefix and reports it", async () => {
+    const ws = await mkTmpWorkspace({});
+    try {
+      await spawnGit(ws.root, ["init", "-q"], new AbortController().signal);
+      const full = await spawnGit(
+        ws.root,
+        ["config", "--list"],
+        new AbortController().signal,
+      );
+      expect(full.ok).toBe(true);
+      if (!full.ok) return;
+      expect(full.truncated).toBe(false);
+      const cut = Math.max(1, Math.floor(full.stdout.length / 2));
+
+      const clipped = await spawnGit(
+        ws.root,
+        ["config", "--list"],
+        new AbortController().signal,
+        { maxBufBytes: cut },
+      );
+      expect(clipped.ok).toBe(true);
+      if (!clipped.ok) return;
+      expect(clipped.truncated).toBe(true);
+      expect(clipped.stdout.length).toBeLessThanOrEqual(cut);
+      // The property that matters: a PREFIX, not a splice.
+      expect(full.stdout.startsWith(clipped.stdout)).toBe(true);
+    } finally {
+      await ws.cleanup();
+    }
+  });
+
   it("happy path: git status in a fresh repo returns ok", async () => {
     const ws = await mkTmpWorkspace({});
     try {

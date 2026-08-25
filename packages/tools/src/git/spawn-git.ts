@@ -6,6 +6,10 @@ export interface SpawnGitOk {
   stdout: string;
   /** The exit code, for callers that allow a non-zero one. */
   exitCode: number;
+  /** Output hit the capture cap, so `stdout` is a PREFIX of what git said.
+   *  A caller reporting a file list must say so rather than present the
+   *  prefix as the whole answer. */
+  truncated: boolean;
 }
 
 export type SpawnGitErr =
@@ -40,6 +44,9 @@ export interface SpawnGitOpts {
    *  as an ANSWER (`--no-index` returns 1 for "there were differences"), which
    *  is not a failure. */
   allowExitCodes?: readonly number[];
+  /** Capture cap per stream, in bytes. Exists so the truncation behaviour can
+   *  be exercised without producing four megabytes of git output. */
+  maxBufBytes?: number;
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -87,6 +94,7 @@ export async function spawnGit(
 ): Promise<SpawnGitOk | SpawnGitErr> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const allowed = new Set([0, ...(opts.allowExitCodes ?? [])]);
+  const maxBuf = opts.maxBufBytes ?? MAX_BUF;
   return new Promise((resolve, reject) => {
     // Already cancelled before we spawn — never report that as a git problem.
     if (signal.aborted) {
@@ -126,6 +134,7 @@ export async function spawnGit(
     let stdoutLen = 0;
     let stderrLen = 0;
     let resolved = false;
+    let truncated = false;
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const settle = (result: SpawnGitOk | SpawnGitErr): void => {
@@ -163,15 +172,28 @@ export async function spawnGit(
       reject(abortError());
     };
 
+    // Stop AT the cap rather than skipping whichever chunk happens to cross
+    // it. Dropping only the oversized chunk and continuing to append the
+    // smaller ones after it spliced two non-adjacent spans together, so the
+    // record at the seam was a half of one path glued to a half of another —
+    // and nothing said so. Truncated output is now a contiguous prefix, and
+    // `truncated` says it happened; the parsers read NUL-delimited records, so
+    // a prefix loses whole records instead of corrupting one.
     child.stdout?.on("data", (chunk: Buffer) => {
-      if (stdoutLen + chunk.length > MAX_BUF) return;
-      stdoutChunks.push(chunk);
-      stdoutLen += chunk.length;
+      if (stdoutLen >= maxBuf) return;
+      const room = maxBuf - stdoutLen;
+      const kept = chunk.length <= room ? chunk : chunk.subarray(0, room);
+      if (kept.length < chunk.length) truncated = true;
+      stdoutChunks.push(kept);
+      stdoutLen += kept.length;
     });
     child.stderr?.on("data", (chunk: Buffer) => {
-      if (stderrLen + chunk.length > MAX_BUF) return;
-      stderrChunks.push(chunk);
-      stderrLen += chunk.length;
+      if (stderrLen >= maxBuf) return;
+      const room = maxBuf - stderrLen;
+      const kept = chunk.length <= room ? chunk : chunk.subarray(0, room);
+      if (kept.length < chunk.length) truncated = true;
+      stderrChunks.push(kept);
+      stderrLen += kept.length;
     });
 
     child.on("error", (err: NodeJS.ErrnoException) => {
@@ -215,7 +237,7 @@ export async function spawnGit(
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
       if (code !== null && allowed.has(code)) {
-        settle({ ok: true, stdout, exitCode: code });
+        settle({ ok: true, stdout, exitCode: code, truncated });
         return;
       }
       if (code === 128 && /not a git repository/i.test(stderr)) {

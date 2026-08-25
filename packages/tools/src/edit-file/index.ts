@@ -2,17 +2,18 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
 import { readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type {
-  HertaTool,
-  ToolCallRequest,
-  ToolContext,
-  ToolResult,
-  ToolSchema,
+import {
+  countDiffLinesFor,
+  type HertaTool,
+  type ToolCallRequest,
+  type ToolContext,
+  type ToolResult,
+  type ToolSchema,
 } from "@herta/core";
 import { errResult } from "../errors.js";
 import { formatInputIssues } from "../input-issues.js";
 import { resolveSafePath } from "../path-safety.js";
-import { decodeUtf8 } from "../text-sniff.js";
+import { decodeUtf8, reattachBom } from "../text-sniff.js";
 import {
   applyHunks,
   computeUnifiedDiff,
@@ -185,7 +186,9 @@ export function editFileTool(): HertaTool {
       }
 
       const after = applyHunks(before, parsedHunks.hunks);
-      const afterBuf = Buffer.from(after, "utf-8");
+      // Put back the BOM the decoder consumed. Without this an edit to one
+      // ASCII line silently deleted three bytes the patch never addressed.
+      const afterBuf = Buffer.from(reattachBom(after, decoded.bom), "utf-8");
       const diff = computeUnifiedDiff(before, after, safe.relative);
 
       const tmp = join(
@@ -261,14 +264,5 @@ function suggestionFor(code: string): string {
 }
 
 function countLines(diff: string, prefix: "+" | "-"): number {
-  let count = 0;
-  for (const line of diff.split("\n")) {
-    if (
-      line.startsWith(prefix) &&
-      !line.startsWith(`${prefix}${prefix}${prefix}`)
-    ) {
-      count += 1;
-    }
-  }
-  return count;
+  return countDiffLinesFor(diff, prefix);
 }

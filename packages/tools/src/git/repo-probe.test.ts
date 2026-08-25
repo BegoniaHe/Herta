@@ -41,6 +41,17 @@ describe.skipIf(!GIT_AVAILABLE)("probeRepoState", { timeout: 20_000 }, () => {
     return dir;
   }
 
+  it("returns null on abort instead of throwing through its own contract", async () => {
+    // `spawnGit` REJECTS on abort — correctly, since an interrupt is not a
+    // tool failure — so a user's Stop landing mid-probe threw straight past
+    // "returns null rather than throwing for every cannot-tell case". One
+    // caller happened to wrap it; the invariant must not depend on that.
+    const dir = seeded();
+    const ac = new AbortController();
+    ac.abort();
+    await expect(probeRepoState(dir, ac.signal)).resolves.toBeNull();
+  });
+
   it("separates what the dispatch changed from what was already dirty", async () => {
     const dir = seeded();
     // The USER has uncommitted work before the dispatch starts.

@@ -796,6 +796,66 @@ export function splitShellSegments(body: string): string[] {
 }
 
 /**
+ * git's own options, which come BEFORE the subcommand. The ones listed here
+ * take their value as a SEPARATE argument, so locating the subcommand means
+ * stepping over two tokens, not one. (`--git-dir=x` and friends carry their
+ * value inline and need no entry.)
+ */
+const GIT_GLOBAL_VALUE_FLAGS: ReadonlySet<string> = new Set([
+  "-C",
+  "-c",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--super-prefix",
+  "--exec-path",
+  "--config-env",
+  "--attr-source",
+]);
+
+/**
+ * Where the subcommand actually is — `git -C sub reset --hard` puts it at 3,
+ * not 1.
+ *
+ * Every destructive check used to read `argv[1]`, so one leading global option
+ * hid the subcommand from all of them at once and `git -C subdir clean -fd`
+ * classified as an ordinary repository change. `-C` is exactly how an agent
+ * works on a sub-repository, so this was not a corner.
+ *
+ * Returns null when there is no subcommand at all (`git --version`).
+ */
+function gitSubcommandIndex(argv: readonly string[]): number | null {
+  let i = 1;
+  while (i < argv.length) {
+    const a = argv[i];
+    if (typeof a !== "string") return null;
+    if (!a.startsWith("-")) return i;
+    i += GIT_GLOBAL_VALUE_FLAGS.has(a) ? 2 : 1;
+  }
+  return null;
+}
+
+/**
+ * True when a short-option CLUSTER carries `letter` — `-fd`, `-fdx`, `-df` all
+ * carry `f`.
+ *
+ * Exact-token matching is why `git clean -f` was caught and `git clean -fd` was
+ * not, which is precisely backwards: bare `-f` will not remove a directory, so
+ * the spelling the harness recognised is the one nobody types. Case matters —
+ * `git branch -m` renames, `-M` force-renames.
+ */
+function hasShortFlag(args: readonly string[], letter: string): boolean {
+  return args.some(
+    (a) =>
+      a.length > 1 &&
+      a.startsWith("-") &&
+      !a.startsWith("--") &&
+      /^-[A-Za-z]+$/.test(a) &&
+      a.includes(letter),
+  );
+}
+
+/**
  * git shapes that DISCARD uncommitted work or REWRITE history, described so
  * the card says which — or null for the ordinary repository changes, which
  * stay `command_ask_vcs`.
@@ -819,9 +879,10 @@ export function splitShellSegments(body: string): string[] {
  * so ADR 0030's `git commit:*` rules still derive exactly as before.
  */
 function destructiveGitShape(argv: readonly string[]): string | null {
-  const sub = argv[1];
-  if (typeof sub !== "string") return null;
-  const rest = argv.slice(2);
+  const at = gitSubcommandIndex(argv);
+  if (at === null) return null;
+  const sub = argv[at] as string;
+  const rest = argv.slice(at + 1);
   const has = (...flags: string[]) => rest.some((a) => flags.includes(a));
 
   // ── discards uncommitted work ──
@@ -830,12 +891,26 @@ function destructiveGitShape(argv: readonly string[]): string | null {
     // from the index or a commit. `--` is the unambiguous marker; a bare `.`
     // or a path operand with no branch-creating flag is the same thing.
     const creating = has("-b", "-B", "-c", "-C", "--orphan", "--guess");
+    // A tree-ish FOLLOWED BY operands is path mode too, and it is the spelling
+    // an agent reaches for to revert one file (`git checkout main src/x.ts`,
+    // `git checkout HEAD~1 notes.md`). Reading only `--` and a bare `.` left
+    // it on the rule-eligible tier, where a remembered `git checkout:*` then
+    // auto-approved it with no card — the very door this tier exists to shut.
+    const operands = rest.filter((a) => !a.startsWith("-"));
     const pathMode =
       rest.includes("--") ||
-      (!creating && rest.some((a) => a === "." || a === "*"));
+      (!creating &&
+        (operands.length >= 2 || rest.some((a) => a === "." || a === "*")));
     if (pathMode) {
       return `git ${sub} in path mode overwrites uncommitted changes in those paths`;
     }
+    // A SINGLE operand stays ordinary, deliberately: `git checkout main` and
+    // `git checkout main.ts` are the same string shape, and git itself decides
+    // by asking whether the name resolves as a ref — which this classifier
+    // cannot do. Guessing either way is wrong, so the residue is handled where
+    // it can be handled honestly: `deriveProjectCommandRule` refuses to hand
+    // `checkout`/`switch`/`restore` a `:*` wildcard, so an ambiguous operand
+    // asks every time instead of riding a grant earned by a different one.
     return null;
   }
   if (sub === "restore") {
@@ -861,10 +936,23 @@ function destructiveGitShape(argv: readonly string[]): string | null {
   if (sub === "push" && rest.some((a) => a.startsWith("--force-with-lease"))) {
     return "git push --force-with-lease overwrites the remote branch";
   }
-  if (sub === "branch" && has("-D", "-M", "--force")) {
-    return "git branch -D/-M force-deletes or force-renames a branch";
+  if (
+    // NOT `--delete`/`-d`: that refuses an unmerged branch, and the 2026-08-25
+    // decision pinned it as ordinary. Only the FORCING spellings land here.
+    sub === "branch" &&
+    (has("--force") ||
+      hasShortFlag(rest, "D") ||
+      hasShortFlag(rest, "M") ||
+      hasShortFlag(rest, "f"))
+  ) {
+    return "git branch -D/-M/-f force-deletes, force-renames or moves a branch";
   }
-  if (sub === "tag" && has("-d", "--delete", "-f", "--force")) {
+  if (
+    sub === "tag" &&
+    (has("--delete", "--force") ||
+      hasShortFlag(rest, "d") ||
+      hasShortFlag(rest, "f"))
+  ) {
     return "git tag -d/-f deletes or moves a tag";
   }
   if (sub === "update-ref" && has("-d", "--delete")) {
@@ -991,10 +1079,18 @@ function isUnresolvable(a: string): boolean {
     a.includes("${") ||
     a.includes("$(") ||
     a.includes("`") ||
-    /\$[A-Za-z_]/.test(a) ||
+    // `$1`, `$@`, `$*`, `$?`, `$#`, `$!`, `$-` expand to text the harness
+    // never saw, exactly like `$HOME` — but requiring an IDENTIFIER after the
+    // `$` said they were already resolved. `set -- /etc/passwd` then `cat "$1"`
+    // is two allow-tier commands, and a persistent shell carries the
+    // positionals from the first into the second.
+    LIVE_PARAMETER.test(a) ||
     /\{[^}]*,[^}]*\}/.test(a)
   );
 }
+
+/** A parameter expansion of ANY kind, not only the `$name` spelling. */
+const LIVE_PARAMETER = /\$[A-Za-z_0-9@*?#!$-]/;
 
 /**
  * What the classifier cannot resolve about the PROGRAM NAME — so it cannot
@@ -1218,7 +1314,10 @@ export function classifyCommand(
       reason: `rm -rf inside repo: ${argv.slice(1).join(" ")}`,
     };
   }
-  if (id === "git" && argv[1] === "reset" && argv.includes("--hard")) {
+  const gitSub = id === "git" ? gitSubcommandIndex(argv) : null;
+  const gitSubName = gitSub === null ? null : (argv[gitSub] as string);
+  const gitSubArgs = gitSub === null ? [] : argv.slice(gitSub + 1);
+  if (gitSubName === "reset" && gitSubArgs.includes("--hard")) {
     return {
       kind: "ask",
       risk: "workspace_destructive",
@@ -1227,15 +1326,14 @@ export function classifyCommand(
     };
   }
   if (
-    id === "git" &&
-    argv[1] === "clean" &&
-    (argv.includes("-f") || argv.includes("--force"))
+    gitSubName === "clean" &&
+    (gitSubArgs.includes("--force") || hasShortFlag(gitSubArgs, "f"))
   ) {
     return {
       kind: "ask",
       risk: "workspace_destructive",
       code: "command_ask_destructive",
-      reason: "git clean -f",
+      reason: "git clean -f deletes untracked files",
     };
   }
   if (id === "git") {
@@ -1367,16 +1465,22 @@ export function classifyCommand(
   // Deliberately not the block tier either: refusing outright would be
   // unappealable and these are honest shapes most of the time. The user sees
   // the verbatim command and decides.
+  // The PROGRAM NAME is checked unconditionally, ahead of that gate. A glob
+  // never sets `unresolved` — it needs no shell variable — so `/bin/r? -rf /`
+  // skipped this and landed on the rule-eligible, cacheable
+  // `command_ask_unknown` while its bare spelling blocked. Nothing legitimate
+  // spells a program with `*`, `?` or a bracket class, and under shell:false
+  // such a name simply does not exist, so there is no honest command to lose.
+  const unresolvedHead = unresolvedProgramName(a0);
+  if (unresolvedHead !== null) {
+    return {
+      kind: "ask",
+      risk: "workspace_write",
+      code: "command_ask_unresolved",
+      reason: `the program name is ${unresolvedHead} — the harness cannot tell what would run`,
+    };
+  }
   if (opts?.shell === true && opts.unresolved === true) {
-    const unresolvedHead = unresolvedProgramName(a0);
-    if (unresolvedHead !== null) {
-      return {
-        kind: "ask",
-        risk: "workspace_write",
-        code: "command_ask_unresolved",
-        reason: `the program name is ${unresolvedHead} — the harness cannot tell what would run`,
-      };
-    }
     if (
       !ARG_INDEPENDENT_PROGRAMS.has(interpreterName(a0)) &&
       hasUnresolvedExpansion(argv)

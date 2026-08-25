@@ -12,11 +12,29 @@ import { hardenedGitArgs, spawnGit } from "./spawn-git.js";
  * a cycle. The runtime takes it as an injected callback.
  *
  * Returns null rather than throwing for every "cannot tell" case — no repo, no
- * git, a timeout, an unreadable tree. Attribution is a nicety; it must never
- * be able to fail a brief. A null at either end simply leaves the report with
- * the editors' own harvest, exactly as before this existed.
+ * git, a timeout, an unreadable tree, a cancelled dispatch. Attribution is a
+ * nicety; it must never be able to fail a brief. A null at either end simply
+ * leaves the report with the editors' own harvest, exactly as before this
+ * existed.
+ *
+ * The guard is HERE and not only at the caller, because `spawnGit` REJECTS on
+ * abort — correctly, since an interrupt is not a tool failure — so a user's
+ * Stop landing mid-probe threw straight through this function's stated
+ * contract. One caller happened to wrap it; the invariant should not depend on
+ * that.
  */
 export async function probeRepoState(
+  workspaceRoot: string,
+  signal?: AbortSignal,
+): Promise<RepoSnapshot | null> {
+  try {
+    return await probe(workspaceRoot, signal);
+  } catch {
+    return null;
+  }
+}
+
+async function probe(
   workspaceRoot: string,
   signal?: AbortSignal,
 ): Promise<RepoSnapshot | null> {

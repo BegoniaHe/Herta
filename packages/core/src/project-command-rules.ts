@@ -193,10 +193,42 @@ export function deriveProjectCommandRule(argv: readonly string[]): {
   // else the exact argv (a re-run of the identical command stops prompting;
   // anything else still asks).
   if (typeof a1 === "string" && SUBCOMMAND_SHAPE.test(a1)) {
+    if (base === "git" && UNDECIDABLE_GIT_SUBCOMMANDS.has(a1)) {
+      return { argvPrefix: [...argv], anyArgs: false };
+    }
     return { argvPrefix: [a0, a1], anyArgs: true };
   }
   return { argvPrefix: [...argv], anyArgs: false };
 }
+
+/**
+ * git subcommands whose OPERAND decides whether they destroy work, in a way no
+ * classifier reading the string can settle.
+ *
+ * `git checkout main` switches branch; `git checkout main.ts` throws away that
+ * file. Same shape — git itself decides by asking whether the name resolves as
+ * a ref, which this harness cannot do. The destructive tier catches every
+ * spelling it can read (`--`, a bare `.`, a tree-ish plus operands), and the
+ * honest residue is the single ambiguous operand.
+ *
+ * So these get no `:*`. A wildcard turns one approval into a standing grant
+ * over every future spelling, and ADR 0045 already established where that
+ * leads: the tier's coverage is "what someone thought of," and a wildcard
+ * makes each miss permanent and silent instead of a question. Reproduced end
+ * to end on 2026-08-25 — approving `git checkout -b feature/x` persisted
+ * `git checkout:*`, which then auto-approved `git checkout main src/foo.ts`
+ * with no card, discarding that file's uncommitted changes.
+ *
+ * The cost is one card per distinct checkout, which is the right side to err
+ * on: the failure mode here is a re-prompt, and the other one is unrecoverable.
+ * Everything else — `git commit:*`, `git add:*`, ADR 0030's own examples —
+ * derives exactly as before.
+ */
+const UNDECIDABLE_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  "checkout",
+  "switch",
+  "restore",
+]);
 
 /**
  * One spelling for "the directory this rule was granted in" (audit BL15).

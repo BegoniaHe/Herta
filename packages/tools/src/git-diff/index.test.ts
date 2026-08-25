@@ -40,6 +40,36 @@ async function commitFile(
 // (init + config + add + commit + diff); under full-suite load these have
 // been observed at 3.5s+ and one tripped the 5s default (flaked 2026-07-05).
 describe.skipIf(!GIT_AVAILABLE)("git_diff tool", { timeout: 20_000 }, () => {
+  it("works in a repository with no commits yet", async () => {
+    // `HEAD` does not resolve before the first commit, so diffing against it
+    // failed with "bad revision" — and a freshly initialised repository is the
+    // state a coding agent most often starts one in. `git_status` and the
+    // staged diff both answered; only the default mode was a dead end.
+    const ws = await mkTmpWorkspace({});
+    try {
+      const sig = new AbortController().signal;
+      await spawnGit(ws.root, ["init", "-q"], sig);
+      await import("node:fs/promises").then((fs) =>
+        fs.writeFile(join(ws.root, "new.txt"), "a\nb\n"),
+      );
+      await spawnGit(ws.root, ["add", "new.txt"], sig);
+      const r = await gitDiffTool().run(
+        { id: "c0", tool: "git_diff", input: {} },
+        mkToolContext({ workspaceRoot: ws.root }),
+        () => {},
+      );
+      expect(r.ok).toBe(true);
+      const data = r.data as {
+        files: ReadonlyArray<{ path: string }>;
+        totalAdditions: number;
+      };
+      expect(data.files.map((f) => f.path)).toEqual(["new.txt"]);
+      expect(data.totalAdditions).toBe(2);
+    } finally {
+      await ws.cleanup();
+    }
+  });
+
   it("rejects { staged: true, ref: 'HEAD' } with invalid_input", async () => {
     const ws = await mkTmpWorkspace({});
     try {

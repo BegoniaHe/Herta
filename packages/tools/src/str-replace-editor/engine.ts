@@ -1,6 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { ToolContext } from "@herta/core";
+import { countDiffLinesFor, type ToolContext } from "@herta/core";
 import type { ShellPaths } from "../bash/shell-paths.js";
 import { computeUnifiedDiff } from "../edit-file/engine.js";
 import { resolveSafePath, type SafePathResult } from "../path-safety.js";
@@ -278,13 +278,5 @@ export function planEdit(
 }
 
 export function countDiffLines(diff: string, prefix: "+" | "-"): number {
-  let count = 0;
-  for (const line of diff.split("\n")) {
-    if (
-      line.startsWith(prefix) &&
-      !line.startsWith(`${prefix}${prefix}${prefix}`)
-    )
-      count += 1;
-  }
-  return count;
+  return countDiffLinesFor(diff, prefix);
 }

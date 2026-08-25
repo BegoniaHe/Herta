@@ -14,6 +14,10 @@ import { gitDiffInputSchema, gitDiffJsonSchema } from "./schema.js";
 export type { GitDiffFile } from "../git/parse-diff-stat.js";
 export type { GitDiffInput } from "./schema.js";
 
+/** git's empty tree — the well-known hash of a tree with no entries, which is
+ *  what "before the first commit" means to `git diff`. */
+const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
 export interface GitDiffData {
   mode: "working-tree" | "staged" | "ref";
   ref?: string;
@@ -73,7 +77,19 @@ export function gitDiffTool(): HertaTool {
         argv = [...base, input.ref, "--"];
       } else {
         mode = "working-tree";
-        argv = [...base, "HEAD", "--"];
+        // Before the first commit `HEAD` does not resolve, and diffing against
+        // it fails with "bad revision" — so a freshly initialised project, the
+        // state a coding agent most often starts a repository in, answered
+        // "git failed" while `git_status` and the staged diff both worked.
+        // git's empty-tree object is what `HEAD` would mean if it existed.
+        const born = await spawnGit(
+          ctx.workspaceRoot,
+          hardenedGitArgs(["rev-parse", "--verify", "--quiet", "HEAD"]),
+          ctx.signal,
+          { allowExitCodes: [1] },
+        );
+        const unborn = born.ok && born.stdout.trim().length === 0;
+        argv = [...base, unborn ? EMPTY_TREE : "HEAD", "--"];
       }
 
       const r = await spawnGit(

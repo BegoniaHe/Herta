@@ -27,7 +27,7 @@ import { PersistentShell, SHELL_BG_ID } from "../bash/persistent-shell.js";
 import { type ShellPaths, shellPathsFor } from "../bash/shell-paths.js";
 import { computeUnifiedDiff } from "../edit-file/engine.js";
 import { formatInputIssues } from "../input-issues.js";
-import { decodeUtf8 } from "../text-sniff.js";
+import { decodeUtf8, reattachBom } from "../text-sniff.js";
 import {
   countDiffLines,
   formatFileView,
@@ -363,11 +363,16 @@ export function strReplaceEditorTool(
       const before = decoded.text;
       const plan = planEdit(input, before, target.display, target.relative);
       if (!plan.ok) return fail(plan.code, plan.message);
-      const written = await atomicWrite(target.resolved, plan.after);
+      // Put back the BOM the decoder consumed — every command here rewrites
+      // the whole file, so without this a one-line replace also deleted three
+      // bytes the edit never addressed. The ledger must hash what was actually
+      // WRITTEN, or the next freshness check fails against our own write.
+      const out = reattachBom(plan.after, decoded.bom);
+      const written = await atomicWrite(target.resolved, out);
       if (!written.ok) return fail("write_failed", written.message);
       ctx.reads.record(
         target.resolved,
-        createHash("sha256").update(plan.after).digest("hex"),
+        createHash("sha256").update(out).digest("hex"),
       );
       return {
         ok: true,

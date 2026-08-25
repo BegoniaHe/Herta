@@ -228,6 +228,47 @@ describe("computeUnifiedDiff — bounded cost (2026-08-25)", () => {
     expect(count(d, "-")).toBe(20_000);
   });
 
+  it("a huge span with distinct lines is ALIGNED, not called one replacement", () => {
+    // The coarse fallback emits every line of one side as a deletion and every
+    // line of the other as an insertion, which is a fair RENDERING but lies
+    // about magnitude — and `countDiffLines` derives the `+N -M` Herta narrates
+    // as ground truth from exactly this text. Measured before anchoring: a
+    // 3,000-line span sharing 1,500 lines reported +2999 -2999 against a true
+    // churn of +1500 -1500.
+    const a: string[] = [];
+    const b: string[] = [];
+    for (let i = 0; i < 1500; i += 1) {
+      a.push(`function handler${i}() {`, `  return old${i};`);
+      b.push(`function handler${i}() {`, `  return new${i};`);
+    }
+    const d = computeUnifiedDiff(
+      `${a.join("\n")}\n`,
+      `${b.join("\n")}\n`,
+      "f.ts",
+    );
+    expect(d).not.toContain("too large to align");
+    expect(count(d, "+")).toBe(1500);
+    expect(count(d, "-")).toBe(1500);
+  });
+
+  it("a span sharing only REPEATED lines stays coarse, and says so", () => {
+    // The honest residue: with no line unique on both sides there is nothing
+    // to anchor on, so no alignment is better supported than any other. It
+    // over-reports rather than under-, and the rendering states it.
+    const a: string[] = [];
+    const b: string[] = [];
+    for (let i = 0; i < 1500; i += 1) {
+      a.push("}", `a${i}`);
+      b.push("}", `b${i}`);
+    }
+    const d = computeUnifiedDiff(
+      `${a.join("\n")}\n`,
+      `${b.join("\n")}\n`,
+      "f.ts",
+    );
+    expect(d).toContain("too large to align");
+  });
+
   it("below the budget nothing changes — still the whole-file walk", () => {
     const before = lines(300);
     const after = before.replace("line 10\n", "TEN\n");

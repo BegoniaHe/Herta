@@ -1242,6 +1242,16 @@ function isDefinitionHead(words: readonly string[]): boolean {
  * idiom, which is how it was caught (permission-lab replay).
  */
 function hasLiveExpansion(seg: string): boolean {
+  // Brace expansion is decided by whether the BRACES are quoted, never by
+  // whether the elements are: bash expands `{'a','b'}` exactly as it expands
+  // `{a,b}`. Testing the raw text with a quote-hostile character class read
+  // the quoted spelling as inert, so `git grep {'-O./x.sh','needle'} .` — the
+  // pager flag, i.e. arbitrary execution — reached allow while its unquoted
+  // twin correctly asked. Tracking the structure during the walk decides it
+  // the way the shell does, and drops the old false positive on a fully
+  // single-quoted `'{a,b}'`, which bash passes through untouched.
+  let braceDepth = 0;
+  let braceComma = false;
   for (let i = 0; i < seg.length; i += 1) {
     const ch = seg[i] as string;
     if (ch === "\\") {
@@ -1259,18 +1269,38 @@ function hasLiveExpansion(seg: string): boolean {
       continue;
     }
     if (ch === '"') {
-      // Double quotes still expand — walk INTO them.
+      // Double quotes still expand parameters — walk INTO them. They do NOT
+      // brace-expand, so the brace state deliberately does not move here.
       const end = seg.indexOf('"', i + 1);
       const inner = seg.slice(i + 1, end === -1 ? seg.length : end);
-      if (/\$\{|\$\(|`|\$[A-Za-z_]/.test(inner)) return true;
+      if (LIVE_IN_DOUBLE_QUOTES.test(inner)) return true;
       i = end === -1 ? seg.length : end;
       continue;
     }
     if (ch === "`") return true;
-    if (ch === "$" && /[{(A-Za-z_]/.test(seg[i + 1] ?? "")) return true;
+    if (ch === "$" && LIVE_AFTER_DOLLAR.test(seg[i + 1] ?? "")) return true;
+    if (ch === "{") braceDepth += 1;
+    else if (ch === "," && braceDepth > 0) braceComma = true;
+    else if (ch === "}" && braceDepth > 0) {
+      if (braceComma) return true;
+      braceDepth -= 1;
+    }
   }
-  return /\{[^}'"]*,[^}'"]*\}/.test(seg);
+  return false;
 }
+
+/**
+ * What may follow `$` and still expand.
+ *
+ * Requiring an IDENTIFIER here declared the positional and special parameters
+ * already resolved, so `set -- /etc/passwd; cat "$1"` was two allow-tier
+ * commands reading an arbitrary file — and a persistent shell carries the
+ * positionals from the first into the second.
+ */
+const LIVE_AFTER_DOLLAR = /[{(A-Za-z_0-9@*?#!$-]/;
+
+/** The same set, for the inside of a double-quoted run. */
+const LIVE_IN_DOUBLE_QUOTES = /\$\{|\$\(|`|\$[A-Za-z_0-9@*?#!$-]/;
 
 /** Program identity of an argv[0]: basename, lowercased, `.exe` stripped. */
 function basename(a0: string): string {

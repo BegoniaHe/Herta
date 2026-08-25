@@ -48,6 +48,41 @@ describe("deriveProjectCommandRule", () => {
     );
   });
 
+  it("git subcommands with an undecidable operand get NO wildcard", () => {
+    // `git checkout main` switches branch; `git checkout main.ts` throws that
+    // file away. Same string shape, and git decides by asking whether the name
+    // resolves as a ref — which no classifier reading the text can do. A `:*`
+    // turned one approval into a standing grant over every future spelling:
+    // approving `git checkout -b feature/x` persisted `git checkout:*`, which
+    // then auto-approved `git checkout main src/foo.ts` with no card at all
+    // (reproduced end to end, 2026-08-25).
+    for (const argv of [
+      ["git", "checkout", "-b", "feature/x"],
+      ["git", "switch", "-c", "feature/x"],
+      ["git", "restore", "--staged", "src/a.ts"],
+    ]) {
+      const rule = deriveProjectCommandRule(argv);
+      expect(rule, argv.join(" ")).toEqual({
+        argvPrefix: argv,
+        anyArgs: false,
+      });
+      expect(ruleDisplay(rule as never)).toBe(argv.join(" "));
+    }
+  });
+
+  it("every other git subcommand still derives ADR 0030's wildcard", () => {
+    for (const [argv, display] of [
+      [["git", "commit", "-m", "x"], "git commit:*"],
+      [["git", "add", "-A"], "git add:*"],
+      [["git", "push", "origin", "main"], "git push:*"],
+      [["git", "clean", "-n"], "git clean:*"],
+    ] as const) {
+      const rule = deriveProjectCommandRule([...argv]);
+      expect(rule?.anyArgs, display).toBe(true);
+      expect(ruleDisplay(rule as never)).toBe(display);
+    }
+  });
+
   it("interpreter with a flag operand (-e eval) derives NOTHING", () => {
     expect(deriveProjectCommandRule(["node", "-e", "code"])).toBeNull();
     expect(deriveProjectCommandRule(["python", "-c", "code"])).toBeNull();

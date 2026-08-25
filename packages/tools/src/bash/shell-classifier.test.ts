@@ -809,6 +809,47 @@ describe("no ALLOW without accounting for the whole segment — round 2", () => 
       expect(kind("cat $HOME/x")).toBe("ask"); // unquoted → live
       expect(kind("sed -n '$p' a")).toBe("allow"); // single-quoted → inert
     });
+
+    // The gate delegates "is there a live expansion?" to hasLiveExpansion,
+    // which enumerated expansion FORMS — a name list under another name. Two
+    // were missing, and each let a live expansion reach ALLOW as though the
+    // segment had been fully read (2026-08-25).
+    it("brace expansion is live even when the ELEMENTS are quoted", () => {
+      // bash expands `{'a','b'}` exactly as it expands `{a,b}`; only the
+      // BRACES being quoted would suppress it. Testing the raw text with a
+      // quote-hostile character class read the quoted spelling as inert, so
+      // `-O<pager>` — arbitrary execution — allowed while its twin asked.
+      for (const body of [
+        "git grep {'-O./x.sh','needle'} .",
+        "git grep {-O./x.sh,needle} .",
+        "git diff {'--output=./evil.sh','HEAD'}",
+        "cat {'.env','x'}",
+        "cat {.env,x}",
+      ]) {
+        expect(kind(body), body).toBe("ask");
+      }
+      // Deciding it by structure also drops a false positive: braces INSIDE
+      // single quotes are passed through by bash untouched.
+      expect(kind("echo '{a,b}'")).toBe("allow");
+      expect(kind(`git grep '{"a":1,"b":2}' src`)).toBe("allow");
+    });
+
+    it("positional and special parameters are live", () => {
+      // Requiring an identifier after `$` declared these already resolved.
+      // `set` is an inert builtin and a persistent shell carries positionals
+      // from one command to the next, so this was two allow-tier commands
+      // reading an arbitrary file.
+      for (const body of [
+        'set -- /etc/passwd; cat "$1"',
+        'cat "$1"',
+        "cat $@",
+        'cat "$@"',
+      ]) {
+        expect(kind(body), body).toBe("ask");
+      }
+      // Still inert when quoting suppresses it.
+      expect(kind("grep -n '$1' notes.txt")).toBe("allow");
+    });
   });
 
   // The async reader guard (bash/rule.ts) realpaths reader operands to catch a

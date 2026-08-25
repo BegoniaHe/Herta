@@ -1,14 +1,15 @@
 import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-import type {
-  AgentEvent,
-  EventBus,
-  PermissionRule,
-  RulePermissionEngine,
-  RuleVerdict,
-  ToolCallRequest,
-  ToolContext,
+import {
+  type AgentEvent,
+  countDiffLinesFor,
+  type EventBus,
+  type PermissionRule,
+  type RulePermissionEngine,
+  type RuleVerdict,
+  type ToolCallRequest,
+  type ToolContext,
 } from "@herta/core";
 import { formatInputIssues } from "../input-issues.js";
 import { resolveSafePath } from "../path-safety.js";
@@ -162,16 +163,7 @@ export function makeEditFileRule(deps: EditFileRuleDeps = {}): PermissionRule {
 }
 
 function countLines(diff: string, prefix: "+" | "-"): number {
-  let count = 0;
-  for (const line of diff.split("\n")) {
-    if (
-      line.startsWith(prefix) &&
-      !line.startsWith(`${prefix}${prefix}${prefix}`)
-    ) {
-      count += 1;
-    }
-  }
-  return count;
+  return countDiffLinesFor(diff, prefix);
 }
 
 export function registerEditFileRule(

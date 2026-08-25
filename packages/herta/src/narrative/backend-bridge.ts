@@ -19,7 +19,11 @@ import type {
   TodoItem,
   TodoStatus,
 } from "@herta/core";
-import { composeMarkerSummary, type MarkerSummaryLabels } from "@herta/core";
+import {
+  composeMarkerSummary,
+  countDiffLines as countDiffLinesShared,
+  type MarkerSummaryLabels,
+} from "@herta/core";
 import {
   extractRecentDialogue,
   extractWorkingHistory,
@@ -768,14 +772,7 @@ const STATUS_WORD: Record<string, string> = {
  */
 function countDiffLines(diff: string): { add: number; del: number } | null {
   if (diff.trim().length === 0) return null;
-  let add = 0;
-  let del = 0;
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("+++") || line.startsWith("---")) continue;
-    if (line.startsWith("+")) add += 1;
-    else if (line.startsWith("-")) del += 1;
-  }
-  return { add, del };
+  return countDiffLinesShared(diff);
 }
 
 /**

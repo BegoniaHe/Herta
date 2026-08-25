@@ -39,13 +39,58 @@ export function looksBinary(buf: Buffer): boolean {
  * bytes or it does not. Callers that only READ may use the text and say so;
  * callers that WRITE must refuse.
  */
-export function decodeUtf8(buf: Buffer): { text: string; lossy: boolean } {
+export function decodeUtf8(buf: Buffer): {
+  text: string;
+  lossy: boolean;
+  bom: boolean;
+} {
+  const bom = hasUtf8Bom(buf);
   try {
     return {
+      // `fatal` aside, a TextDecoder also CONSUMES a leading BOM — which is
+      // why `bom` is reported separately. Readers want it gone; writers must
+      // put it back.
       text: new TextDecoder("utf-8", { fatal: true }).decode(buf),
       lossy: false,
+      bom,
     };
   } catch {
-    return { text: buf.toString("utf-8"), lossy: true };
+    return {
+      text: buf.toString("utf-8").replace(/^\uFEFF/, ""),
+      lossy: true,
+      bom,
+    };
   }
+}
+
+/**
+ * A leading UTF-8 BOM (`EF BB BF`).
+ *
+ * It is valid UTF-8, so `decodeUtf8` accepts the file and reports `lossy:
+ * false` — and then the decoder silently eats those three bytes. Every editor
+ * here rewrites the whole file from the decoded string, so an edit to one
+ * ASCII line USED to drop the BOM: bytes the patch never touched, changed.
+ * That is the same property ADR 0045 §2 exists to hold, and it matters most on
+ * Windows, where a BOM is load-bearing — a PowerShell 5.1 script containing
+ * non-ASCII is read as ANSI without one, so removing it corrupts every
+ * non-ASCII string in the file at the next run.
+ *
+ * `looksBinary` is unaffected: a BOM contains no NUL.
+ */
+export function hasUtf8Bom(buf: Buffer): boolean {
+  return (
+    buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf
+  );
+}
+
+/**
+ * Re-attach what `decodeUtf8` stripped, so a write preserves the file's own
+ * byte-level shape.
+ *
+ * Spelled `\uFEFF` rather than as the character itself: a literal BOM in the
+ * source is invisible to a reader, and the tools most likely to touch this
+ * file are the ones that strip BOMs.
+ */
+export function reattachBom(text: string, bom: boolean): string {
+  return bom && !text.startsWith("\uFEFF") ? `\uFEFF${text}` : text;
 }

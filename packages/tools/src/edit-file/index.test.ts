@@ -221,6 +221,59 @@ describe("editFileTool", () => {
     expect(await readFile(abs)).toEqual(original);
   });
 
+  it("preserves a UTF-8 BOM through an edit that never touches it", async () => {
+    // Same property as the non-UTF-8 refusal above, and the same class of
+    // miss: a BOM is VALID UTF-8, so the file is accepted, `lossy` is false —
+    // and then the decoder silently eats those three bytes, which the
+    // whole-file rewrite never puts back. Windows is where it bites: a
+    // PowerShell 5.1 script containing non-ASCII is read as ANSI without a
+    // BOM, so dropping one corrupts every non-ASCII string in the file.
+    ws = await mkTmpWorkspace({});
+    const abs = join(ws.root, "conf.ps1");
+    const original = Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from('$port = 8080\nWrite-Host "端口配置"\n', "utf-8"),
+    ]);
+    await writeFile(abs, original);
+    const reads = new ReadLedger();
+    await recordSha(reads, abs);
+    const r = await editFileTool().run(
+      {
+        id: "1",
+        tool: "edit_file",
+        input: {
+          path: "conf.ps1",
+          hunks: [{ search: "$port = 8080", replace: "$port = 9090" }],
+        },
+      },
+      ctxFor(ws.root, reads),
+      noopProgress,
+    );
+    expect(r.ok).toBe(true);
+    const after = await readFile(abs);
+    expect(after.subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
+    expect(after.toString("utf-8")).toContain("端口配置");
+    expect(after.toString("utf-8")).toContain("9090");
+    // A file WITHOUT one does not acquire one.
+    const plain = join(ws.root, "plain.txt");
+    await writeFile(plain, "alpha\n", "utf-8");
+    const reads2 = new ReadLedger();
+    await recordSha(reads2, plain);
+    await editFileTool().run(
+      {
+        id: "2",
+        tool: "edit_file",
+        input: {
+          path: "plain.txt",
+          hunks: [{ search: "alpha", replace: "beta" }],
+        },
+      },
+      ctxFor(ws.root, reads2),
+      noopProgress,
+    );
+    expect((await readFile(plain))[0]).not.toBe(0xef);
+  });
+
   it("summary names the file and counts hunks", async () => {
     ws = await mkTmpWorkspace({ "a.txt": "alpha\n" });
     const abs = join(ws.root, "a.txt");

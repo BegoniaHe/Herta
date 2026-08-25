@@ -18,6 +18,8 @@ import {
   IN_FLIGHT_EXIT_MS,
   IN_FLIGHT_MIN_VISIBLE_MS,
   SUPERVISOR_HINT_DELAY_MS,
+  UNPINNED_TRIM_AT,
+  UNPINNED_TRIM_KEEP_TAIL,
 } from "./Conversation.js";
 import { SCROLL_GLIDE_MAX_MS } from "./scroll-glide.js";
 import { HEADROOM_GAP_PX } from "./turn-headroom.js";
@@ -3289,6 +3291,217 @@ describe("Conversation load-earlier paging (long sessions)", () => {
       });
     });
     expect(screen.queryByText(/earlier entries/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Conversation unpinned live-window trim", () => {
+  /** Row pitch in the faked layout. Rows are laid out in flow order at this
+   *  spacing, so a row's viewport-relative top is derivable from its index
+   *  and the scroll position — which is all the trim's binary search reads. */
+  const ROW_PX = 40;
+  const VIEW_PX = 600;
+
+  /**
+   * A conversation whose geometry is faked well enough for the trim's two
+   * reads: the pane's scroll position/size, and each `[data-abs-index]`
+   * row's viewport-relative top. jsdom has no layout, so both are stubbed
+   * from the row's ABSOLUTE index — content therefore behaves as if every
+   * block above the window start is still laid out, which is what makes the
+   * anchor arithmetic (scrollHeight shrinking by the trimmed rows' height)
+   * meaningful here.
+   */
+  const userBlocks = (n: number, tag = "m") =>
+    Array.from({ length: n }, (_, i) => ({
+      kind: "user" as const,
+      text: `${tag}${i}`,
+    }));
+
+  function setup(opts: {
+    blocks: number;
+    /** Where the reader ends up before the scenario's append. */
+    readAt: number;
+    recordStart?: number;
+    /** Seeds the load-earlier page (its `start + blocks.length` must equal
+     *  `recordStart`, or the store drops the response as stale). */
+    recordSlice?: {
+      start: number;
+      blocks: ReturnType<typeof userBlocks>;
+    };
+  }): {
+    container: HTMLElement;
+    mock: ReturnType<typeof createMockHertaBridge>;
+    pane: HTMLElement;
+    rows: () => number;
+    scrollTop: () => number;
+    append: (text: string) => void;
+    patchRows: () => void;
+  } {
+    const mock = createMockHertaBridge(
+      opts.recordSlice !== undefined
+        ? { recordSliceResult: opts.recordSlice }
+        : {},
+    );
+    const { container } = renderWithLocale(
+      <WorkspaceRefsProvider>
+        <HertaBridgeProvider bridge={mock.bridge}>
+          <Conversation />
+        </HertaBridgeProvider>
+      </WorkspaceRefsProvider>,
+    );
+    // Open SHORT. A long opening record would trip the PINNED trim before
+    // the scenario starts (the reader is pinned on arrival), so the long
+    // window is grown below, after unpinning — which is also how a real
+    // session reaches this state: a marathon run under a reading user.
+    act(() => {
+      mock.emitReset({
+        sessionId: "s",
+        workspaceRoot: "/r",
+        record: userBlocks(4, "seed"),
+        overlay: null,
+        backendWorkspace: "/r",
+        backendWorkspaceIsDefault: true,
+      });
+    });
+    const pane = container.querySelector(".conversation") as HTMLElement;
+    let scrollTop = 0;
+    Object.defineProperty(pane, "scrollTop", {
+      get: () => scrollTop,
+      set: (v: number) => {
+        scrollTop = v;
+      },
+      configurable: true,
+    });
+    Object.defineProperty(pane, "clientHeight", {
+      get: () => VIEW_PX,
+      configurable: true,
+    });
+    // scrollHeight follows the MOUNTED rows: a trim removes rows above, so
+    // the scroller shrinks by exactly their height — the delta the anchor
+    // compensates with.
+    Object.defineProperty(pane, "scrollHeight", {
+      get: () =>
+        container.querySelectorAll("[data-abs-index]").length * ROW_PX +
+        VIEW_PX,
+      configurable: true,
+    });
+    pane.getBoundingClientRect = () => ({ top: 0, bottom: VIEW_PX }) as DOMRect;
+    // Each row's top: its position among the MOUNTED rows, minus the scroll.
+    const patchRows = (): void => {
+      const rows = container.querySelectorAll<HTMLElement>("[data-abs-index]");
+      rows.forEach((row, i) => {
+        row.getBoundingClientRect = () =>
+          ({
+            top: i * ROW_PX - scrollTop,
+            bottom: i * ROW_PX - scrollTop + ROW_PX,
+          }) as DOMRect;
+      });
+    };
+    patchRows();
+    const scrollTo = (to: number): void => {
+      act(() => {
+        pane.scrollTop = to;
+        fireEvent.scroll(pane);
+      });
+      patchRows();
+    };
+    // Unpin FIRST (a wheel notch up off the bottom), then grow the window to
+    // its full length as a same-session record reset — the pinned trim stands
+    // down for an unpinned reader, so the long window survives to be the
+    // subject of these tests.
+    scrollTo(0);
+    act(() => {
+      mock.emitRecord({
+        kind: "reset",
+        record: userBlocks(opts.blocks),
+        start: opts.recordStart ?? 0,
+      });
+    });
+    patchRows();
+    scrollTo(opts.readAt);
+    return {
+      container,
+      mock,
+      pane,
+      rows: () => container.querySelectorAll("[data-abs-index]").length,
+      scrollTop: () => scrollTop,
+      patchRows,
+      append: (text: string) => {
+        act(() => {
+          mock.emitRecord({
+            kind: "block",
+            blockId: `b-${text}`,
+            block: { kind: "user", text },
+          });
+        });
+        patchRows();
+      },
+    };
+  }
+
+  it("trims history above an unpinned reader and holds the viewport still", () => {
+    // Reading deep in the history of a long window, far above the fold.
+    const s = setup({ blocks: UNPINNED_TRIM_AT + 1, readAt: 12_000 });
+    const before = s.rows();
+    const scrollBefore = s.scrollTop();
+    s.append("live append");
+    const after = s.rows();
+    // Rows left, from ABOVE — the append added one, so a pure append would
+    // have grown the count.
+    expect(after).toBeLessThan(before);
+    // …and the reader's view did not move: scrollTop slid down by exactly
+    // the removed rows' height (the trimmed count, plus the appended row).
+    const removed = before + 1 - after;
+    expect(s.scrollTop()).toBe(scrollBefore - removed * ROW_PX);
+  });
+
+  it("keeps the newest blocks whatever the cut (scrolling back down lands on history, not a paging button)", () => {
+    const s = setup({ blocks: UNPINNED_TRIM_AT + 1, readAt: 12_000 });
+    const before = s.rows();
+    s.append("live append");
+    // A cut really happened (else the tail bound below proves nothing)…
+    expect(s.rows()).toBeLessThan(before + 1);
+    // …the tail bound held…
+    expect(s.rows()).toBeGreaterThanOrEqual(UNPINNED_TRIM_KEEP_TAIL);
+    // …and the newest blocks — the live append and the ones before it — are
+    // the survivors, so scrolling back down lands on real history.
+    expect(screen.getByText("live append")).toBeInTheDocument();
+    expect(
+      screen.getByText(`m${UNPINNED_TRIM_AT}`), // the last pre-append block
+    ).toBeInTheDocument();
+  });
+
+  it("never trims rows the reader can see — the cut stays a viewport above the fold", () => {
+    // Scrolled up only slightly: less than one viewport of content sits
+    // above the fold, so no cut respects the margin and none is made.
+    const s = setup({ blocks: UNPINNED_TRIM_AT + 1, readAt: VIEW_PX - 10 });
+    const before = s.rows();
+    s.append("live append");
+    expect(s.rows()).toBe(before + 1);
+  });
+
+  it("does not trim a window that is merely long — the threshold is mounted rows", () => {
+    const s = setup({ blocks: UNPINNED_TRIM_AT - 100, readAt: 5_000 });
+    const before = s.rows();
+    s.append("live append");
+    expect(s.rows()).toBe(before + 1);
+  });
+
+  it("a load-earlier prepend never trips a trim — the reader ASKED for those rows", async () => {
+    const s = setup({
+      blocks: 400,
+      readAt: 9_000,
+      recordStart: 200,
+      recordSlice: { start: 0, blocks: userBlocks(200, "old") },
+    });
+    // The prepend takes the window to 600 blocks — past the trim threshold,
+    // with plenty of trimmable content above the fold. It must survive:
+    // paging history in and immediately dropping it is a treadmill.
+    await act(async () => {
+      fireEvent.click(screen.getByText(/earlier entries/));
+      await Promise.resolve();
+    });
+    s.patchRows();
+    expect(s.rows()).toBe(600);
   });
 });
 

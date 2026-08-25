@@ -109,6 +109,18 @@ export const GLIDE_WINDOW_MS = 700;
  *  the `rise.start` call. */
 export const OUTGOING_FLIGHT_MS = 860;
 
+// Unpinned live-window trim (2026-08-25). Deliberately laxer than the pinned
+// 260→200: the reader is IN this history, so trims should be rare and only
+// ever claim rows provably off-screen above. Begin considering a cut past
+// this many mounted blocks…
+export const UNPINNED_TRIM_AT = 500;
+/** …never cut into the newest blocks (mirror of the pinned tail bound —
+ *  scrolling back down must land on real history, not a paging button)… */
+export const UNPINNED_TRIM_KEEP_TAIL = 200;
+/** …and don't bother for cuts smaller than this (each trim costs a geometry
+ *  read and a full-window commit; tiny ones would churn per append). */
+export const UNPINNED_TRIM_MIN = 50;
+
 /** Per-row crash fallback (audit 2026-07-13 T2.2): the row renderers are
  *  fed model-shaped record blocks every turn, so a malformed one must cost
  *  one muted line — not unmount the whole conversation. */
@@ -878,6 +890,17 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     scrollHeight: number;
     scrollTop: number;
   } | null>(null);
+  /** The prepend anchor's mirror, armed by the unpinned live-window trim
+   *  below: rows leave ABOVE the scroll position, so scrollTop must slide
+   *  down by the removed height or the visible content jumps. Same clearing
+   *  discipline as prependAnchorRef (rewind, session switch). */
+  const trimAnchorRef = useRef<{
+    /** The window start at trim time — consumed only by the recordStart
+     *  INCREASE this trim caused. */
+    expectFrom: number;
+    scrollHeight: number;
+    scrollTop: number;
+  } | null>(null);
   const loadEarlier = useCallback((): void => {
     const el = scroll.scrollRef.current;
     prependAnchorRef.current =
@@ -1135,9 +1158,10 @@ export const Conversation = memo(function Conversation(): JSX.Element {
   // past it (hysteresis, not a per-block slice): the removed rows sit far
   // above the fold, the browser clamps scrollTop at the shrunken bottom
   // (still pinned), and "load earlier" pages them back on demand. Never
-  // trims under an unpinned reader (they may be reading those rows) or
-  // while a morph clone is measuring row slots (a shrinking flow would
-  // move its landing slot — the same bug class the morphs just escaped).
+  // trims under an unpinned reader (they may be reading those rows — the
+  // geometry-guarded sibling below owns that case) or while a morph clone
+  // is measuring row slots (a shrinking flow would move its landing slot —
+  // the same bug class the morphs just escaped).
   useEffect(() => {
     if (!scroll.pinnedRef.current || scroll.morphInFlightRef.current) return;
     if (record.length > 260) {
@@ -1153,6 +1177,106 @@ export const Conversation = memo(function Conversation(): JSX.Element {
       sessionStore.trimRecordWindow(200);
     }
   }, [record, sessionStore]);
+
+  // Unpinned live-window trim (2026-08-25): the T3.5 trim above stands down
+  // while the reader is scrolled up, which left a marathon run under an
+  // unpinned reader growing the mounted window without bound — every commit
+  // re-grouping and reconciling every mounted row. This sibling claims only
+  // rows the reader provably is not looking at: the cut lands on a user row
+  // (`data-abs-index` rows are in flow order, so everything before one sits
+  // strictly above it — and a user block always starts a fresh groupRecord
+  // run, so survivors regroup identically) whose top sits at least one
+  // viewport ABOVE the visible region, so a casual scroll-up never lands
+  // straight on the load-earlier cliff. The viewport is anchored across the
+  // commit by trimAnchorRef — the load-earlier prepend anchor in reverse —
+  // so visible content does not move. Nothing is lost: "load earlier" pages
+  // the dropped rows back on demand.
+  //
+  // Fires only on APPEND growth (the record END advancing): a load-earlier
+  // prepend is the reader ASKING for old rows, so it must never trip a trim
+  // however large it grows the window. Stands down whenever the scroll
+  // geometry is spoken for — morph flights (clones measured their slots),
+  // glides/jumps/parks (a scripted scroll is mid-travel), a pending
+  // topic-jump poll (its anchor row must stay mounted), an armed headroom
+  // reservation (a content-coordinate total the trim would shove), or an
+  // unconsumed prepend/trim anchor. The residual unbounded case is a reader
+  // camped mid-history for a whole marathon: rows from their viewport DOWN
+  // to the live end can never be trimmed (the window is one contiguous
+  // tail), so growth below the fold remains — this bounds everything above.
+  const prevUnpinnedEndRef = useRef(0);
+  useEffect(() => {
+    const end = recordStart + record.length;
+    const prevEnd = prevUnpinnedEndRef.current;
+    prevUnpinnedEndRef.current = end;
+    if (end <= prevEnd) return; // reset/rewind/trim/prepend — not append growth
+    if (scroll.pinnedRef.current) return; // the pinned trim above owns this
+    if (record.length <= UNPINNED_TRIM_AT) return;
+    if (
+      scroll.morphInFlightRef.current ||
+      scroll.glidingRef.current ||
+      scroll.jumpingRef.current ||
+      scroll.jumpPollRef.current !== null ||
+      scroll.headroomExtentRef.current !== null ||
+      prependAnchorRef.current !== null ||
+      trimAnchorRef.current !== null
+    ) {
+      return;
+    }
+    const el = scroll.scrollRef.current;
+    if (el === null) return;
+    // Cheap pre-guard: with less than one viewport of content above the
+    // fold, no margin-respecting cut exists — skip the DOM scan entirely.
+    if (el.scrollTop <= el.clientHeight) return;
+    const paneTop = el.getBoundingClientRect().top;
+    const rows = el.querySelectorAll<HTMLElement>("[data-abs-index]");
+    if (rows.length === 0) return;
+    // Last user row whose top sits ≥ one viewport above the visible top.
+    // Rows are in flow order, so their tops are monotonic: binary search,
+    // ~10 rect reads (the TopicRail scrollspy lesson) — and at most one
+    // forced layout, since nothing writes between reads.
+    const limit = paneTop - el.clientHeight;
+    let lo = 0;
+    let hi = rows.length - 1;
+    let found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const row = rows[mid];
+      if (row !== undefined && row.getBoundingClientRect().top <= limit) {
+        found = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    if (found === -1) return;
+    const cut = Number(rows[found]?.dataset.absIndex);
+    if (!Number.isFinite(cut)) return;
+    const trimCount = Math.min(
+      cut - recordStart,
+      record.length - UNPINNED_TRIM_KEEP_TAIL,
+    );
+    if (trimCount < UNPINNED_TRIM_MIN) return;
+    trimAnchorRef.current = {
+      expectFrom: recordStart,
+      scrollHeight: el.scrollHeight,
+      scrollTop: el.scrollTop,
+    };
+    sessionStore.trimRecordWindow(record.length - trimCount);
+  }, [record, recordStart, sessionStore]);
+  // Anchor consumption — the prepend consumer's mirror: the trimmed rows
+  // left from ABOVE the scroll position, so scrollTop slides down by the
+  // removed height in the same pre-paint pass (overflow-anchor is disabled
+  // on the pane; nothing else compensates). Keyed on recordStart — a trim
+  // strictly raises it, so the guard is the increase this trim caused.
+  useLayoutEffect(() => {
+    const anchor = trimAnchorRef.current;
+    if (anchor === null) return;
+    trimAnchorRef.current = null;
+    if (recordStart <= anchor.expectFrom) return; // not this trim's commit
+    const el = scroll.scrollRef.current;
+    if (el === null) return;
+    el.scrollTop = anchor.scrollTop + (el.scrollHeight - anchor.scrollHeight);
+  }, [recordStart]);
 
   // A tail-shrink of the record is a rewind: the reservation belonged to the
   // withdrawn turn, so it leaves with it (review 2026-07-31 — "the headroom
@@ -1171,8 +1295,10 @@ export const Conversation = memo(function Conversation(): JSX.Element {
       // A rewind also invalidates a still-armed load-earlier anchor (review
       // 2026-07-31): its saved geometry predates the truncation, and it can
       // survive here when the reset happens not to move recordStart (the
-      // anchor-consuming effect keys on that alone).
+      // anchor-consuming effect keys on that alone). The trim anchor saves
+      // the same kind of geometry — same discipline.
       prependAnchorRef.current = null;
+      trimAnchorRef.current = null;
       if (scroll.headroomExtentRef.current !== null) {
         scroll.headroomExtentRef.current = null;
         scroll.syncHeadroom();
@@ -1196,6 +1322,7 @@ export const Conversation = memo(function Conversation(): JSX.Element {
       scroll.jumpTimerRef.current = null;
     }
     prependAnchorRef.current = null;
+    trimAnchorRef.current = null;
   }, [sessionId]);
 
   // Session-switch stagger entrance (SPEC 2026-06-20-session-switch-transition).

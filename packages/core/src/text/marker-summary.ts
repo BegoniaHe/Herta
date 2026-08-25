@@ -15,6 +15,10 @@ export interface MarkerSummaryLabels {
   readonly tests: (passed: number, failed: number) => string;
   /** Risk-count segment, called only when the backend flagged ≥1 risk. */
   readonly risk: (n: number) => string;
+  /** Added/removed lines, called only when every changed file had a real
+   *  per-file diff (see `DoneMarkerSummary.lines`). Omit the label to leave
+   *  the segment out entirely — older callers stay unchanged. */
+  readonly lines?: (add: number, del: number) => string;
   /** Abnormal-termination word (run aborted / 运行异常中止) — appended only
    *  on the bridge-failure marker (`aborted: true`). */
   readonly aborted: string;
@@ -37,6 +41,10 @@ export function composeMarkerSummary(
 ): string {
   const parts: string[] = [labels.stateWord];
   if (m.fileCount > 0) parts.push(labels.file(m.fileCount));
+  // Directly after the file count, which it qualifies.
+  if (m.lines !== undefined && labels.lines !== undefined) {
+    parts.push(labels.lines(m.lines.add, m.lines.del));
+  }
   if (m.tests !== undefined) {
     parts.push(labels.tests(m.tests.passed, m.tests.failed));
   }

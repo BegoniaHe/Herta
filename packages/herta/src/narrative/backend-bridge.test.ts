@@ -527,7 +527,15 @@ describe("projectBackendEvent — structured digests (M-projection-3)", () => {
       diff: "+1",
       files: ["x.ts"],
     });
-    expect(preview?.digest).toEqual({ kind: "skip" });
+    // A patch carries its MAGNITUDE since 2026-08-25 — the write was the one
+    // operation whose row said nothing about its own size.
+    expect(preview?.digest).toEqual({
+      kind: "patch",
+      files: ["x.ts"],
+      add: 1,
+      del: 0,
+    });
+    expect(preview?.body.startsWith("patch preview: x.ts (+1 -0)")).toBe(true);
 
     const fail = projectBackendEvent({
       type: "tool.call.finished",

@@ -108,6 +108,15 @@ export interface DoneMarkerSummary {
   readonly tests?: { readonly passed: number; readonly failed: number };
   /** Count of residual risks flagged by the backend (0 when none). */
   readonly riskCount: number;
+  /**
+   * Total lines added / removed across the changed files (2026-08-25).
+   *
+   * Present only when EVERY changed file carried a per-file diff. A dispatch
+   * that changed anything through a command — `sed -i`, a heredoc, an `mv` —
+   * has no diff for that file, and a partial total would read as the whole
+   * truth. Absent is the honest answer; the file count still stands.
+   */
+  readonly lines?: { readonly add: number; readonly del: number };
   /** Set (only ever `true`) when the run TERMINATED ABNORMALLY — runBrief
    *  itself threw rather than returning a report (the bridge-failure marker,
    *  canonical body `失败 · 运行异常中止`). Neutral machine field (D2):
@@ -197,8 +206,28 @@ export type SystemBlockDigest =
       readonly message?: string;
     }
   | {
-      /** Contributes no digest line (patch previews — Writing covers them). */
+      /** Contributes no digest line. Kept for records persisted before the
+       *  `patch` digest below existed — the patch preview used to be the only
+       *  producer, and a renderer must still fall back to its body. */
       readonly kind: "skip";
+    }
+  | {
+      /**
+       * A patch preview, with its MAGNITUDE (2026-08-25).
+       *
+       * The diff itself stays in the block body; the digest carries the
+       * counts so a renderer can say `↳ +96 −5` without re-parsing the fence,
+       * and so Herta reads the same number the user sees.
+       *
+       * `add`/`del` are absent when the change reached the tree through a
+       * COMMAND rather than an editor — a `sed -i`, a heredoc, an `mv`. There
+       * is no per-file diff for those, and rendering them as `+0 −0` would
+       * state a number nobody measured.
+       */
+      readonly kind: "patch";
+      readonly files: readonly string[];
+      readonly add?: number;
+      readonly del?: number;
     }
   | {
       /** A managed background command's lifecycle row (ADR 0025 slice 4;

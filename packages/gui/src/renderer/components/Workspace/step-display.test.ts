@@ -18,6 +18,7 @@ const ZH: Partial<Record<MessageKey, string>> = {
   "activity.result.exit": "退出",
   "activity.result.lines": "行",
   "activity.step.patchPreview": "补丁预览",
+  "activity.result.changedNoDiff": "已改动（命令，无逐行差异）",
   "activity.bg.label": "后台",
   "activity.bg.running": "运行中",
   "activity.bg.stopped": "已停止",
@@ -50,6 +51,52 @@ const sys = (body: string, digest?: SystemBlock["digest"]): SystemBlock => ({
   label: "差分协处理器",
   body,
   ...(digest !== undefined ? { digest } : {}),
+});
+
+/**
+ * A write was the ONE operation with no `↳` outcome row: its patch block said
+ * `patch preview: <files>`, which restates the `Writing` row above it and says
+ * nothing about size. Every other operation answers itself.
+ */
+describe("stepDisplayBody — patch magnitude (2026-08-25)", () => {
+  const body = "patch preview: a.ts (+96 -5)\n\n```diff\n+x\n-y\n```";
+
+  it("leads with the magnitude and keeps the diff beneath it", () => {
+    const out = stepDisplayBody(
+      sys(body, { kind: "patch", files: ["a.ts"], add: 96, del: 5 }),
+      t,
+    );
+    expect(out.split("\n")[0]).toBe("↳ +96 −5");
+    // The fence is untouched — the existing expander still opens it.
+    expect(out).toContain("```diff");
+    expect(out).toContain("+x");
+  });
+
+  it("says so when a COMMAND made the change — never `+0 −0`", () => {
+    // `sed -i`, a heredoc, an `mv`: the dispatch baseline puts these in
+    // changedFiles, and no editor produced a diff for them. A zero here would
+    // state a number nobody measured.
+    const out = stepDisplayBody(
+      sys("patch preview: a.ts\n\n```diff\n```", {
+        kind: "patch",
+        files: ["a.ts"],
+      }),
+      t,
+    );
+    expect(out.split("\n")[0]).toBe("↳ 已改动（命令，无逐行差异）");
+    expect(out).not.toContain("+0");
+  });
+
+  it("still renders a pre-2026-08-25 record's skip digest", () => {
+    expect(
+      stepDisplayBody(
+        sys("patch preview: a.ts\n\n```diff\n+x\n```", {
+          kind: "skip",
+        }),
+        t,
+      ),
+    ).toContain("补丁预览");
+  });
 });
 
 describe("stepDisplayBody — bg + todo digests (2026-07-23)", () => {

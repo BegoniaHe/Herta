@@ -207,10 +207,27 @@ export function stepDisplayBody(
       return `↳ ${t("activity.result.digest")} ${d.path} · ${d.chunks} ${t(
         "activity.result.chunks",
       )}${d.cached ? ` (${t("activity.result.cached")})` : ""}`;
+    case "patch": {
+      // The magnitude row (2026-08-25). A write was the ONE operation with no
+      // `↳` outcome row — every other one answers itself (`↳ 5 处匹配 · 1 个
+      // 文件`, `↳ 测试: 3 passed`), and a patch said only "patch preview:
+      // <files>", which is a restatement of the Writing row above it.
+      //
+      // The diff body still rides this block, so the existing expander opens
+      // it; only the headline changes. Counts absent → the change came
+      // through a COMMAND and no diff exists, so it says that instead of
+      // showing a `+0 −0` nobody measured.
+      const head =
+        d.add === undefined || d.del === undefined
+          ? `↳ ${t("activity.result.changedNoDiff")}`
+          : `↳ +${d.add} −${d.del}`;
+      const nl = block.body.indexOf("\n");
+      return nl >= 0 ? `${head}${block.body.slice(nl)}` : head;
+    }
     case "skip":
-      // The patch-preview block (the only skip-digest producer): localize
-      // its first-line label, keep the files + diff fence verbatim (the
-      // collapsible diff body must stay untouched).
+      // Pre-2026-08-25 records: the patch preview was the only skip producer.
+      // Localize its first-line label, keep the files + diff fence verbatim
+      // (the collapsible diff body must stay untouched).
       if (block.body.startsWith("patch preview:")) {
         return `${t("activity.step.patchPreview")}:${block.body.slice(
           "patch preview:".length,

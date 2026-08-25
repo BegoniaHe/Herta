@@ -40,6 +40,10 @@ export function composeMarkerSummary(summary: ActivitySummary, t: TFn): string {
       n === 1
         ? t("record.marker.risk", { n: 1 })
         : t("record.marker.risks", { n }),
+    // `lines` is deliberately NOT supplied here. The GUI renders the roll-up's
+    // `+187 −42` as an ELEMENT beside this string (the digits count up), so
+    // composing it into the text too would print it twice. The canonical body
+    // and the CLI both include it — see CN_MARKER_LABELS and system-localize.
     // Abnormal termination (bridge-failure marker): composes the canonical
     // body's 运行异常中止 segment instead of a fabricated risk count.
     aborted: t("record.marker.aborted"),

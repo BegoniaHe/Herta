@@ -239,6 +239,9 @@ export const zh = {
   // search_text result row (2026-08-17): "↳ 5 处匹配 · 1 个文件".
   "activity.result.matches": "处匹配",
   "activity.result.files": "个文件",
+  /** A patch whose change came through a command, so there is no per-file
+   *  diff to count (2026-08-25). Never rendered as `+0 −0`. */
+  "activity.result.changedNoDiff": "已改动（命令，无逐行差异）",
   "activity.result.truncated": "已截断",
   /** A recorded conclusion row (ADR 0039): "↳ 结论: <claim> — <cites>". */
   "activity.result.finding": "结论",

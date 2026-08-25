@@ -13,6 +13,15 @@ export interface CollapsibleBodyProps {
    *  the UI locale (ADR 0019 / ADR 0018). */
   readonly t: TFn;
   readonly threshold?: number;
+  /**
+   * Replaces the body's FIRST line with an element (2026-08-25).
+   *
+   * A patch row's headline is the animated `+96 −5`, which cannot be a string
+   * — the digits count up. Everything below the first line (the fenced diff
+   * and its disclosure) is unchanged, so the expander still opens the same
+   * body it always did.
+   */
+  readonly headline?: JSX.Element;
 }
 
 /**
@@ -28,13 +37,30 @@ export function CollapsibleBody(props: CollapsibleBodyProps): JSX.Element {
   const [expanded, setExpanded] = useState(false);
 
   if (!summary.hasDiff || summary.diffLineCount <= threshold) {
-    return <pre className={props.preClassName}>{props.body}</pre>;
+    if (props.headline === undefined) {
+      return <pre className={props.preClassName}>{props.body}</pre>;
+    }
+    // Headline as an element, the rest of the body verbatim beneath it.
+    const nl = props.body.indexOf("\n");
+    const rest = nl >= 0 ? props.body.slice(nl + 1) : "";
+    return (
+      <div className="collapsible-body">
+        <pre className={props.preClassName}>{props.headline}</pre>
+        {rest.trim().length > 0 && (
+          <pre className={props.preClassName}>{rest}</pre>
+        )}
+      </div>
+    );
   }
 
   return (
     <div className="collapsible-body">
-      {summary.preText.length > 0 && (
-        <pre className={props.preClassName}>{summary.preText}</pre>
+      {props.headline !== undefined ? (
+        <pre className={props.preClassName}>{props.headline}</pre>
+      ) : (
+        summary.preText.length > 0 && (
+          <pre className={props.preClassName}>{summary.preText}</pre>
+        )
       )}
       <button
         type="button"

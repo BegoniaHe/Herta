@@ -4292,6 +4292,58 @@ button.session-item__badge--dismiss {
 :root[data-theme="dark"] .activity-step.is-failure .activity-step__icon {
   color: #d99a4e;
 }
+/* Diff magnitude (2026-08-25) — the `↳ +96 −5` a write finally answers with.
+   Desaturated on purpose: this sits in a column of muted monospace, and a
+   saturated git-green would shout louder than the failure amber above, which
+   is the one colour in this block that must win. */
+.diff-stat {
+  display: inline-flex;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+  animation: diffStatIn 260ms var(--ease-pop) both;
+}
+.diff-stat__n {
+  /* Fixed-width digits do not reflow the row as the count climbs. */
+  font-variant-numeric: tabular-nums;
+}
+.diff-stat__n--add {
+  color: #3f7d50;
+}
+.diff-stat__n--del {
+  color: #a4544c;
+}
+.diff-stat--unmeasured {
+  color: var(--muted-4);
+  font-style: italic;
+}
+/* The roll-up on the done marker: the same shape as the rows it sums, one
+   step stronger so it reads as their total rather than another row. */
+.diff-stat--rollup {
+  font-weight: 500;
+  animation-delay: 90ms;
+}
+:root[data-theme="dark"] .diff-stat__n--add {
+  color: #6fa86f;
+}
+:root[data-theme="dark"] .diff-stat__n--del {
+  color: #c4736b;
+}
+@keyframes diffStatIn {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* The digits also stop counting — see useCountUp. */
+  .diff-stat {
+    animation: none;
+  }
+}
 /* Evidence-detail expander (2026-07-23): the block's evidenceDetail —
    command-output tail, 改动文件 / 风险 / 待办 roll-ups, what Herta's prompt
    reads — collapsed by default to keep the screen terse. */

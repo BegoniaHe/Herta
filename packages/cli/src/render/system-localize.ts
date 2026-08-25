@@ -48,6 +48,9 @@ function composeMarkerSummaryEN(m: DoneMarkerSummary): string {
         ? `tests ${passed}/${passed}`
         : `tests ${passed} passed, ${failed} failed`,
     risk: (n) => (n === 1 ? "1 risk" : `${n} risks`),
+    // Digits, matching the canonical body. The GUI omits this segment because
+    // it renders the same numbers as an animated element instead.
+    lines: (add, del) => `+${add} −${del}`,
     aborted: "run aborted",
   });
 }

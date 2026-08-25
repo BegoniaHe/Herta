@@ -10,6 +10,7 @@ import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import { makeT } from "../../i18n/LocaleProvider.js";
 import { ActivityStep } from "./ActivityStep.js";
 import { useUnpinConversation } from "./ConversationPin.js";
+import { DiffStat } from "./DiffStat.js";
 import {
   activityChipLabel,
   activityHasTerminalMarker,
@@ -381,7 +382,23 @@ export const ActivityBlock = memo(function ActivityBlock(
             <SwapText text={latestStep} reduced={reduced} shimmer />
           ) : (
             headline !== null && (
-              <span className="activity-line__summary">{headline}</span>
+              <span className="activity-line__summary">
+                {headline}
+                {/* The dispatch's total, as an element so the digits count up
+                    like the per-write rows they sum. Present only when every
+                    changed file had a real diff — see DoneMarkerSummary.lines. */}
+                {summary?.kind === "structured" &&
+                  summary.marker.lines !== undefined && (
+                    <>
+                      {" · "}
+                      <DiffStat
+                        value={summary.marker.lines}
+                        unmeasuredLabel=""
+                        rollup
+                      />
+                    </>
+                  )}
+              </span>
             )
           )}
           {/* Chevron INLINE after the summary text (user 2026-07-07: it
@@ -508,6 +525,19 @@ export const ActivityBlock = memo(function ActivityBlock(
                   active={shimmer}
                   failed={failed}
                   detail={stepDisplayDetail(b, t)}
+                  // A patch row answers with its magnitude (2026-08-25). The
+                  // element replaces the body's first line so the digits can
+                  // count up; the diff below it is untouched.
+                  {...(b.digest?.kind === "patch"
+                    ? {
+                        stat:
+                          b.digest.add === undefined ||
+                          b.digest.del === undefined
+                            ? ("unmeasured" as const)
+                            : { add: b.digest.add, del: b.digest.del },
+                        statUnmeasuredLabel: t("activity.result.changedNoDiff"),
+                      }
+                    : {})}
                   // Take-back, offered only where it can actually work: a
                   // stored attachment (a path to delete), not already removed,
                   // and no turn in flight — the removal rides the same

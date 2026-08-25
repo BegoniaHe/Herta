@@ -257,6 +257,7 @@ export const en = {
   "activity.result.lines": "lines",
   "activity.result.matches": "matches",
   "activity.result.files": "files",
+  "activity.result.changedNoDiff": "changed (via a command, no line diff)",
   "activity.result.truncated": "truncated",
   "activity.result.finding": "finding",
   "activity.step.patchPreview": "patch preview",

@@ -68,6 +68,10 @@ function sanitizeDigest(digest: SystemBlockDigest): SystemBlockDigest {
     case "search":
       // The pattern is model-authored; the counts are harness-computed.
       return { ...digest, pattern: cleanBody(digest.pattern) };
+    case "patch":
+      // Paths are backend-derived; the counts are harness-computed from the
+      // diff text and pass through.
+      return { ...digest, files: digest.files.map(cleanBody) };
     case "finding":
       // Claim AND cites are model-authored (the cites were verified to
       // exist, not to be free of markers).
@@ -609,16 +613,27 @@ function projectBackendEventUnsanitized(event: AgentEvent): SystemBlock | null {
 
     case "patch.preview": {
       const files = event.files.join(", ");
-      const body = [
-        `patch preview: ${files}`,
-        "",
-        "```diff",
-        event.diff.trimEnd(),
-        "```",
-      ].join("\n");
-      // skip: the preview never contributes a digest line — the Writing
-      // op that follows it covers the same ground (spec §4.1).
-      return { kind: "system", label: "系统", body, digest: { kind: "skip" } };
+      const counts = countDiffLines(event.diff);
+      // The magnitude goes in the canonical body too, not just the digest:
+      // Herta reads this record (D7) and "改了 96 行" is exactly the kind of
+      // thing she should be able to say without opening the diff.
+      const head =
+        counts === null
+          ? `patch preview: ${files}`
+          : `patch preview: ${files} (+${counts.add} -${counts.del})`;
+      const body = [head, "", "```diff", event.diff.trimEnd(), "```"].join(
+        "\n",
+      );
+      return {
+        kind: "system",
+        label: "系统",
+        body,
+        digest: {
+          kind: "patch",
+          files: [...event.files],
+          ...(counts ?? {}),
+        },
+      };
     }
 
     case "permission.requested": {
@@ -718,6 +733,7 @@ const CN_MARKER_LABELS = (stateWord: string): MarkerSummaryLabels => ({
       ? `测试 ${passed}/${passed}`
       : `测试 ${passed} 通过，${failed} 失败`,
   risk: (n) => `${n} 风险`,
+  lines: (add, del) => `+${add} −${del}`,
   aborted: "运行异常中止",
 });
 
@@ -741,6 +757,52 @@ const STATUS_WORD: Record<string, string> = {
  * Herta's prompt. `role: "done-marker"` lets the renderer/actor recognise the
  * end of the run.
  */
+/**
+ * Added / removed line counts of a unified diff, or null when the text is not
+ * one this can measure.
+ *
+ * `+++` / `---` are the file headers, not content — counting them would
+ * inflate every single-file patch by one on each side. The `\ ` lines the
+ * bounded differ emits (an omission marker, "no newline at end of file") are
+ * not content either.
+ */
+function countDiffLines(diff: string): { add: number; del: number } | null {
+  if (diff.trim().length === 0) return null;
+  let add = 0;
+  let del = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) add += 1;
+    else if (line.startsWith("-")) del += 1;
+  }
+  return { add, del };
+}
+
+/**
+ * Total added / removed lines across a report's changed files — or null when
+ * ANY of them lacks a per-file diff.
+ *
+ * All-or-nothing on purpose. A file changed through a command (`sed -i`, a
+ * heredoc, an `mv`) has no diff, and since 2026-08-25 the dispatch baseline
+ * puts exactly those files into `changedFiles`. Summing only the measurable
+ * ones would present a partial number as the whole truth, which is the
+ * fabrication class this codebase has already paid to remove from `git_diff`.
+ */
+function totalChangedLines(
+  files: AgentExecutionReport["changedFiles"],
+): { add: number; del: number } | null {
+  if (files.length === 0) return null;
+  let add = 0;
+  let del = 0;
+  for (const f of files) {
+    const m = /^\s*\+(\d+)\s*[-−]\s*(\d+)\s*$/.exec(f.diffSummary ?? "");
+    if (m === null) return null;
+    add += Number.parseInt(m[1] as string, 10);
+    del += Number.parseInt(m[2] as string, 10);
+  }
+  return { add, del };
+}
+
 function buildDoneMarker(
   report: AgentExecutionReport,
   lastCommandTail: string | undefined,
@@ -761,10 +823,12 @@ function buildDoneMarker(
 
   // Structured mirror for localizing renderers (the GUI). The body below stays
   // canonical (D7); this is display-only data, never read by Herta's prompt.
+  const changedLines = totalChangedLines(report.changedFiles);
   const markerSummary: DoneMarkerSummary = {
     kind: "done",
     state: report.status,
     fileCount,
+    ...(changedLines !== null ? { lines: changedLines } : {}),
     ...(testCounts !== undefined ? { tests: testCounts } : {}),
     riskCount,
   };

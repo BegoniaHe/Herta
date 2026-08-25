@@ -3,6 +3,7 @@ import type { TFn } from "../../i18n/LocaleProvider.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import { CollapsibleBody } from "./CollapsibleBody.js";
 import { useUnpinConversation } from "./ConversationPin.js";
+import { DiffStat, type DiffStatValue } from "./DiffStat.js";
 import { StepIcon, type StepIconKey, stepIcon } from "./step-icon.js";
 
 export interface ActivityStepProps {
@@ -41,6 +42,18 @@ export interface ActivityStepProps {
    *  passed rather than translated here so the row keeps following the SESSION
    *  lang (ADR 0019) like every other string in it. */
   readonly removeLabel?: string;
+  /**
+   * A patch row's magnitude (2026-08-25) — rendered as an animated element in
+   * place of the body's first line, because the digits count up.
+   *
+   * A write used to be the one operation with no `↳` outcome row; its patch
+   * block said `patch preview: <files>`, which restates the `Writing` row
+   * above it and says nothing about size.
+   */
+  readonly stat?: DiffStatValue;
+  /** Localized text for a change with no per-file diff (a command wrote it).
+   *  Required when `stat` is set. */
+  readonly statUnmeasuredLabel?: string;
 }
 
 /** One row in an activity block: a verb icon + the (collapsible) body. */
@@ -73,6 +86,16 @@ export function ActivityStep(props: ActivityStepProps): JSX.Element {
             body={body}
             preClassName="activity-step__body"
             t={props.t}
+            {...(props.stat !== undefined
+              ? {
+                  headline: (
+                    <DiffStat
+                      value={props.stat}
+                      unmeasuredLabel={props.statUnmeasuredLabel ?? ""}
+                    />
+                  ),
+                }
+              : {})}
           />
           {props.onRemove !== undefined && (
             // The app's styled pill, not the native `title` (owner

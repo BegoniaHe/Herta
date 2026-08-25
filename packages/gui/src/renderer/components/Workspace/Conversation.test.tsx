@@ -1320,9 +1320,15 @@ describe("Conversation", () => {
     top: () => number;
     bottom: number;
     scrollTo: (px: number) => void;
+    /** Pane geometry reads since the last reset — each one is a forced
+     *  layout in a real browser, which is what the unpinned reveal path
+     *  must not pay (perf 2026-08-25). */
+    reads: { scrollHeight: number; clientHeight: number };
+    resetReads: () => void;
   } {
     const pane = container.querySelector(".conversation") as HTMLElement;
     let scrollTop = opts.scrollTop ?? 0;
+    const reads = { scrollHeight: 0, clientHeight: 0 };
     Object.defineProperty(pane, "scrollTop", {
       get: () => scrollTop,
       set: (v: number) => {
@@ -1331,11 +1337,17 @@ describe("Conversation", () => {
       configurable: true,
     });
     Object.defineProperty(pane, "clientHeight", {
-      get: () => opts.clientHeight,
+      get: () => {
+        reads.clientHeight += 1;
+        return opts.clientHeight;
+      },
       configurable: true,
     });
     Object.defineProperty(pane, "scrollHeight", {
-      get: () => opts.scrollHeight,
+      get: () => {
+        reads.scrollHeight += 1;
+        return opts.scrollHeight;
+      },
       configurable: true,
     });
     return {
@@ -1345,6 +1357,11 @@ describe("Conversation", () => {
       scrollTo: (px: number) => {
         scrollTop = px;
         fireEvent.scroll(pane);
+      },
+      reads,
+      resetReads: () => {
+        reads.scrollHeight = 0;
+        reads.clientHeight = 0;
       },
     };
   }
@@ -1423,6 +1440,63 @@ describe("Conversation", () => {
         block: { kind: "user", text: "more" },
       });
     });
+    expect(geo.top()).toBe(geo.bottom);
+  });
+
+  it("an unpinned follow trigger reads no pane geometry (perf 2026-08-25)", () => {
+    // The follow (scrollToEndIfPinned) runs on every reveal growth frame and
+    // on every appended block. For an unpinned reader with no reservation
+    // armed it moves nothing — yet it used to read scrollHeight+clientHeight
+    // for a preBottom the unpinned branch never used: one forced layout per
+    // reveal frame, paid for reading history under a streaming reply. The
+    // bottom read now travels with the scroll it serves.
+    const mock = createMockHertaBridge();
+    const { container } = renderWithLocale(
+      <WorkspaceRefsProvider>
+        <HertaBridgeProvider bridge={mock.bridge}>
+          <Conversation />
+        </HertaBridgeProvider>
+      </WorkspaceRefsProvider>,
+    );
+    act(() => {
+      mock.emitReset({
+        sessionId: "s",
+        workspaceRoot: "/r",
+        record: [{ kind: "user", text: "hi" }],
+        overlay: null,
+        backendWorkspace: "/r",
+        backendWorkspaceIsDefault: true,
+      });
+    });
+    const geo = fakePane(container, { scrollHeight: 1000, clientHeight: 100 });
+    act(() => {
+      geo.scrollTo(0); // unpin (the scroll handler's pin test reads geometry)
+    });
+    geo.resetReads();
+    act(() => {
+      mock.emitRecord({
+        kind: "block",
+        blockId: "b2",
+        block: { kind: "herta", surface: "speech", text: "answer" },
+      });
+    });
+    expect(geo.reads.scrollHeight).toBe(0);
+    expect(geo.reads.clientHeight).toBe(0);
+    expect(geo.top()).toBe(0);
+    // Anti-vacuous control: the SAME counters do count the pinned follow —
+    // the read is skipped with the scroll, not gone.
+    act(() => {
+      geo.scrollTo(geo.bottom); // re-pin
+    });
+    geo.resetReads();
+    act(() => {
+      mock.emitRecord({
+        kind: "block",
+        blockId: "b3",
+        block: { kind: "user", text: "more" },
+      });
+    });
+    expect(geo.reads.scrollHeight).toBeGreaterThan(0);
     expect(geo.top()).toBe(geo.bottom);
   });
 

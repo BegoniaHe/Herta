@@ -347,39 +347,51 @@ export function useConversationScroll(opts: {
   }, [measureContentHeight, syncHeadroom]);
   ratchetHeadroomRef.current = ratchetHeadroom;
   const scrollToEndIfPinned = useCallback((): void => {
-    // One forced layout per call (perf review 2026-07-31): while a reply is
-    // eating the reservation, every reveal frame used to run read → spacer
-    // write → scrollHeight RE-read, and the post-write re-read forced a
-    // second layout each frame. Read the bottom first (this read after the
+    const el = scrollRef.current;
+    // Whether this call may move the scroller — the three stand-downs that
+    // always gated the scroll write below, evaluated UP FRONT so a call that
+    // cannot scroll skips the bottom read too (perf 2026-08-25). This runs
+    // on every reveal growth frame, and for an unpinned reader that read was
+    // the last forced layout left on the reveal path — paid per frame for a
+    // value the unpinned branch never used. The guard covers exactly the
+    // scroll and its read; the sync below stays unconditional.
+    //
+    // Suppressing the scroll mid-morph: a clone measured its landing slot at
+    // flight start, and scrolling moves that slot; the settle re-runs this.
+    // Mid-glide: the climb IS the follow, re-deriving the live bottom every
+    // frame, and an instant snap here would cut its damped tail short (the
+    // incoming clone's settle lands exactly in this window).
+    const canScroll =
+      el !== null &&
+      pinnedRef.current &&
+      !morphInFlightRef.current &&
+      !glidingRef.current;
+    // One forced layout per scrolling call (perf review 2026-07-31): while a
+    // reply is eating the reservation, every reveal frame used to run read →
+    // spacer write → scrollHeight RE-read, and the post-write re-read forced
+    // a second layout each frame. Read the bottom first (this read after the
     // reveal's text commit is the one unavoidable layout), let the sync do
     // its clean-layout reads and its write, and derive the post-sync bottom
     // from the spacer delta. A scrollTop assignment past the real bottom is
     // clamped by the scroller, so the derivation needs no safety re-read.
-    const el = scrollRef.current;
-    const preBottom = el === null ? 0 : el.scrollHeight - el.clientHeight;
+    const preBottom = canScroll ? el.scrollHeight - el.clientHeight : 0;
+    // The SYNC deliberately runs THROUGH every stand-down — the guard above
+    // must never grow to cover it. Mid-morph (deferred-fix 2026-07-31):
+    // while a reservation holds, growth eats spacer and scrollHeight stays
+    // constant — which is exactly what keeps the clones' measured slots
+    // still. Standing the sync down there let text streamed during the
+    // incoming flight inflate the bottom instead: the climb chased it past
+    // the anchored gap and snapped back at the hand-off, and the incoming
+    // rise's owedScroll over-counted by the same growth, aiming the clone a
+    // few lines too high. Mid-glide, a stale spacer would feed the climb a
+    // bottom past the anchored position. Unpinned (a disclosure unpin can
+    // hold a reservation open), the spacer must keep tracking growth or
+    // re-pinning would land on stale blank. With no reservation armed the
+    // sync touches no layout at all (style reads/writes only), so the
+    // unpinned common case pays nothing here either.
     const delta = syncHeadroom();
-    // Only the SCROLL is suppressed mid-morph — a clone measured its landing
-    // slot at flight start, and scrolling moves that slot; the settle
-    // re-runs this. The SYNC deliberately runs THROUGH flights (deferred-fix
-    // 2026-07-31): while a reservation holds, growth eats spacer and
-    // scrollHeight stays constant — which is exactly what keeps the measured
-    // slots still. Standing the sync down here (as it did until today) let
-    // text streamed during the incoming clone's flight inflate the bottom
-    // instead: the climb chased it past the anchored gap and snapped back at
-    // the hand-off, and the incoming rise's owedScroll over-counted by the
-    // same growth, aiming the clone a few lines too high. (With no
-    // reservation armed the sync writes nothing, so this order is free.)
-    if (morphInFlightRef.current) return;
-    // While OUR climb runs, only the SCROLL stands down — the climb is the
-    // follow, re-deriving the live bottom every frame, and an instant
-    // scrollIntoView here would cut its damped tail short (the incoming
-    // clone's settle lands exactly in this window). The sync above must keep
-    // running: the spacer is what holds the extent as content grows, and a
-    // stale spacer would feed the climb a bottom past the anchored position.
-    if (glidingRef.current) return;
-    if (pinnedRef.current && el !== null) {
-      el.scrollTop = Math.max(0, preBottom + delta);
-    }
+    if (!canScroll) return;
+    el.scrollTop = Math.max(0, preBottom + delta);
   }, [syncHeadroom]);
   /** Take the scroller for a DAMPED climb to the bottom (scroll-glide.ts;
    *  user 2026-07-30 — the native smooth scroll spends a pane-sized move at

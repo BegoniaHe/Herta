@@ -13,6 +13,88 @@ export interface GitStatusData {
   clean: boolean;
 }
 
+/**
+ * Parse `git status --porcelain=v1 -z --branch --untracked-files=all`.
+ *
+ * `-z` fixes two things the newline form got wrong. Paths are emitted RAW,
+ * where the default `core.quotePath` C-quotes any non-ASCII name — so
+ * `中文note.md` arrived as thirty characters of octal that no tool could open,
+ * for the audience this product is primarily built for. And a path containing
+ * a newline (legal on POSIX) could not be represented at all.
+ *
+ * A rename emits `XY <new>\0<orig>\0` — **NEW first, then OLD, which is the
+ * OPPOSITE of `diff --numstat -z`.** The two parsers deliberately do not share
+ * a helper: the inversion is invisible until a real rename appears.
+ *
+ * `## No commits yet on main` is also handled here. It is a human SENTENCE,
+ * and slicing it the way a normal header is sliced yielded the literal string
+ * "No commits yet on main" as the branch name.
+ */
+export function parseStatusPorcelainZ(text: string): GitStatusData {
+  let branch: string | null = null;
+  let ahead = 0;
+  let behind = 0;
+  const files: GitStatusFile[] = [];
+
+  const records = text.split("\0");
+  let i = 0;
+  while (i < records.length) {
+    const rec = records[i];
+    if (rec === undefined || rec.length === 0) {
+      i += 1;
+      continue;
+    }
+    if (rec.startsWith("## ")) {
+      let branchPart = rec.slice(3);
+      if (branchPart.startsWith("HEAD (no branch)")) {
+        branch = null;
+        i += 1;
+        continue;
+      }
+      // An unborn HEAD is a real branch that simply has no commit yet.
+      const unborn = "No commits yet on ";
+      if (branchPart.startsWith(unborn))
+        branchPart = branchPart.slice(unborn.length);
+      const trackingIdx = branchPart.indexOf("...");
+      const nameEnd = trackingIdx >= 0 ? trackingIdx : branchPart.length;
+      branch = branchPart.slice(0, nameEnd).trim();
+      const trackInfo = branchPart.match(/\[([^\]]+)\]/)?.[1];
+      if (trackInfo) {
+        const aheadMatch = trackInfo.match(/ahead (\d+)/);
+        const behindMatch = trackInfo.match(/behind (\d+)/);
+        if (aheadMatch?.[1]) ahead = Number.parseInt(aheadMatch[1], 10);
+        if (behindMatch?.[1]) behind = Number.parseInt(behindMatch[1], 10);
+      }
+      i += 1;
+      continue;
+    }
+    if (rec.length < 3) {
+      i += 1;
+      continue;
+    }
+    const indexStatus = rec[0] ?? " ";
+    const worktreeStatus = rec[1] ?? " ";
+    const path = rec.slice(3);
+    if (indexStatus === "R" || indexStatus === "C") {
+      const origPath = records[i + 1];
+      files.push({
+        path,
+        indexStatus,
+        worktreeStatus,
+        ...(origPath !== undefined && origPath.length > 0 ? { origPath } : {}),
+      });
+      i += 2;
+      continue;
+    }
+    files.push({ path, indexStatus, worktreeStatus });
+    i += 1;
+  }
+
+  return { branch, ahead, behind, files, clean: files.length === 0 };
+}
+
+/** @deprecated the newline form C-quotes non-ASCII paths; see
+ *  {@link parseStatusPorcelainZ}. Kept so the old fixtures still compile. */
 export function parseStatusPorcelain(text: string): GitStatusData {
   const lines = text.split("\n");
   let branch: string | null = null;

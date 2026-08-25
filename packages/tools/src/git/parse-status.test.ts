@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseStatusPorcelain } from "./parse-status.js";
+import { parseStatusPorcelain, parseStatusPorcelainZ } from "./parse-status.js";
 
 describe("parseStatusPorcelain", () => {
   it("returns clean state when only branch line present", () => {
@@ -67,5 +67,58 @@ describe("parseStatusPorcelain", () => {
         origPath: "old.ts",
       },
     ]);
+  });
+});
+
+/**
+ * `-z` because the default `core.quotePath` C-quotes any non-ASCII name — a
+ * Chinese filename arrived as thirty characters of octal that no tool could
+ * open, for the audience this product is primarily built for.
+ */
+describe("parseStatusPorcelainZ — machine format (2026-08-25)", () => {
+  it("keeps a non-ASCII path raw", () => {
+    const r = parseStatusPorcelainZ("## main\0?? 中文note.md\0");
+    expect(r.files).toEqual([
+      { path: "中文note.md", indexStatus: "?", worktreeStatus: "?" },
+    ]);
+  });
+
+  it("an unborn HEAD is a branch name, not the sentence git printed", () => {
+    // `## No commits yet on main` was sliced like a normal header and yielded
+    // the whole sentence as `branch`.
+    expect(parseStatusPorcelainZ("## No commits yet on main\0").branch).toBe(
+      "main",
+    );
+    expect(
+      parseStatusPorcelainZ("## No commits yet on main...origin/main\0").branch,
+    ).toBe("main");
+  });
+
+  it("a rename is NEW then OLD here — the OPPOSITE of diff --numstat -z", () => {
+    const r = parseStatusPorcelainZ("## main\0R  new.ts\0old.ts\0");
+    expect(r.files).toEqual([
+      {
+        path: "new.ts",
+        indexStatus: "R",
+        worktreeStatus: " ",
+        origPath: "old.ts",
+      },
+    ]);
+  });
+
+  it("still reads branch, ahead/behind and detached HEAD", () => {
+    const r = parseStatusPorcelainZ(
+      "## main...origin/main [ahead 2, behind 3]\0 M a.ts\0",
+    );
+    expect(r.branch).toBe("main");
+    expect(r.ahead).toBe(2);
+    expect(r.behind).toBe(3);
+    expect(r.clean).toBe(false);
+    expect(parseStatusPorcelainZ("## HEAD (no branch)\0").branch).toBeNull();
+  });
+
+  it("a path containing a newline survives, which the line format could not represent", () => {
+    const r = parseStatusPorcelainZ("## main\0?? we\nird.txt\0");
+    expect(r.files[0]?.path).toBe("we\nird.txt");
   });
 });

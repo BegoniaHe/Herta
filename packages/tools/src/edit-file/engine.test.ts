@@ -185,3 +185,56 @@ describe("computeUnifiedDiff — new file (before is empty)", () => {
     expect(d).not.toContain("--- /dev/null");
   });
 });
+
+/**
+ * The LCS table is `(n+1) x (m+1)` numbers, and the permission RULE computes
+ * this preview on the Electron MAIN process while the user waits for the
+ * approval card. Measured 2026-08-25 before the bound: 4,000 lines = 123 MB and
+ * 383 ms, quadratic, so ~6.7 GB at 30,000 — the app dies instead of showing the
+ * diff it was asked for.
+ */
+describe("computeUnifiedDiff — bounded cost (2026-08-25)", () => {
+  const lines = (n: number, f: (i: number) => string = (i) => `line ${i}`) =>
+    `${Array.from({ length: n }, (_, i) => f(i)).join("\n")}\n`;
+  const count = (d: string, p: "+" | "-") =>
+    d.split("\n").filter((l) => l.startsWith(p) && !l.startsWith(p.repeat(3)))
+      .length;
+
+  it("a one-line edit in a huge file is cheap, focused and exact", () => {
+    const before = lines(30_000);
+    const after = before.replace("line 5000\n", "FIVE THOUSAND\n");
+    const started = Date.now();
+    const d = computeUnifiedDiff(before, after, "f.txt");
+    // Generous by three orders of magnitude — the point is that it is not
+    // quadratic, not that it hits a particular millisecond.
+    expect(Date.now() - started).toBeLessThan(3_000);
+    expect(count(d, "+")).toBe(1);
+    expect(count(d, "-")).toBe(1);
+    // The identical head and tail are peeled, with the omission stated.
+    expect(d).toMatch(/\\ \d+ unchanged lines omitted/);
+    expect(d.split("\n").length).toBeLessThan(40);
+    expect(d).toContain("+FIVE THOUSAND");
+    expect(d).toContain("-line 5000");
+  });
+
+  it("a wholesale rewrite falls back to one replacement — and stays EXACT", () => {
+    // countDiffLines derives the report's +N -M from this text, so a truncated
+    // fallback would fabricate the counts. It must stay complete.
+    const before = lines(20_000, (i) => `old ${i}`);
+    const after = lines(20_000, (i) => `new ${i}`);
+    const d = computeUnifiedDiff(before, after, "f.txt");
+    expect(d).toContain("too large to align");
+    expect(count(d, "+")).toBe(20_000);
+    expect(count(d, "-")).toBe(20_000);
+  });
+
+  it("below the budget nothing changes — still the whole-file walk", () => {
+    const before = lines(300);
+    const after = before.replace("line 10\n", "TEN\n");
+    const d = computeUnifiedDiff(before, after, "f.txt");
+    expect(d).not.toContain("unchanged lines omitted");
+    expect(d.split("\n").filter((l) => l.startsWith(" ")).length).toBe(299);
+    expect(count(d, "+")).toBe(1);
+    expect(count(d, "-")).toBe(1);
+  });
+});

@@ -143,4 +143,72 @@ describe.skipIf(!GIT_AVAILABLE)("git_diff tool", { timeout: 20_000 }, () => {
       await ws.cleanup();
     }
   });
+
+  // 2026-08-25: against real git, the `--stat` parser reported a 400-insertion
+  // change as +66 (it counted a histogram git scales to terminal width) and
+  // returned `.../X.tsx` for any long path — which read_file, show_excerpt and
+  // report_finding all reject, so the answer could not become a next step.
+  it.runIf(GIT_AVAILABLE)(
+    "reports real line counts and whole paths, against real git",
+    async () => {
+      const ws = await mkTmpWorkspace({});
+      try {
+        await seedRepo(ws.root);
+        await commitFile(ws.root, "f.txt", "base\n", "base");
+        const deep =
+          "packages/gui/src/renderer/components/Conversation/Controller.tsx";
+        await import("node:fs/promises").then((fs) =>
+          fs.mkdir(join(ws.root, deep, ".."), { recursive: true }),
+        );
+        await commitFile(ws.root, deep, "a\n", "deep");
+        await writeFile(
+          join(ws.root, "f.txt"),
+          `base\n${Array.from({ length: 400 }, (_, i) => `line ${i}`).join("\n")}\n`,
+          "utf8",
+        );
+        const r = await gitDiffTool().run(
+          { id: "1", tool: "git_diff", input: {} },
+          mkToolContext({ workspaceRoot: ws.root }),
+          () => {},
+        );
+        expect(r.ok).toBe(true);
+        const data = r.data as {
+          totalAdditions: number;
+          files: readonly { path: string; additions: number }[];
+        };
+        // The f.txt entry specifically — the workspace fixture may carry other
+        // files, and the point is that THIS count is the real one.
+        const f = data.files.find((x) => x.path === "f.txt");
+        expect(f?.additions).toBe(400);
+        for (const x of data.files)
+          expect(x.path.startsWith("...")).toBe(false);
+        expect(data.files.some((x) => x.path.includes("Controller.tsx"))).toBe(
+          false,
+        );
+      } finally {
+        await ws.cleanup();
+      }
+    },
+  );
+
+  it("rejects a ref that is really an option", async () => {
+    // `-` is a literal in the ref character class, so `--ext-diff` used to
+    // validate — and git parses it as an OPTION (exit 0), re-enabling the
+    // external diff driver this tool passes `--no-ext-diff` to disable, in a
+    // readOnly tool that raises no approval card.
+    const ws = await mkTmpWorkspace({});
+    try {
+      for (const ref of ["--ext-diff", "-c", "--output=/tmp/x"]) {
+        const r = await gitDiffTool().run(
+          { id: "1", tool: "git_diff", input: { ref } },
+          mkToolContext({ workspaceRoot: ws.root }),
+          () => {},
+        );
+        expect(r.ok, ref).toBe(false);
+        expect(r.error?.code, ref).toBe("invalid_input");
+      }
+    } finally {
+      await ws.cleanup();
+    }
+  });
 });

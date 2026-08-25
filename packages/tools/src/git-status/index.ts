@@ -8,9 +8,9 @@ import type {
 import { errResult } from "../errors.js";
 import {
   type GitStatusData,
-  parseStatusPorcelain,
+  parseStatusPorcelainZ,
 } from "../git/parse-status.js";
-import { spawnGit } from "../git/spawn-git.js";
+import { hardenedGitArgs, spawnGit } from "../git/spawn-git.js";
 import { formatInputIssues } from "../input-issues.js";
 import { gitStatusInputSchema, gitStatusJsonSchema } from "./schema.js";
 
@@ -45,7 +45,13 @@ export function gitStatusTool(): HertaTool {
 
       const r = await spawnGit(
         ctx.workspaceRoot,
-        ["status", "--porcelain=v1", "--branch", "--untracked-files=all"],
+        hardenedGitArgs([
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--branch",
+          "--untracked-files=all",
+        ]),
         ctx.signal,
       );
       if (!r.ok) {
@@ -57,23 +63,30 @@ export function gitStatusTool(): HertaTool {
             "not a git repo",
           );
         }
+        if (r.code === "git_timeout") {
+          return errResult(
+            "git_timeout",
+            r.message,
+            undefined,
+            "git timed out",
+          );
+        }
         if (r.code === "spawn_failed") {
           return errResult(
             "spawn_failed",
             r.message,
-            "git is not on PATH",
+            r.cause === "git_not_found"
+              ? "install git, or add it to PATH, and restart"
+              : r.cause === "workspace_missing"
+                ? "the workspace path is gone — reopen the project"
+                : undefined,
             "spawn failed",
           );
         }
-        return errResult(
-          "git_failed",
-          r.message,
-          "git exited non-zero; check the message",
-          "git failed",
-        );
+        return errResult("git_failed", r.message, undefined, "git failed");
       }
 
-      const data = parseStatusPorcelain(r.stdout);
+      const data = parseStatusPorcelainZ(r.stdout);
       const summary = data.clean ? "clean" : `${data.files.length} changed`;
       return { ok: true, data, summary };
     },

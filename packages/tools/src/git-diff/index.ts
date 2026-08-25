@@ -6,8 +6,8 @@ import type {
   ToolSchema,
 } from "@herta/core";
 import { errResult } from "../errors.js";
-import { type GitDiffFile, parseDiffStat } from "../git/parse-diff-stat.js";
-import { spawnGit } from "../git/spawn-git.js";
+import { type GitDiffFile, parseDiffStatZ } from "../git/parse-diff-stat.js";
+import { hardenedGitArgs, spawnGit } from "../git/spawn-git.js";
 import { formatInputIssues } from "../input-issues.js";
 import { gitDiffInputSchema, gitDiffJsonSchema } from "./schema.js";
 
@@ -31,7 +31,7 @@ export function gitDiffTool(): HertaTool {
       return {
         name: "git_diff",
         description:
-          "Return structured git diff --stat summary. Defaults to working-tree-vs-HEAD. Pass { staged: true } for staged-only or { ref } for vs-ref. ref and staged are mutually exclusive. Read-only.",
+          "Return a structured per-file diff summary: exact added/deleted line counts and full repo-relative paths. Defaults to working-tree-vs-HEAD. Pass { staged: true } for staged-only or { ref } for vs-ref (a ref, not an option). ref and staged are mutually exclusive. Read-only.",
         inputSchema: gitDiffJsonSchema,
       };
     },
@@ -50,20 +50,37 @@ export function gitDiffTool(): HertaTool {
       }
       const input = parsed.data;
 
+      // `--numstat -z` rather than `--stat`: real counts and full paths (see
+      // parseDiffStatZ). `--no-ext-diff` / `--no-textconv` stop a REPOSITORY's
+      // own config turning this read-only tool into a program launcher, and
+      // the trailing `--` ends the revision list so nothing after it can be
+      // read as an option.
+      const base = [
+        "diff",
+        "--numstat",
+        "-z",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+      ];
       let mode: GitDiffData["mode"];
       let argv: string[];
       if (input.staged === true) {
         mode = "staged";
-        argv = ["diff", "--stat", "--no-color", "--cached"];
+        argv = [...base, "--cached", "--"];
       } else if (input.ref !== undefined) {
         mode = "ref";
-        argv = ["diff", "--stat", "--no-color", input.ref];
+        argv = [...base, input.ref, "--"];
       } else {
         mode = "working-tree";
-        argv = ["diff", "--stat", "--no-color", "HEAD"];
+        argv = [...base, "HEAD", "--"];
       }
 
-      const r = await spawnGit(ctx.workspaceRoot, argv, ctx.signal);
+      const r = await spawnGit(
+        ctx.workspaceRoot,
+        hardenedGitArgs(argv),
+        ctx.signal,
+      );
       if (!r.ok) {
         if (r.code === "not_a_repo") {
           return errResult(
@@ -73,23 +90,33 @@ export function gitDiffTool(): HertaTool {
             "not a git repo",
           );
         }
+        if (r.code === "git_timeout") {
+          return errResult(
+            "git_timeout",
+            r.message,
+            undefined,
+            "git timed out",
+          );
+        }
         if (r.code === "spawn_failed") {
+          // Say which failure it was. Overriding this with a blanket "git is
+          // not on PATH" told a user whose workspace drive had vanished to
+          // install software they already had.
           return errResult(
             "spawn_failed",
             r.message,
-            "git is not on PATH",
+            r.cause === "git_not_found"
+              ? "install git, or add it to PATH, and restart"
+              : r.cause === "workspace_missing"
+                ? "the workspace path is gone — reopen the project"
+                : undefined,
             "spawn failed",
           );
         }
-        return errResult(
-          "git_failed",
-          r.message,
-          "git exited non-zero; check the message",
-          "git failed",
-        );
+        return errResult("git_failed", r.message, undefined, "git failed");
       }
 
-      const stat = parseDiffStat(r.stdout);
+      const stat = parseDiffStatZ(r.stdout);
       const data: GitDiffData = {
         mode,
         ...(mode === "ref" && input.ref !== undefined

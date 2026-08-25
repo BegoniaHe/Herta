@@ -28,6 +28,13 @@ describe("ToolErrorCode", () => {
       "plan_invalid",
       "unknown_plan_item",
       "git_failed",
+      // git can block forever on a credential prompt or an unreachable
+      // remote, and one caller is a permission rule on the Electron main
+      // process — the spawn is bounded now, so the timeout is its own code.
+      "git_timeout",
+      // An editor refuses a file whose bytes are not UTF-8 rather than
+      // rewriting every one of them as U+FFFD (ADR 0045).
+      "non_utf8_file",
       "not_a_repo",
     ]);
   });

@@ -49,6 +49,8 @@ export type ToolErrorCode =
   | "plan_invalid"
   | "unknown_plan_item"
   | "git_failed"
+  | "git_timeout"
+  | "non_utf8_file"
   | "not_a_repo";
 
 export const TOOL_ERROR_CODES: readonly ToolErrorCode[] = [
@@ -76,5 +78,7 @@ export const TOOL_ERROR_CODES: readonly ToolErrorCode[] = [
   "plan_invalid",
   "unknown_plan_item",
   "git_failed",
+  "git_timeout",
+  "non_utf8_file",
   "not_a_repo",
 ] as const;

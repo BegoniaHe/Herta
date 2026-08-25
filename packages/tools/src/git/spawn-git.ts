@@ -1,8 +1,11 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 
 export interface SpawnGitOk {
   ok: true;
   stdout: string;
+  /** The exit code, for callers that allow a non-zero one. */
+  exitCode: number;
 }
 
 export type SpawnGitErr =
@@ -14,7 +17,56 @@ export type SpawnGitErr =
       exitCode: number | null;
       stderr: string;
     }
-  | { ok: false; code: "spawn_failed"; message: string };
+  | { ok: false; code: "git_timeout"; message: string }
+  | {
+      ok: false;
+      code: "spawn_failed";
+      message: string;
+      /** Why the spawn failed, so callers stop guessing. Node reports a
+       *  missing BINARY and a missing CWD with the same ENOENT, and both tools
+       *  used to render either as "git is not on PATH" — telling a user whose
+       *  subst/network workspace had vanished to install software they already
+       *  have (the failure mode `39e55e5` already cost this repo once). */
+      cause: "git_not_found" | "workspace_missing" | "other";
+    };
+
+export interface SpawnGitOpts {
+  /** Milliseconds before the child is killed. git blocks indefinitely on a
+   *  credential prompt or an unreachable remote, and callers include a
+   *  permission RULE that runs on the Electron main process — an unbounded
+   *  wait there is a frozen app. */
+  timeoutMs?: number;
+  /** Exit codes to accept besides 0. Several git queries use a non-zero exit
+   *  as an ANSWER (`--no-index` returns 1 for "there were differences"), which
+   *  is not a failure. */
+  allowExitCodes?: readonly number[];
+}
+
+const DEFAULT_TIMEOUT_MS = 15_000;
+
+/**
+ * Config a REPOSITORY can set to make an otherwise read-only git command
+ * execute an arbitrary program, neutralised on every invocation.
+ *
+ * These are `-c` options and must precede the subcommand. Note that git takes
+ * the LAST occurrence of a repeated `-c`, so this is defence in depth rather
+ * than the primary guard: the primary guard is that no caller and no model
+ * input reaches this position at all (a model-supplied `ref` lands in the
+ * subcommand's operand position, where `-c` is not a config option).
+ */
+const HARDENED_CONFIG: readonly string[] = [
+  "-c",
+  "core.pager=cat",
+  "-c",
+  "diff.external=",
+  "-c",
+  "core.quotePath=false",
+];
+
+/** Prepend the config hardening to a subcommand argv. */
+export function hardenedGitArgs(args: readonly string[]): string[] {
+  return [...HARDENED_CONFIG, ...args];
+}
 
 /** The AbortError `run_command` throws for the same case — the turn loop
  *  classifies the turn as INTERRUPTED off this, instead of recording a tool
@@ -31,7 +83,10 @@ export async function spawnGit(
   cwd: string,
   args: readonly string[],
   signal: AbortSignal,
+  opts: SpawnGitOpts = {},
 ): Promise<SpawnGitOk | SpawnGitErr> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const allowed = new Set([0, ...(opts.allowExitCodes ?? [])]);
   return new Promise((resolve, reject) => {
     // Already cancelled before we spawn — never report that as a git problem.
     if (signal.aborted) {
@@ -44,13 +99,24 @@ export async function spawnGit(
         cwd,
         signal,
         shell: false,
-        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+        env: {
+          ...process.env,
+          GIT_OPTIONAL_LOCKS: "0",
+          // A credential helper or an askpass dialog blocks the child forever,
+          // and on Windows that is a real shape (a private remote plus the
+          // manager helper). With the timeout below this bounds the wait; on
+          // its own it usually avoids one entirely.
+          GIT_TERMINAL_PROMPT: "0",
+          GIT_ASKPASS: "",
+          SSH_ASKPASS: "",
+        },
       });
     } catch (err) {
       resolve({
         ok: false,
         code: "spawn_failed",
         message: err instanceof Error ? err.message : String(err),
+        cause: existsSync(cwd) ? "other" : "workspace_missing",
       });
       return;
     }
@@ -61,11 +127,27 @@ export async function spawnGit(
     let stderrLen = 0;
     let resolved = false;
 
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const settle = (result: SpawnGitOk | SpawnGitErr): void => {
       if (resolved) return;
       resolved = true;
+      if (timer !== undefined) clearTimeout(timer);
       resolve(result);
     };
+    timer = setTimeout(() => {
+      if (resolved) return;
+      try {
+        child.kill();
+      } catch {
+        // already gone
+      }
+      settle({
+        ok: false,
+        code: "git_timeout",
+        message: `git did not finish within ${Math.round(timeoutMs / 1000)}s and was stopped (args: ${args.slice(0, 3).join(" ")}…)`,
+      });
+    }, timeoutMs);
+    timer.unref?.();
     /** An interrupt is NOT a tool failure (audit 2026-07-24, 1.8). Node emits
      *  the same `error` event with an AbortError when the spawn signal fires,
      *  so the old catch-all turned a user's Stop into
@@ -77,6 +159,7 @@ export async function spawnGit(
     const settleAborted = (): void => {
       if (resolved) return;
       resolved = true;
+      if (timer !== undefined) clearTimeout(timer);
       reject(abortError());
     };
 
@@ -100,16 +183,24 @@ export async function spawnGit(
         return;
       }
       if (err.code === "ENOENT") {
+        // Node uses ENOENT for BOTH a missing binary and a missing cwd. Ask
+        // which one it was rather than guessing, so a vanished workspace stops
+        // being reported as "install git".
+        const missingCwd = !existsSync(cwd);
         settle({
           ok: false,
           code: "spawn_failed",
-          message: "git binary not found on PATH",
+          cause: missingCwd ? "workspace_missing" : "git_not_found",
+          message: missingCwd
+            ? `the workspace directory no longer exists: ${cwd}`
+            : "git binary not found on PATH",
         });
         return;
       }
       settle({
         ok: false,
         code: "spawn_failed",
+        cause: "other",
         message: err.message,
       });
     });
@@ -123,8 +214,8 @@ export async function spawnGit(
       }
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
-      if (code === 0) {
-        settle({ ok: true, stdout });
+      if (code !== null && allowed.has(code)) {
+        settle({ ok: true, stdout, exitCode: code });
         return;
       }
       if (code === 128 && /not a git repository/i.test(stderr)) {

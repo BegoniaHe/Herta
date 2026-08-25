@@ -4302,6 +4302,12 @@ button.session-item__badge--dismiss {
   display: inline-flex;
   gap: 6px;
   font-variant-numeric: tabular-nums;
+}
+/* The entrance belongs to a LIVE append only — DiffStat stamps this class off
+   the block's own `at`, the same recency gate as the live-attach entrance, so
+   a reloaded session's history renders settled instead of replaying every
+   dispatch's count-up at once (2026-08-25). */
+.diff-stat--live {
   animation: diffStatIn 260ms var(--ease-pop) both;
 }
 .diff-stat__n {
@@ -4338,7 +4344,7 @@ button.session-item__badge--dismiss {
 }
 @media (prefers-reduced-motion: reduce) {
   /* The digits also stop counting — see useCountUp. */
-  .diff-stat {
+  .diff-stat--live {
     animation: none;
   }
 }

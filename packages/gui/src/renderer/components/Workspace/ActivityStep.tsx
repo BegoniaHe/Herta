@@ -66,6 +66,13 @@ export interface ActivityStepProps {
     /** Diff content without the ```diff fence. */
     readonly diff: string;
   };
+  /**
+   * The row's block `at` stamp, for DiffStat's recency gate (2026-08-25):
+   * the count-up plays only on a live append, never when a session switch or
+   * reload mounts history. Absent on pre-timestamp records — those render
+   * their magnitude settled.
+   */
+  readonly at?: string;
 }
 
 /** One row in an activity block: a verb icon + the (collapsible) body. */
@@ -129,7 +136,10 @@ export function ActivityStep(props: ActivityStepProps): JSX.Element {
             }}
           >
             <span className="activity-step__body">{body}</span>
-            <DiffStat value={patch.stat} />
+            <DiffStat
+              value={patch.stat}
+              {...(props.at !== undefined ? { at: props.at } : {})}
+            />
             <svg
               className="activity-step__fold-chevron"
               width="10"
@@ -152,7 +162,14 @@ export function ActivityStep(props: ActivityStepProps): JSX.Element {
               preClassName="activity-step__body"
               t={props.t}
               {...(props.stat !== undefined
-                ? { headline: <DiffStat value={props.stat} /> }
+                ? {
+                    headline: (
+                      <DiffStat
+                        value={props.stat}
+                        {...(props.at !== undefined ? { at: props.at } : {})}
+                      />
+                    ),
+                  }
                 : {})}
             />
             {props.onRemove !== undefined && (

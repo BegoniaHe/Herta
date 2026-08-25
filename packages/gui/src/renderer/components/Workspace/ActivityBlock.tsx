@@ -429,7 +429,13 @@ export const ActivityBlock = memo(function ActivityBlock(
                   summary.marker.lines !== undefined && (
                     <>
                       {" · "}
-                      <DiffStat value={summary.marker.lines} rollup />
+                      <DiffStat
+                        value={summary.marker.lines}
+                        rollup
+                        {...(summary.at !== undefined
+                          ? { at: summary.at }
+                          : {})}
+                      />
                     </>
                   )}
               </span>
@@ -565,6 +571,9 @@ export const ActivityBlock = memo(function ActivityBlock(
                   {...(row.patch !== undefined
                     ? { patch: foldedPatch(row.patch) }
                     : {})}
+                  // The row's own stamp gates the magnitude's count-up: live
+                  // appends animate, a reloaded session's history does not.
+                  {...(b.at !== undefined ? { at: b.at } : {})}
                   // A patch with no write to fold into (a DENIED edit) still
                   // answers with its magnitude, in place of the body's first
                   // line — the element, because the digits count up.

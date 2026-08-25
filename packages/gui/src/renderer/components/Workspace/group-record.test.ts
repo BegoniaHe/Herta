@@ -89,6 +89,23 @@ describe("groupRecord", () => {
     expect(activityHasTerminalMarker([sys("Reading")])).toBe(false);
   });
 
+  it("summary carries the marker's own at stamp, for the roll-up's recency gate", () => {
+    const marker: SystemBlock = {
+      ...sys("完成 · 1 file", "差分协处理器", "done-marker", {
+        kind: "done",
+        state: "completed",
+        fileCount: 1,
+        riskCount: 0,
+      }),
+      at: "2026-08-25T10:00:00.000Z",
+    };
+    expect(activitySummary([marker])).toEqual({
+      kind: "structured",
+      marker: { kind: "done", state: "completed", fileCount: 1, riskCount: 0 },
+      at: "2026-08-25T10:00:00.000Z",
+    });
+  });
+
   it("summary falls back to the raw body for a pre-structured done-marker", () => {
     const blocks = [sys("完成 · 2 files", "差分协处理器", "done-marker")];
     expect(activitySummary(blocks)).toEqual({

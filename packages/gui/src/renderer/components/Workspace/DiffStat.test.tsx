@@ -9,12 +9,20 @@ import { DiffStat } from "./DiffStat.js";
  * numbers arrive, they must end up right, and an unmeasured change must never
  * arrive at `+0 −0`.
  *
+ * The count-up plays only for a LIVE append (a block stamped seconds ago) —
+ * `liveAt` below is that stamp. History renders settled; see the recency
+ * tests at the bottom.
+ *
  * The sign and digits are separate text nodes (`{"+"}{n}`), so these read
  * `textContent` rather than `getByText`.
  */
+const liveAt = (): string => new Date().toISOString();
+
 describe("DiffStat", () => {
   it("settles on both counts, with a real minus sign", async () => {
-    const { container } = render(<DiffStat value={{ add: 96, del: 5 }} />);
+    const { container } = render(
+      <DiffStat value={{ add: 96, del: 5 }} at={liveAt()} />,
+    );
     await waitFor(() => {
       // U+2212, not a hyphen: it aligns with `+` in a monospace column.
       expect(container.textContent).toBe("+96−5");
@@ -22,7 +30,9 @@ describe("DiffStat", () => {
   });
 
   it("renders a genuine zero, which is not the same as unmeasured", async () => {
-    const { container } = render(<DiffStat value={{ add: 12, del: 0 }} />);
+    const { container } = render(
+      <DiffStat value={{ add: 12, del: 0 }} at={liveAt()} />,
+    );
     await waitFor(() => expect(container.textContent).toBe("+12−0"));
   });
 
@@ -49,7 +59,9 @@ describe("DiffStat", () => {
     // NEGATIVE count through the cubic easing (`+-28355`). Every intermediate
     // value must be a number the file could actually have.
     const seen: string[] = [];
-    const { container } = render(<DiffStat value={{ add: 12, del: 0 }} />);
+    const { container } = render(
+      <DiffStat value={{ add: 12, del: 0 }} at={liveAt()} />,
+    );
     for (let i = 0; i < 12; i += 1) {
       seen.push(container.textContent ?? "");
       await new Promise((r) => setTimeout(r, 40));
@@ -65,7 +77,34 @@ describe("DiffStat", () => {
   it("counts UP — the first frame is not already the answer", () => {
     // The magnitude arriving is what draws the eye in a column of static
     // text; if it rendered settled there would be nothing to notice.
-    const { container } = render(<DiffStat value={{ add: 500, del: 0 }} />);
+    const { container } = render(
+      <DiffStat value={{ add: 500, del: 0 }} at={liveAt()} />,
+    );
     expect(container.textContent).not.toBe("+500−0");
+    // The CSS entrance rides the same gate: only a live row carries the class.
+    expect(container.querySelector(".diff-stat--live")).toBeTruthy();
+  });
+
+  it("history renders settled immediately — never replays the entrance", () => {
+    // A session switch or reload mounts blocks that are minutes old. Playing
+    // every historical dispatch's count-up at once is the exact class the
+    // live-attach entrance gate exists to prevent (ActivityBlock, 2026-08-10);
+    // the magnitude follows the same rule: decided once at mount, off the
+    // block's own `at` stamp.
+    const at = new Date(Date.now() - 60_000).toISOString();
+    const { container } = render(
+      <DiffStat value={{ add: 96, del: 5 }} at={at} />,
+    );
+    expect(container.textContent).toBe("+96−5");
+    expect(container.querySelector(".diff-stat--live")).toBeNull();
+  });
+
+  it("a record with no stamp at all is history too", () => {
+    // Pre-timestamp sessions lack `at` entirely (it arrived late, optional
+    // for backward compat). Absent evidence of a live append, render settled —
+    // the animation is a claim about NOW, not about the value.
+    const { container } = render(<DiffStat value={{ add: 12, del: 3 }} />);
+    expect(container.textContent).toBe("+12−3");
+    expect(container.querySelector(".diff-stat--live")).toBeNull();
   });
 });

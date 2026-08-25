@@ -14,7 +14,13 @@ export type DoneMarkerSummary = NonNullable<SystemBlock["markerSummary"]>;
  * counts, so it never needs a `markerSummary` on the block.
  */
 export type ActivitySummary =
-  | { readonly kind: "structured"; readonly marker: DoneMarkerSummary }
+  | {
+      readonly kind: "structured";
+      readonly marker: DoneMarkerSummary;
+      /** The marker block's own `at` stamp — DiffStat's recency gate reads
+       *  it so history never replays the count-up (2026-08-25). */
+      readonly at?: string;
+    }
   | { readonly kind: "noop" }
   | { readonly kind: "raw"; readonly text: string };
 
@@ -90,7 +96,11 @@ export function activitySummary(
   if (marker === undefined) return null;
   if (marker.role === "noop-marker") return { kind: "noop" };
   if (marker.markerSummary !== undefined) {
-    return { kind: "structured", marker: marker.markerSummary };
+    return {
+      kind: "structured",
+      marker: marker.markerSummary,
+      ...(marker.at !== undefined ? { at: marker.at } : {}),
+    };
   }
   return { kind: "raw", text: marker.body };
 }

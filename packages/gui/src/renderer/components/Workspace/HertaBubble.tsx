@@ -25,8 +25,13 @@ export interface HertaBubbleProps {
  *
  * `innerRef` attaches to the outer element of either variant (the rise
  * clone measures it); `caret` renders the composing caret inside the body.
+ *
+ * memo: the live stack re-renders once per reveal frame, and the
+ * incremental segmenter keeps FROZEN segments identity-stable across
+ * frames (perf 2026-08-25) — so completed rows bail here and only the
+ * growing tail re-tokenizes. Props are otherwise primitives + stable refs.
  */
-export function SegmentBody(props: {
+export const SegmentBody = memo(function SegmentBody(props: {
   readonly seg: Segment | null;
   readonly innerRef?: RefObject<HTMLDivElement>;
   readonly caret?: boolean;
@@ -67,7 +72,7 @@ export function SegmentBody(props: {
       </div>
     </div>
   );
-}
+});
 
 /**
  * Herta's finalized reply, rendered as a BUBBLE STACK (slice 5 Q2): the one

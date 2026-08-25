@@ -1,7 +1,10 @@
 import { useEffect, useRef } from "react";
-import { useActiveSession } from "../../hooks/useActiveSession.js";
 import { useDisconnected } from "../../hooks/useDisconnected.js";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
+import {
+  shallowEqualObjects,
+  useSessionSelector,
+} from "../../hooks/useSessionSelector.js";
 import { useVoicePlaying } from "../../voice/useVoicePlaying.js";
 import { morphFlightActive } from "../Workspace/morph-flight.js";
 import {
@@ -60,7 +63,14 @@ function hexToRgb(hex: string): [number, number, number] {
  */
 export function AuraVisual(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const snapshot = useActiveSession();
+  // Select only what displayAuraState reads (DeviceCard precedent): the
+  // full-snapshot subscription re-rendered this component on every
+  // streaming delta, which the shader loop never needed — energy arrives
+  // through the kicks refs, not through renders.
+  const snapshot = useSessionSelector(
+    (s) => ({ sessionId: s.sessionId, status: s.status }),
+    shallowEqualObjects,
+  );
   const reduced = useReducedMotion();
   const kicks = useSpeechEnvelope();
   // A playing voice clip forces the speaking state so audio-only cues (the

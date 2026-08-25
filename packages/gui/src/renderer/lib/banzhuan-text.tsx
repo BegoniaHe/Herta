@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode } from "react";
 import { tokenizeBanzhuanMentions } from "./banzhuan-mention.js";
+import { measureRevealSpan } from "./reveal-perf.js";
 
 /**
  * Render `text` with every bare `@板砖` wrapped in a chip span. `variant`
@@ -30,7 +31,12 @@ export function renderBanzhuanText(
   const cls = variant === "composer" ? "composer-mention" : "banzhuan-mention";
   const alias = variant === "bubble" && lang === "en";
   const matchBrickInput = variant === "composer" && lang === "en";
-  return tokenizeBanzhuanMentions(text, { matchBrickInput }).map((node, i) => {
+  const nodes = measureRevealSpan(
+    "bubble.tokenize",
+    () => tokenizeBanzhuanMentions(text, { matchBrickInput }),
+    () => text.length,
+  );
+  return nodes.map((node, i) => {
     if (node.kind === "mention") {
       return (
         // biome-ignore lint/suspicious/noArrayIndexKey: stable positional split of one string

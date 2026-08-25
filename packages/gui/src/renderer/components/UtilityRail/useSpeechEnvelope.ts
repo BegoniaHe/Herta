@@ -1,8 +1,11 @@
-import { type MutableRefObject, useEffect, useMemo, useRef } from "react";
-import { useActiveSession } from "../../hooks/useActiveSession.js";
-import { useReducedMotion } from "../../hooks/useReducedMotion.js";
-import { useRevealedText } from "../Workspace/useRevealedText.js";
-import { scanSpeakable } from "./speakable-text.js";
+import { useEffect, useMemo, useRef } from "react";
+import { useHertaBridge } from "../../context/HertaBridgeContext.js";
+import { measureRevealSpan } from "../../lib/reveal-perf.js";
+import { subscribeRevealedSpeech } from "../../lib/reveal-source.js";
+import {
+  createSpeakableTracker,
+  type SpeakableGrowthStep,
+} from "./speakable-tracker.js";
 import type { Kicks } from "./wave-engine.js";
 
 /** Sentence-ending punctuation → a long breath (the sink also pauses). */
@@ -24,56 +27,72 @@ export interface SpeechKicksSource {
 
 /**
  * Converts Herta's speech into per-character kick events for the wave
- * engine. Watches the REVEALED text (its own `useRevealedText` instance —
- * same pacing rule as the bubble, so the wave breathes with the visible
- * typewriter) plus `retryText` growth during a veto retract (the paced
- * replay buffers there; the shrink itself contributes no kicks, so a veto
- * reads as the wave quieting). Renderer-local only (SPEC v0.3 §9.3 / D7);
- * the future audio analyser (SPEC §6.2) feeds the same Kicks shape.
+ * engine. Watches the SHARED reveal source (`reveal-source.ts` — the
+ * scrubbed prefix StreamingReply actually paints, so the wave breathes
+ * with the visible typewriter) plus `retryText` growth during a veto
+ * retract (the paced replay buffers there; the shrink itself contributes
+ * no kicks, so a veto reads as the wave quieting). Renderer-local only
+ * (SPEC v0.3 §9.3 / D7); the future audio analyser (SPEC §6.2) feeds the
+ * same Kicks shape.
  *
- * No timers of its own: growth is accumulated on render (driven by store
- * updates and the reveal's rAF) and drained by AuraVisual's single loop.
+ * Fully imperative (perf 2026-08-25): both watches are subscriptions
+ * feeding refs drained by AuraVisual's canvas loop — this hook never
+ * re-renders its owner, where it previously held its own second
+ * `useRevealedText` (a duplicate rAF loop re-rendering the aura card
+ * every frame) and two FULL `scanSpeakable` scans per render. Growth now
+ * derives from the appended suffix via `createSpeakableTracker`. Code
+ * blocks / table rows still contribute no kicks: the wave rests while
+ * Herta "pastes" rather than speaks.
  */
 export function useSpeechEnvelope(): SpeechKicksSource {
-  const { streamingText, retryText, lang } = useActiveSession();
-  const reduced = useReducedMotion();
-  // Same pacing rule (and language) as the bubble, so the wave breathes with
-  // the visible reveal — an EN word-stream must not char-crawl here while the
-  // bubble pops words.
-  const revealed = useRevealedText(streamingText, reduced, lang);
-
+  const { sessionStore } = useHertaBridge();
   const pending = useRef<{ count: number; punctuation: Kicks["punctuation"] }>({
     count: 0,
     punctuation: null,
   });
-  const prevRevealedCount = useRef(0);
-  const prevRetryCount = useRef(0);
 
-  // Accumulate SPEAKABLE growth on every render — cheap (two short scans)
-  // and correct regardless of which state update triggered the render.
-  // Code blocks / table rows contribute no kicks (scanSpeakable): the wave
-  // rests while Herta "pastes" rather than speaks.
   useEffect(() => {
-    const watch = (
-      text: string | null,
-      prev: MutableRefObject<number>,
-    ): void => {
-      const scan = scanSpeakable(text ?? "");
-      const grown = scan.count - prev.current;
-      if (grown > 0) {
-        pending.current.count += grown;
-        const last = scan.last ?? "";
-        if (HARD_PUNCT.has(last) || (lang === "en" && EN_HARD_PUNCT.has(last)))
-          pending.current.punctuation = "hard";
-        else if (SOFT_PUNCT.has(last)) pending.current.punctuation = "soft";
-      }
-      // Shrinks / resets / partial-fence reclassification just rebase the
-      // counter — never negative kicks.
-      prev.current = scan.count;
+    const revealTracker = createSpeakableTracker();
+    const retryTracker = createSpeakableTracker();
+    const accumulate = (step: SpeakableGrowthStep): void => {
+      // Shrinks / resets / partial-fence reclassification rebase the
+      // tracker's own counter — never negative kicks.
+      if (step.grown <= 0) return;
+      pending.current.count += step.grown;
+      const last = step.last ?? "";
+      const lang = sessionStore.getSnapshot().lang;
+      if (HARD_PUNCT.has(last) || (lang === "en" && EN_HARD_PUNCT.has(last)))
+        pending.current.punctuation = "hard";
+      else if (SOFT_PUNCT.has(last)) pending.current.punctuation = "soft";
     };
-    watch(revealed, prevRevealedCount);
-    watch(retryText, prevRetryCount);
-  });
+    const unsubReveal = subscribeRevealedSpeech((text) => {
+      accumulate(
+        measureRevealSpan(
+          "envelope.scan",
+          () => revealTracker.push(text ?? ""),
+          (r) => r.scanned,
+        ),
+      );
+    });
+    // retryText grows per store delta (not per frame) — watch it there.
+    let prevRetry = sessionStore.getSnapshot().retryText;
+    const unsubStore = sessionStore.subscribe(() => {
+      const retry = sessionStore.getSnapshot().retryText;
+      if (retry === prevRetry) return;
+      prevRetry = retry;
+      accumulate(
+        measureRevealSpan(
+          "envelope.scan",
+          () => retryTracker.push(retry ?? ""),
+          (r) => r.scanned,
+        ),
+      );
+    });
+    return () => {
+      unsubReveal();
+      unsubStore();
+    };
+  }, [sessionStore]);
 
   return useMemo(
     () => ({

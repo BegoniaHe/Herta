@@ -1,6 +1,14 @@
-import { stripDisplayUnsafe } from "@herta/core/text-sanitize";
-import { type RefObject, useEffect } from "react";
-import { segmentSpeech } from "../../lib/segment-speech.js";
+import { type RefObject, useEffect, useRef } from "react";
+import {
+  createIncrementalScrubber,
+  type IncrementalScrubber,
+} from "../../lib/incremental-strip.js";
+import { measureRevealSpan } from "../../lib/reveal-perf.js";
+import { publishRevealedSpeech } from "../../lib/reveal-source.js";
+import {
+  createIncrementalSegmenter,
+  type IncrementalSegmenter,
+} from "../../lib/segment-speech.js";
 import { SegmentBody } from "./HertaBubble.js";
 import { MorphClone } from "./MorphClone.js";
 import { useRetractMorph } from "./useRetractMorph.js";
@@ -57,12 +65,34 @@ export function StreamingReply(props: StreamingReplyProps): JSX.Element | null {
   // strings. Caveat: the server-computed `keepLen` indexes the raw stream;
   // for normal text the scrub is the identity so indices agree — only a
   // hostile stream can shift the erase floor by a few chars (cosmetic).
-  const streamingText =
-    props.streamingText === null
-      ? null
-      : stripDisplayUnsafe(props.streamingText);
-  const retryText =
-    props.retryText === null ? null : stripDisplayUnsafe(props.retryText);
+  // Both derivations are APPEND-AWARE (perf 2026-08-25): this component
+  // re-renders once per reveal frame, and scrubbing/segmenting the full
+  // text each time was O(reply) per frame — O(n²) per reply. The caches
+  // live in a ref (created once per mount) and re-derive from scratch on
+  // any non-append input, so output stays byte-equal to the batch path.
+  const derive = useRef<{
+    streaming: IncrementalScrubber;
+    retry: IncrementalScrubber;
+    segmenter: IncrementalSegmenter;
+  } | null>(null);
+  if (derive.current === null) {
+    derive.current = {
+      streaming: createIncrementalScrubber(),
+      retry: createIncrementalScrubber(),
+      segmenter: createIncrementalSegmenter(),
+    };
+  }
+  const d = derive.current;
+  const streamingText = measureRevealSpan(
+    "reveal.strip",
+    () => d.streaming.next(props.streamingText),
+    (r) => r.scanned,
+  ).text;
+  const retryText = measureRevealSpan(
+    "reveal.strip",
+    () => d.retry.next(props.retryText),
+    (r) => r.scanned,
+  ).text;
   const revealed = useRevealedText(streamingText, props.reduced, props.lang);
   const morph = useRetractMorph({
     retracting: props.retracting,
@@ -85,14 +115,35 @@ export function StreamingReply(props: StreamingReplyProps): JSX.Element | null {
     onGrow();
   }, [bubbleText, onGrow]);
 
+  // Publish the revealed prefix to the shared reveal source: the voice-wave
+  // envelope watches speech growth there instead of running a second
+  // independent reveal over the raw stream (perf 2026-08-25). During a
+  // retract `revealed` holds still (the morph owns the visual), so the
+  // shrink contributes no growth — matching the wave-quiets-on-veto rule.
+  useEffect(() => {
+    publishRevealedSpeech(revealed);
+  }, [revealed]);
+  useEffect(() => () => publishRevealedSpeech(null), []);
+
   // Live bubble STACK (slice 5): the revealed prefix re-segments per frame.
   // The reveal is an append-only prefix, so a `\n\n` boundary, once crossed,
   // never moves — earlier bubbles are stable; only the LAST segment grows
-  // (and carries the caret). During a retract the morph string shrinks and
-  // the stack re-derives from it — trailing bubbles empty out and unmount as
-  // the erase walks back. An unclosed ``` fence segments as code mid-stream,
-  // so leaked code renders monospace as it streams.
-  const segments = bubbleText === null ? [] : segmentSpeech(bubbleText);
+  // (and carries the caret). The incremental segmenter EXPLOITS that
+  // invariant (perf 2026-08-25): frozen segments keep their identity across
+  // frames, so the memoized SegmentBody rows skip re-tokenizing them and
+  // only the live tail re-derives. During a retract the morph string
+  // shrinks and the stack re-derives from scratch each step (the
+  // segmenter's non-append reset) — trailing bubbles empty out and unmount
+  // as the erase walks back. An unclosed ``` fence segments as code
+  // mid-stream, so leaked code renders monospace as it streams.
+  const segments =
+    bubbleText === null
+      ? []
+      : measureRevealSpan(
+          "reveal.segment",
+          () => d.segmenter.next(bubbleText),
+          (r) => r.scanned,
+        ).segments;
   const showCaret = !props.retracting || props.retryText !== null;
 
   return (

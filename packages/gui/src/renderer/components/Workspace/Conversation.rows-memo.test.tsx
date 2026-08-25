@@ -8,13 +8,14 @@ import { WorkspaceRefsProvider } from "./WorkspaceRefs.js";
 
 /**
  * Counting passthrough over the timestamp formatter. It is the honest probe
- * for "did the row work run": `formatBubbleTime` is called once per timestamped
- * block by `renderBlock`, so its call count IS the number of bubble rows
- * rendered — and it was the top app-level cost in the send profile.
+ * for "did the row work run": `formatBubbleTime` runs once per timestamped
+ * block's BubbleTime leaf (as of perf 2026-08-25; previously per
+ * `renderBlock`), so its call count still tracks bubble-row render work —
+ * and it was the top app-level cost in the send profile.
  *
  * Its own suite covers the formatting; this file only counts.
  */
-const calls = { formatBubbleTime: 0 };
+const calls = { formatBubbleTime: 0, segmentSpeech: 0 };
 vi.mock("./format-time.js", async () => {
   const real =
     await vi.importActual<typeof import("./format-time.js")>(
@@ -28,12 +29,29 @@ vi.mock("./format-time.js", async () => {
     },
   };
 });
+// The same passthrough trick over the Herta bubble's segmenter: it runs in
+// HertaBubble's own render body, so its call count IS the number of Herta
+// bubble BODIES rendered — distinguishing "the row re-rendered" from "only
+// its BubbleTime leaf re-derived a label" (perf 2026-08-25).
+vi.mock("../../lib/segment-speech.js", async () => {
+  const real = await vi.importActual<
+    typeof import("../../lib/segment-speech.js")
+  >("../../lib/segment-speech.js");
+  return {
+    ...real,
+    segmentSpeech: (...args: Parameters<typeof real.segmentSpeech>) => {
+      calls.segmentSpeech += 1;
+      return real.segmentSpeech(...args);
+    },
+  };
+});
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.useRealTimers();
   calls.formatBubbleTime = 0;
+  calls.segmentSpeech = 0;
 });
 
 /** A record of `pairs` exchanges, every block timestamped so each one costs a
@@ -153,6 +171,70 @@ describe("Conversation — the row memo does not depend on turn state (2026-07-3
       mock.emitTurn({ kind: "finished", turnId: "t1" });
     });
     expect(flow.classList.contains("is-busy")).toBe(false);
+  });
+
+  it("a 30s clock tick re-renders label leafs, never bubble bodies (perf 2026-08-25)", () => {
+    // The bug: `now` (a 30s ticking useNow state) sat in the blockRows memo
+    // deps, so every tick rebuilt and reconciled every mounted row element —
+    // and a row whose label string DID change re-rendered its whole bubble.
+    // The clock now lives in lib/now-tick, subscribed per-label in the
+    // BubbleTime leaf: a tick re-derives strings, and only a leaf whose
+    // string changed re-renders. The probe: `segmentSpeech` runs in
+    // HertaBubble's render body, so a stable count across a label change
+    // proves the bubble body stayed out of it.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-30T12:00:00.000Z"));
+    const young = new Date("2026-07-30T11:59:40.000Z").toISOString(); // 20s old
+    const old = new Date("2026-07-30T09:00:00.000Z").toISOString(); // same day
+    const mock = createMockHertaBridge();
+    const view = renderWithLocale(
+      <WorkspaceRefsProvider>
+        <HertaBridgeProvider bridge={mock.bridge}>
+          <Conversation />
+        </HertaBridgeProvider>
+      </WorkspaceRefsProvider>,
+    );
+    act(() => {
+      mock.emitReset({
+        sessionId: "tick-session",
+        workspaceRoot: "/r",
+        record: [
+          { kind: "user", text: "old question", at: old },
+          { kind: "herta", surface: "speech", text: "old answer", at: old },
+          { kind: "user", text: "young question", at: young },
+          { kind: "herta", surface: "speech", text: "young answer", at: young },
+        ],
+        overlay: null,
+        backendWorkspace: "/r",
+        backendWorkspaceIsDefault: true,
+      });
+    });
+    const labels = (): (string | null)[] =>
+      Array.from(view.container.querySelectorAll(".message-actions__time")).map(
+        (el) => el.textContent,
+      );
+    const atMount = labels();
+    expect(atMount.slice(2)).toEqual(["just now", "just now"]);
+    const segsAfterMount = calls.segmentSpeech;
+    expect(segsAfterMount).toBeGreaterThan(0);
+    // Tick 1 (+30s → the young blocks are 50s old): no label crosses a
+    // boundary, nothing re-renders.
+    act(() => {
+      vi.advanceTimersByTime(30_000);
+    });
+    expect(labels()).toEqual(atMount);
+    expect(calls.segmentSpeech).toBe(segsAfterMount);
+    // Tick 2 (+60s → 80s old): the young labels cross the minute boundary…
+    act(() => {
+      vi.advanceTimersByTime(30_000);
+    });
+    expect(labels().slice(2)).toEqual(["1 min ago", "1 min ago"]);
+    // …the same-day rows' time-of-day labels hold steady…
+    expect(labels().slice(0, 2)).toEqual(atMount.slice(0, 2));
+    // …and NO bubble body re-rendered for it: only the changed labels'
+    // BubbleTime leafs did. Pre-fix, the fresh label string flowed in as a
+    // bubble prop, broke the memo, and re-segmented the young reply here.
+    expect(calls.segmentSpeech).toBe(segsAfterMount);
   });
 
   it("a rewind click mid-turn is refused by the handler, not just by CSS", async () => {

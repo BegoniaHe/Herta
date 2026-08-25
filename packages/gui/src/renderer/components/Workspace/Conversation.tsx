@@ -11,11 +11,9 @@ import {
 } from "react";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useActiveSession } from "../../hooks/useActiveSession.js";
-import { useNow } from "../../hooks/useNow.js";
 import { usePresence } from "../../hooks/usePresence.js";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
-import { useLocale, useT } from "../../i18n/LocaleProvider.js";
-import type { Locale } from "../../ipc/bridge-types.js";
+import { useT } from "../../i18n/LocaleProvider.js";
 import { dealiasBrickDraft } from "../../lib/banzhuan-mention.js";
 import { ErrorBoundary } from "../ErrorBoundary.js";
 import { ActivityBlock } from "./ActivityBlock.js";
@@ -25,7 +23,6 @@ import {
   ENTRANCE_STAGGER_MS,
   planStaggerEntrance,
 } from "./conversation-entrance.js";
-import { formatBubbleTime, type TimeTFn } from "./format-time.js";
 import { GalaxyTravelRow } from "./GalaxyTravelRow.js";
 import { activityHasTerminalMarker, groupRecord } from "./group-record.js";
 import { HertaBubble } from "./HertaBubble.js";
@@ -136,9 +133,6 @@ function RowRenderError(): JSX.Element {
 function renderBlock(
   block: TerminalRecordBlock,
   index: number,
-  now: number,
-  locale: Locale,
-  t: TimeTFn,
   // Conversation language, for the 板砖→Brick display alias on the bubbles.
   lang: "zh" | "en",
   // Set only on the LATEST user block when idle — wires its rewind control.
@@ -147,12 +141,11 @@ function renderBlock(
   // Per-block timestamp (Slice 4): `at` is stamped at the output boundaries
   // (live sink emit + JSONL persist), so each bubble shows its own time.
   // Pre-timestamp blocks lack `at` → the bubble hides its timestamp line
-  // rather than fabricating a shared "now" (the old all-same bug). The label is
-  // adaptive (just now / N min ago / time / date+time) relative to `now`.
-  const timestamp =
-    block.at !== undefined
-      ? formatBubbleTime(block.at, now, locale, t)
-      : undefined;
+  // rather than fabricating a shared "now" (the old all-same bug). The
+  // adaptive label (just now / N min ago / time / date+time) is derived in
+  // the bubble's BubbleTime leaf off the shared coarse clock (perf
+  // 2026-08-25), so the current time never enters this render — a clock
+  // tick invalidates label leafs, not row elements.
   switch (block.kind) {
     case "user":
       return (
@@ -160,7 +153,7 @@ function renderBlock(
           key={index}
           absIndex={index}
           text={block.text}
-          timestamp={timestamp}
+          at={block.at}
           lang={lang}
           {...(onRewind !== undefined ? { onRewind } : {})}
         />
@@ -168,12 +161,7 @@ function renderBlock(
     case "herta":
       if (block.surface === "thought") return null; // per SPEC D8
       return (
-        <HertaBubble
-          key={index}
-          text={block.text}
-          timestamp={timestamp}
-          lang={lang}
-        />
+        <HertaBubble key={index} text={block.text} at={block.at} lang={lang} />
       );
     default:
       return null;
@@ -186,7 +174,6 @@ function renderBlock(
 // row tree for nothing. Store updates still flow via useActiveSession.
 export const Conversation = memo(function Conversation(): JSX.Element {
   const t = useT();
-  const { locale } = useLocale();
   const {
     record,
     recordStart,
@@ -212,10 +199,11 @@ export const Conversation = memo(function Conversation(): JSX.Element {
   } = useActiveSession();
   const { bridge, sessionStore } = useHertaBridge();
   const reduced = useReducedMotion();
-  // Coarse clock so adaptive timestamps ("just now" → "N min ago") refresh while
-  // a session sits open. 30s granularity is plenty (the finest label is minutes)
-  // and the timestamps are hover-only, so this is cheap background churn.
-  const now = useNow(30_000);
+  // No clock here: adaptive timestamps ("just now" → "N min ago") refresh via
+  // the shared coarse tick each BubbleTime leaf subscribes to (lib/now-tick,
+  // perf 2026-08-25). Keeping `now` in this component put the tick in the row
+  // memo's deps, so every 30s rebuilt and reconciled every mounted row element
+  // to refresh at most a few labels.
   // The per-FRAME reveal (useRevealedText / useRetractMorph) lives in the
   // StreamingReply leaf, not here: its state commits once per rAF frame while
   // tokens stream, and hosting it in Conversation re-rendered the ENTIRE
@@ -1500,6 +1488,15 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     }
     return -1;
   }, [record]);
+  // The optimistic echo's send time, stamped once per pending message: a
+  // fresh ISO string per render would change the bubble's `at` prop on every
+  // reveal frame and defeat its memo. `pendingUser` always passes through
+  // null between sends, so the memo cannot serve a stale stamp to a repeat
+  // of the same text.
+  const pendingUserAt = useMemo(
+    () => (pendingUser === null ? undefined : new Date().toISOString()),
+    [pendingUser],
+  );
   // ── the bubble rows ──────────────────────────────────────────────────────
   // Memoized on their REAL inputs (user profile 2026-07-12): per-frame state
   // flickers during the sidebar slide (pinned, fog edges) re-rendered
@@ -1539,9 +1536,6 @@ export const Conversation = memo(function Conversation(): JSX.Element {
             {renderBlock(
               item.block,
               recordStart + item.index,
-              now,
-              locale,
-              t,
               lang,
               // Handed over whenever this IS the latest user turn; whether a
               // rewind is allowed right now is no longer part of the row's
@@ -1552,7 +1546,10 @@ export const Conversation = memo(function Conversation(): JSX.Element {
           </ErrorBoundary>
         ) : null,
       ),
-    [items, recordStart, now, locale, t, lang, lastUserIndex, handleRewind],
+    // The 30s clock is deliberately absent (perf 2026-08-25): timestamps
+    // subscribe to the shared tick in their BubbleTime leaf, so a tick
+    // invalidates label leafs, never these row elements.
+    [items, recordStart, lang, lastUserIndex, handleRewind],
   );
 
   // ── assembly ────────────────────────────────────────────────────────────
@@ -1685,15 +1682,11 @@ export const Conversation = memo(function Conversation(): JSX.Element {
               <UserBubble
                 text={pendingUser}
                 lang={lang}
-                // Optimistic local echo of the just-sent message — its send time is
-                // now, so it reads "just now". Once it lands in the record it carries
-                // the stamped `at` (same minute), so the label stays stable.
-                timestamp={formatBubbleTime(
-                  new Date().toISOString(),
-                  now,
-                  locale,
-                  t,
-                )}
+                // Optimistic local echo of the just-sent message — stamped at
+                // the send (pendingUserAt), so it reads "just now". Once it
+                // lands in the record it carries the stamped `at` (same
+                // minute), so the label stays stable.
+                at={pendingUserAt}
                 hidden={hidePendingUser}
                 bubbleRef={pendingUserBubbleRef}
               />

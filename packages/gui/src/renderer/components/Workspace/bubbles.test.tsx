@@ -5,17 +5,23 @@ import { GalaxyTravelRow } from "./GalaxyTravelRow.js";
 import { HertaBubble } from "./HertaBubble.js";
 import { UserBubble } from "./UserBubble.js";
 
+/** A stamped `at` recent enough that the derived label is deterministically
+ *  "just now" — relative labels never touch Intl or the machine timezone
+ *  (the bubbles take the RAW time since perf 2026-08-25; the label is
+ *  derived in their BubbleTime leaf off the shared coarse clock). */
+const justNow = (): string => new Date(Date.now() - 5_000).toISOString();
+
 describe("UserBubble", () => {
   it("renders text + timestamp, no avatar", () => {
-    renderWithLocale(<UserBubble text="hello" timestamp="10:24 AM" />);
+    renderWithLocale(<UserBubble text="hello" at={justNow()} />);
     expect(screen.getByText("hello")).toBeInTheDocument();
-    expect(screen.getByText("10:24 AM")).toBeInTheDocument();
+    expect(screen.getByText("just now")).toBeInTheDocument();
     expect(document.querySelector(".message-avatar")).not.toBeInTheDocument();
   });
 
   it("places the timestamp BELOW the bubble in an action row (hover-reveal), not inside it", () => {
     const { container } = renderWithLocale(
-      <UserBubble text="hello" timestamp="10:24 AM" />,
+      <UserBubble text="hello" at={justNow()} />,
     );
     const bubble = container.querySelector(".message-bubble");
     const actions = container.querySelector(".message-actions");
@@ -28,7 +34,7 @@ describe("UserBubble", () => {
       true,
     );
     expect(actions?.querySelector(".message-actions__time")?.textContent).toBe(
-      "10:24 AM",
+      "just now",
     );
   });
 
@@ -41,11 +47,11 @@ describe("UserBubble", () => {
   it("renders a rewind button (calls onRewind) only when onRewind is provided", () => {
     const onRewind = vi.fn();
     const { rerender } = renderWithLocale(
-      <UserBubble text="hi" timestamp="10:24 AM" />,
+      <UserBubble text="hi" at={justNow()} />,
     );
     // No handler → no rewind button (just the timestamp).
     expect(screen.queryByLabelText("Rewind to here")).toBeNull();
-    rerender(<UserBubble text="hi" timestamp="10:24 AM" onRewind={onRewind} />);
+    rerender(<UserBubble text="hi" at={justNow()} onRewind={onRewind} />);
     const btn = screen.getByLabelText("Rewind to here");
     expect(btn.querySelector('svg[data-icon="rewind"]')).not.toBeNull();
     // The button carries a styled tooltip (like the top-bar icons).
@@ -63,17 +69,27 @@ describe("UserBubble", () => {
 
 describe("HertaBubble", () => {
   it("renders text + timestamp, no avatar", () => {
-    renderWithLocale(<HertaBubble text="certainly" timestamp="10:25 AM" />);
+    renderWithLocale(<HertaBubble text="certainly" at={justNow()} />);
     expect(screen.getByText("certainly")).toBeInTheDocument();
-    expect(screen.getByText("10:25 AM")).toBeInTheDocument();
+    expect(screen.getByText("just now")).toBeInTheDocument();
     expect(document.querySelector(".message-avatar")).not.toBeInTheDocument();
+  });
+
+  it("derives the adaptive label from the stamped time (a 2-min-old block)", () => {
+    renderWithLocale(
+      <HertaBubble
+        text="certainly"
+        at={new Date(Date.now() - 2 * 60_000 - 5_000).toISOString()}
+      />,
+    );
+    expect(screen.getByText("2 min ago")).toBeInTheDocument();
   });
 
   it("scrubs bidi/control characters before they reach the DOM (slice 2)", () => {
     const RLO = String.fromCharCode(0x202e);
     const ESC = String.fromCharCode(0x1b);
     const { container } = renderWithLocale(
-      <HertaBubble text={`${RLO}倒着念${ESC}[31m`} timestamp="10:25 AM" />,
+      <HertaBubble text={`${RLO}倒着念${ESC}[31m`} at={justNow()} />,
     );
     const textEl = container.querySelector(".message-text");
     expect(textEl?.textContent).toBe("倒着念[31m");
@@ -81,10 +97,7 @@ describe("HertaBubble", () => {
 
   it("slice 5: multi-paragraph text renders as a bubble stack, timestamp only on the tail", () => {
     const { container } = renderWithLocale(
-      <HertaBubble
-        text={"第一段。\n\n第二段。\n\n第三段。"}
-        timestamp="10:25 AM"
-      />,
+      <HertaBubble text={"第一段。\n\n第二段。\n\n第三段。"} at={justNow()} />,
     );
     const rows = container.querySelectorAll(".message-row.herta-row");
     expect(rows).toHaveLength(3);
@@ -104,7 +117,7 @@ describe("HertaBubble", () => {
     const { container } = renderWithLocale(
       <HertaBubble
         text={"看这段：\n```ts\nconst x = 1;\n```\n就这样。"}
-        timestamp="10:25 AM"
+        at={justNow()}
       />,
     );
     const code = container.querySelector(".code-standalone pre.code-block");
@@ -126,7 +139,7 @@ describe("HertaBubble", () => {
 
   it("slice 5: a lang-less fence falls back to the 'code' chip label", () => {
     const { container } = renderWithLocale(
-      <HertaBubble text={"```\nplain()\n```"} timestamp="10:25 AM" />,
+      <HertaBubble text={"```\nplain()\n```"} at={justNow()} />,
     );
     expect(container.querySelector(".code-card__lang")?.textContent).toBe(
       "code",
@@ -135,7 +148,7 @@ describe("HertaBubble", () => {
 
   it("inline backtick spans render monospace WITHOUT their delimiters", () => {
     const { container } = renderWithLocale(
-      <HertaBubble text={"用 `read_file` 去看。"} timestamp="10:25 AM" />,
+      <HertaBubble text={"用 `read_file` 去看。"} at={justNow()} />,
     );
     const inline = container.querySelector("code.inline-code");
     // Slice 5 painted "`read_file`"; the delimiters read as unrendered
@@ -152,7 +165,7 @@ describe("HertaBubble", () => {
 
   it("slice 5: a single-paragraph reply keeps the pre-stack DOM shape", () => {
     const { container } = renderWithLocale(
-      <HertaBubble text="就一句。" timestamp="10:25 AM" />,
+      <HertaBubble text="就一句。" at={justNow()} />,
     );
     const rows = container.querySelectorAll(".message-row.herta-row");
     expect(rows).toHaveLength(1);
@@ -171,7 +184,7 @@ describe("HertaBubble", () => {
 
   it("places the timestamp BELOW the bubble in an action row, and never a rewind button", () => {
     const { container } = renderWithLocale(
-      <HertaBubble text="certainly" timestamp="10:25 AM" />,
+      <HertaBubble text="certainly" at={justNow()} />,
     );
     const bubble = container.querySelector(".message-bubble");
     const actions = container.querySelector(".message-actions");
@@ -188,37 +201,33 @@ describe("HertaBubble", () => {
 
 describe("bubbles render @板砖 as a chip", () => {
   it("UserBubble chips a bare mention", () => {
-    renderWithLocale(<UserBubble text="重构登录 @板砖" timestamp="10:24 AM" />);
+    renderWithLocale(<UserBubble text="重构登录 @板砖" at={justNow()} />);
     const chip = document.querySelector(".banzhuan-mention");
     expect(chip).not.toBeNull();
     expect(chip?.textContent).toBe("@板砖");
   });
 
   it("UserBubble chips xxx@板砖 (no leading space)", () => {
-    renderWithLocale(<UserBubble text="go@板砖" timestamp="10:24 AM" />);
+    renderWithLocale(<UserBubble text="go@板砖" at={justNow()} />);
     expect(document.querySelector(".banzhuan-mention")?.textContent).toBe(
       "@板砖",
     );
   });
 
   it("HertaBubble chips a bare mention (Herta calling case)", () => {
-    renderWithLocale(
-      <HertaBubble text="让 @板砖 去看看" timestamp="10:25 AM" />,
-    );
+    renderWithLocale(<HertaBubble text="让 @板砖 去看看" at={justNow()} />);
     expect(document.querySelector(".banzhuan-mention")?.textContent).toBe(
       "@板砖",
     );
   });
 
   it("a backtick-quoted `@板砖` is NOT chipped", () => {
-    renderWithLocale(
-      <HertaBubble text="像 `@板砖` 这样写" timestamp="10:25 AM" />,
-    );
+    renderWithLocale(<HertaBubble text="像 `@板砖` 这样写" at={justNow()} />);
     expect(document.querySelector(".banzhuan-mention")).toBeNull();
   });
 
   it("plain text with no mention renders unchanged", () => {
-    renderWithLocale(<UserBubble text="just text" timestamp="10:24 AM" />);
+    renderWithLocale(<UserBubble text="just text" at={justNow()} />);
     expect(screen.getByText("just text")).toBeInTheDocument();
     expect(document.querySelector(".banzhuan-mention")).toBeNull();
   });

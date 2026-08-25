@@ -2,6 +2,7 @@ import { memo, type Ref } from "react";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { renderBanzhuanText } from "../../lib/banzhuan-text.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
+import { BubbleTime } from "./BubbleTime.js";
 
 /**
  * Rewind / undo glyph — Heroicons arrow-uturn-down (from
@@ -28,9 +29,11 @@ function RewindIcon(): JSX.Element {
 
 export interface UserBubbleProps {
   readonly text: string;
-  /** Formatted send time. Omitted for pre-timestamp blocks → the line is
-   *  hidden rather than showing a fabricated time. */
-  readonly timestamp?: string;
+  /** ISO send time (the block's stamped `at`); the adaptive label is derived
+   *  in the BubbleTime leaf, off the shared coarse clock. Omitted for
+   *  pre-timestamp blocks → the line is hidden rather than showing a
+   *  fabricated time. */
+  readonly at?: string;
   /** When true, the bubble is kept in layout (holds its slot) but invisible —
    *  used while the send morph's flying clone rises to this slot. */
   readonly hidden?: boolean;
@@ -54,8 +57,7 @@ export const UserBubble = memo(function UserBubble(
 ): JSX.Element {
   const t = useT();
   const lang = props.lang ?? "zh";
-  const hasActions =
-    props.onRewind !== undefined || props.timestamp !== undefined;
+  const hasActions = props.onRewind !== undefined || props.at !== undefined;
   return (
     <div
       className="message-row user-row"
@@ -83,9 +85,7 @@ export const UserBubble = memo(function UserBubble(
               </button>
             </Tooltip>
           )}
-          {props.timestamp !== undefined && (
-            <span className="message-actions__time">{props.timestamp}</span>
-          )}
+          {props.at !== undefined && <BubbleTime at={props.at} />}
         </div>
       )}
     </div>

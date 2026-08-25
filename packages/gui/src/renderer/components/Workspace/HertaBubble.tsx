@@ -3,12 +3,15 @@ import { memo, type RefObject } from "react";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { renderBanzhuanText } from "../../lib/banzhuan-text.js";
 import { type Segment, segmentSpeech } from "../../lib/segment-speech.js";
+import { BubbleTime } from "./BubbleTime.js";
 
 export interface HertaBubbleProps {
   readonly text: string;
-  /** Formatted send time. Omitted for pre-timestamp blocks → the line is
-   *  hidden rather than showing a fabricated time. */
-  readonly timestamp?: string;
+  /** ISO send time (the block's stamped `at`); the adaptive label is derived
+   *  in the BubbleTime leaf, off the shared coarse clock. Omitted for
+   *  pre-timestamp blocks → the line is hidden rather than showing a
+   *  fabricated time. */
+  readonly at?: string;
   /** Conversation language for the 板砖→Brick display alias (default "zh"). */
   readonly lang?: "zh" | "en";
 }
@@ -108,9 +111,9 @@ export const HertaBubble = memo(function HertaBubble(
             {/* Hover-revealed action row below the bubble — once per
                 utterance, on the stack tail (Herta turns carry only the
                 timestamp; rewind is a user-turn affordance). */}
-            {isLast && props.timestamp !== undefined && (
+            {isLast && props.at !== undefined && (
               <div className="message-actions">
-                <span className="message-actions__time">{props.timestamp}</span>
+                <BubbleTime at={props.at} />
               </div>
             )}
           </div>

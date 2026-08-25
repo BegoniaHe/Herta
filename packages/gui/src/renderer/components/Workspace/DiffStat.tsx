@@ -75,8 +75,6 @@ export function useCountUp(target: number): number {
 
 export interface DiffStatProps {
   readonly value: DiffStatValue;
-  /** Localized text for the unmeasured case. */
-  readonly unmeasuredLabel: string;
   /** Larger, slightly stronger treatment for the done-marker roll-up. */
   readonly rollup?: boolean;
 }
@@ -88,15 +86,14 @@ export interface DiffStatProps {
  * A write was the ONE operation whose row said nothing about its own size:
  * the patch block's headline read `patch preview: <files>`, which only
  * restates the `Writing` row above it.
+ *
+ * Unmeasured renders NOTHING (owner, 2026-08-25 evening — the first version
+ * spelled it out as `已改动（命令，无逐行差异）`, which is a sentence about the
+ * absence of a number, on a row that already names the file it changed). The
+ * honest-unknown rule is unchanged: silence, never a `+0 −0` nobody measured.
  */
-export function DiffStat(props: DiffStatProps): JSX.Element {
-  if (props.value === "unmeasured") {
-    return (
-      <span className="diff-stat diff-stat--unmeasured">
-        {props.unmeasuredLabel}
-      </span>
-    );
-  }
+export function DiffStat(props: DiffStatProps): JSX.Element | null {
+  if (props.value === "unmeasured") return null;
   return (
     <span
       className={`diff-stat${props.rollup === true ? " diff-stat--rollup" : ""}`}

@@ -535,6 +535,18 @@ describe("ApprovalPanel — conversation reserve (2026-07-27)", () => {
       expect(wrap?.className).toContain("is-open");
       expect(wrap).toHaveAttribute("aria-hidden", "false");
       expect(well).toHaveAttribute("tabindex", "0");
+
+      // The well renders the SAME diff component the record's folded write
+      // row does (2026-08-25 evening) — one diff rendering in the app, not a
+      // plain <pre> here and a tinted one there. `--on-dark` only swaps the
+      // tints for ones that read on this well.
+      const body = well?.querySelector(".diff-body");
+      expect(body?.className).toContain("diff-body--on-dark");
+      expect(
+        [...(body?.querySelectorAll(".diff-body__line") ?? [])].map((l) =>
+          l.className.replace("diff-body__line is-", ""),
+        ),
+      ).toEqual(["hunk", "del", "add", "ctx"]);
     });
   });
 

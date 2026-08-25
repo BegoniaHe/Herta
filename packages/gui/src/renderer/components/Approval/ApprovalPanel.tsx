@@ -4,6 +4,7 @@ import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useSessionSelector } from "../../hooks/useSessionSelector.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { OVERLAY_Z, useModalOverlay } from "../../lib/overlay-stack.js";
+import { DiffBody } from "../Workspace/DiffBody.js";
 import { countHeredocs, foldHeredocs } from "./fold-heredocs.js";
 import { isDangerRisk, REASON_KEY, RISK_KEY } from "./risk-label.js";
 
@@ -355,13 +356,18 @@ export function ApprovalPanel(): JSX.Element | null {
             aria-hidden={!diffOpen}
           >
             <div className="approval-panel__diff-clip">
-              <pre
+              {/* Same rendered diff as the record's folded write row
+                  (2026-08-25 evening) — one diff rendering in the app, not a
+                  plain <pre> here and a tinted one there. The well keeps its
+                  own chrome and its own collapse animation; `onDark` only
+                  swaps the tints for ones that read on it. */}
+              <div
                 id="approval-panel-diff"
                 className="approval-panel__diff"
                 tabIndex={diffOpen ? 0 : -1}
               >
-                {shown.diff}
-              </pre>
+                <DiffBody text={shown.diff} onDark />
+              </div>
             </div>
           </div>
         </>

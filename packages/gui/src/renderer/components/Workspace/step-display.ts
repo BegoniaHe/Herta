@@ -213,15 +213,19 @@ export function stepDisplayBody(
       // 文件`, `↳ 测试: 3 passed`), and a patch said only "patch preview:
       // <files>", which is a restatement of the Writing row above it.
       //
-      // The diff body still rides this block, so the existing expander opens
-      // it; only the headline changes. Counts absent → the change came
-      // through a COMMAND and no diff exists, so it says that instead of
-      // showing a `+0 −0` nobody measured.
-      const head =
-        d.add === undefined || d.del === undefined
-          ? `↳ ${t("activity.result.changedNoDiff")}`
-          : `↳ +${d.add} −${d.del}`;
+      // Since 2026-08-25 evening a preview normally FOLDS into the write it
+      // previews (`activityRows`), so this renders only the standalone case:
+      // a DENIED edit, previewed but never written. The diff body still rides
+      // this block, so the existing expander opens it; only the headline
+      // changes.
+      //
+      // Counts absent → an empty preview. The canonical first line
+      // (`patch preview: <files>`) is left alone: it at least names the file,
+      // where a sentence about the absence of a number would not (owner,
+      // 2026-08-25 evening).
+      if (d.add === undefined || d.del === undefined) return block.body;
       const nl = block.body.indexOf("\n");
+      const head = `↳ +${d.add} −${d.del}`;
       return nl >= 0 ? `${head}${block.body.slice(nl)}` : head;
     }
     case "skip":

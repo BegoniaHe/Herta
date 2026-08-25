@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { LocaleProvider, makeT } from "../../i18n/LocaleProvider.js";
 import { renderWithLocale } from "../../i18n/test-util.js";
@@ -131,6 +131,93 @@ describe("ActivityStep", () => {
     fireEvent.click(toggle); // open
     expect(unpin).toHaveBeenCalledTimes(1);
     fireEvent.click(toggle); // close
+    expect(unpin).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The folded write row (owner, 2026-08-25 evening): "the working history
+ * rendering order is weird, the content shows above the corresponding
+ * actions". `patch.preview` is published by the permission RULE, before the
+ * tool runs — so the record holds diff-then-write. `activityRows` pairs them
+ * and this row renders the pair: the action and its magnitude, the diff a
+ * click below.
+ */
+describe("ActivityStep — folded patch", () => {
+  const patch = { stat: { add: 11, del: 1 }, diff: " keep\n-old\n+new" };
+
+  it("states the action first and hides the diff until asked", () => {
+    const { container } = renderWithLocale(
+      <ActivityStep
+        body="写入 package.json"
+        t={tEn}
+        active={false}
+        patch={patch}
+      />,
+    );
+    const head = container.querySelector(
+      ".activity-step__fold-head",
+    ) as HTMLElement;
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+    // The action is the first thing in the row, before any diff content.
+    expect(head.textContent?.startsWith("写入 package.json")).toBe(true);
+    expect(container.querySelector(".diff-body")).toBeNull();
+
+    fireEvent.click(head);
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelector(".diff-body")?.textContent).toContain("new");
+  });
+
+  it("keeps the diff mounted after a close, so collapsing can animate", () => {
+    const { container } = renderWithLocale(
+      <ActivityStep body="写入 a.ts" t={tEn} active={false} patch={patch} />,
+    );
+    const head = container.querySelector(
+      ".activity-step__fold-head",
+    ) as HTMLElement;
+    fireEvent.click(head);
+    fireEvent.click(head);
+    expect(container.querySelector(".diff-body")).not.toBeNull();
+    expect(container.querySelector(".activity-step__fold.is-open")).toBeNull();
+  });
+
+  it("carries the magnitude on the action row itself", async () => {
+    const { container } = renderWithLocale(
+      <ActivityStep body="写入 a.ts" t={tEn} active={false} patch={patch} />,
+    );
+    await waitFor(() => {
+      expect(container.querySelector(".diff-stat")?.textContent).toBe("+11−1");
+    });
+  });
+
+  it("shows no magnitude, and no sentence about its absence, when unmeasured", () => {
+    const { container } = renderWithLocale(
+      <ActivityStep
+        body="写入 a.ts"
+        t={tEn}
+        active={false}
+        patch={{ stat: "unmeasured", diff: "" }}
+      />,
+    );
+    expect(container.querySelector(".diff-stat")).toBeNull();
+    expect(
+      container.querySelector(".activity-step__fold-head")?.textContent,
+    ).toBe("写入 a.ts");
+  });
+
+  it("unpins on OPEN only — the diff can grow the flow by thousands of px", () => {
+    const unpin = vi.fn();
+    const { container } = renderWithLocale(
+      <ConversationPinProvider unpin={unpin}>
+        <ActivityStep body="写入 a.ts" t={tEn} active={false} patch={patch} />
+      </ConversationPinProvider>,
+    );
+    const head = container.querySelector(
+      ".activity-step__fold-head",
+    ) as HTMLElement;
+    fireEvent.click(head);
+    expect(unpin).toHaveBeenCalledTimes(1);
+    fireEvent.click(head);
     expect(unpin).toHaveBeenCalledTimes(1);
   });
 });

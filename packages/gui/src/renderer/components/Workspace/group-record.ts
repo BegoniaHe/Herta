@@ -107,3 +107,79 @@ export function activitySteps(
 ): readonly SystemBlock[] {
   return blocks.filter((b) => !isTerminal(b));
 }
+
+/** One rendered row: the operation, plus the patch preview it produced. */
+export interface ActivityRow {
+  readonly block: SystemBlock;
+  /** The patch this operation wrote, folded into the row (2026-08-25). */
+  readonly patch?: SystemBlock;
+}
+
+/**
+ * Pair each patch preview with the operation that produced it.
+ *
+ * `patch.preview` is published by the permission RULE, which runs BEFORE the
+ * tool does — so the diff block is projected AHEAD of its own operation row,
+ * and the record read backwards: a wall of diff, then the action that caused
+ * it (owner, 2026-08-25). Folding the preview into the following operation
+ * puts the action first and the evidence inside it, which is also what makes
+ * the diff collapsible instead of unconditionally printed.
+ *
+ * The pairing is by ADJACENCY, not by verb. `permissions.check` publishes the
+ * preview and `tool.call.started` projects the op immediately after, so the
+ * next step IS the operation — whatever it is called. That matters: under the
+ * minimal contract (the default) a heredoc write comes from `bash`, and its
+ * row reads `Running`, not `Writing`.
+ *
+ * Adjacency is also the safety property. A DENIED write publishes its preview
+ * and then never starts, so what follows is a tool-fail row; without the
+ * adjacency requirement the orphaned diff would attach itself to some later,
+ * unrelated operation. A preview that finds no operation immediately after it
+ * stands as its own row instead — the record never loses a block to a
+ * presentation rule (D7).
+ */
+export function activityRows(
+  blocks: readonly SystemBlock[],
+): readonly ActivityRow[] {
+  const steps = activitySteps(blocks);
+  const rows: ActivityRow[] = [];
+  let i = 0;
+  while (i < steps.length) {
+    const step = steps[i];
+    if (step === undefined) {
+      i += 1;
+      continue;
+    }
+    if (!isPreview(step)) {
+      rows.push({ block: step });
+      i += 1;
+      continue;
+    }
+    // A run of previews, then the run of operations right after it: pair them
+    // in order. One preview + one op is the only shape the runtime produces
+    // today (a write is never part of a parallel read-only batch), but pairing
+    // by position keeps a batched one honest instead of guessing.
+    const previews: SystemBlock[] = [];
+    while (i < steps.length) {
+      const b = steps[i];
+      if (b === undefined || !isPreview(b)) break;
+      previews.push(b);
+      i += 1;
+    }
+    for (const preview of previews) {
+      const next = steps[i];
+      if (next !== undefined && next.digest?.kind === "op") {
+        rows.push({ block: next, patch: preview });
+        i += 1;
+      } else {
+        rows.push({ block: preview });
+      }
+    }
+  }
+  return rows;
+}
+
+/** A patch preview. `skip` is how records before 2026-08-25 carried one. */
+function isPreview(b: SystemBlock): boolean {
+  return b.digest?.kind === "patch" || b.digest?.kind === "skip";
+}

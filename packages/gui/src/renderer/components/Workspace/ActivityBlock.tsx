@@ -10,10 +10,12 @@ import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import { makeT } from "../../i18n/LocaleProvider.js";
 import { ActivityStep } from "./ActivityStep.js";
 import { useUnpinConversation } from "./ConversationPin.js";
-import { DiffStat } from "./DiffStat.js";
+import { DiffStat, type DiffStatValue } from "./DiffStat.js";
+import { type DiffSummary, summarizeDiff } from "./diff-summary.js";
 import {
   activityChipLabel,
   activityHasTerminalMarker,
+  activityRows,
   activitySteps,
   activitySummary,
   type SystemBlock,
@@ -81,6 +83,36 @@ export interface ActivityBlockProps {
  *  off-screen on a pathological plan. */
 const PLAN_MAX_ROWS = 8;
 
+/**
+ * The magnitude recorded on a patch block, or the honest absence of one.
+ *
+ * The digest is the source of truth. The fallback to counting the fenced diff
+ * is for records written before the `patch` digest existed (their preview is a
+ * `skip` with no counts) — and it is the SAME computation the projector runs
+ * at write time, not an inference, so those rows get a real number instead of
+ * silence. No diff at all → `unmeasured`, which renders nothing.
+ */
+function patchStat(block: SystemBlock, summary?: DiffSummary): DiffStatValue {
+  const d = block.digest;
+  if (d?.kind === "patch" && d.add !== undefined && d.del !== undefined) {
+    return { add: d.add, del: d.del };
+  }
+  const s = summary ?? summarizeDiff(block.body);
+  if (s.hasDiff && s.diffLineCount > 0) {
+    return { add: s.addCount, del: s.delCount };
+  }
+  return "unmeasured";
+}
+
+/** What a write's row folds in: its magnitude, and the diff it wrote. */
+function foldedPatch(block: SystemBlock): {
+  stat: DiffStatValue;
+  diff: string;
+} {
+  const summary = summarizeDiff(block.body);
+  return { stat: patchStat(block, summary), diff: summary.diffText };
+}
+
 function formatDuration(ms: number): string {
   const sec = Math.max(0, Math.round(ms / 1000));
   if (sec < 60) return `${sec}s`;
@@ -120,6 +152,12 @@ export const ActivityBlock = memo(function ActivityBlock(
   const headline =
     done && summary !== null ? composeMarkerSummary(summary, t) : null;
   const steps = activitySteps(blocks);
+  // Rendered rows, not raw blocks: a patch preview folds into the write it
+  // previews (the permission rule emits it BEFORE the tool runs, so the record
+  // holds diff-then-action and the history read backwards). The live-line
+  // lookups above stay on `steps` — a patch block is neither an op nor a todo,
+  // so folding cannot change what they find.
+  const rows = activityRows(blocks);
   // The terminal marker's evidenceDetail (改动文件 / 风险 / 待办 / output
   // roll-up — what Herta's prompt reads) surfaces as one expandable row at
   // the end of the history (2026-07-23).
@@ -132,7 +170,7 @@ export const ActivityBlock = memo(function ActivityBlock(
   // is just a terminal marker (e.g. 完成 · 1 file) has nothing behind the
   // chevron — so it gets no chevron and the line isn't a toggle (bug 1) —
   // unless the marker carries evidence detail worth expanding.
-  const expandable = steps.length > 0 || markerDetail !== undefined;
+  const expandable = rows.length > 0 || markerDetail !== undefined;
 
   const reduced = useReducedMotion();
   const unpin = useUnpinConversation();
@@ -391,11 +429,7 @@ export const ActivityBlock = memo(function ActivityBlock(
                   summary.marker.lines !== undefined && (
                     <>
                       {" · "}
-                      <DiffStat
-                        value={summary.marker.lines}
-                        unmeasuredLabel=""
-                        rollup
-                      />
+                      <DiffStat value={summary.marker.lines} rollup />
                     </>
                   )}
               </span>
@@ -493,20 +527,21 @@ export const ActivityBlock = memo(function ActivityBlock(
           }}
         >
           <div className="activity-line__history-inner">
-            {steps.map((b, i) => {
+            {rows.map((row, i) => {
+              const b = row.block;
               const failed = b.digest?.kind === "tool-fail";
               // A parallel batch (ADR 0025 slice 5) has several ops in
               // flight at once — shimmer the last `inFlightCount` op rows
               // together; the classic single-row shimmer otherwise.
               const shimmer =
                 active &&
-                (i === steps.length - 1 ||
+                (i === rows.length - 1 ||
                   (inFlightCount > 1 &&
                     b.digest?.kind === "op" &&
-                    i >= steps.length - inFlightCount));
+                    i >= rows.length - inFlightCount));
               return (
                 <ActivityStep
-                  // biome-ignore lint/suspicious/noArrayIndexKey: steps are append-only and stable-order; bodies can duplicate (repeated "↳ exit 0 · N lines" rows), so body keys would collide and shimmer/reconcile the wrong row.
+                  // biome-ignore lint/suspicious/noArrayIndexKey: rows are append-only and stable-order; bodies can duplicate (repeated "↳ exit 0 · N lines" rows), so body keys would collide and shimmer/reconcile the wrong row.
                   key={i}
                   body={stepDisplayBody(b, t)}
                   t={t}
@@ -525,18 +560,16 @@ export const ActivityBlock = memo(function ActivityBlock(
                   active={shimmer}
                   failed={failed}
                   detail={stepDisplayDetail(b, t)}
-                  // A patch row answers with its magnitude (2026-08-25). The
-                  // element replaces the body's first line so the digits can
-                  // count up; the diff below it is untouched.
-                  {...(b.digest?.kind === "patch"
-                    ? {
-                        stat:
-                          b.digest.add === undefined ||
-                          b.digest.del === undefined
-                            ? ("unmeasured" as const)
-                            : { add: b.digest.add, del: b.digest.del },
-                        statUnmeasuredLabel: t("activity.result.changedNoDiff"),
-                      }
+                  // The write states its own magnitude, and the diff it wrote
+                  // folds in underneath (2026-08-25 evening).
+                  {...(row.patch !== undefined
+                    ? { patch: foldedPatch(row.patch) }
+                    : {})}
+                  // A patch with no write to fold into (a DENIED edit) still
+                  // answers with its magnitude, in place of the body's first
+                  // line — the element, because the digits count up.
+                  {...(row.patch === undefined && b.digest?.kind === "patch"
+                    ? { stat: patchStat(b) }
                     : {})}
                   // Take-back, offered only where it can actually work: a
                   // stored attachment (a path to delete), not already removed,

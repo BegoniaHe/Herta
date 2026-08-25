@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   activityChipLabel,
   activityHasTerminalMarker,
+  activityRows,
   activitySteps,
   activitySummary,
   groupRecord,
@@ -99,5 +100,117 @@ describe("groupRecord", () => {
   it("summary reports a noop marker by role alone (no counts to localize)", () => {
     const blocks = [sys("无产出 — …", "差分协处理器", "noop-marker")];
     expect(activitySummary(blocks)).toEqual({ kind: "noop" });
+  });
+});
+
+/** A patch preview, as the permission rule projects it BEFORE the tool runs. */
+const patch = (files: string[], add?: number, del?: number): SystemBlock => ({
+  kind: "system",
+  label: "系统",
+  body: `patch preview: ${files.join(", ")}\n\n\`\`\`diff\n+a\n\`\`\``,
+  digest: {
+    kind: "patch",
+    files,
+    ...(add !== undefined ? { add } : {}),
+    ...(del !== undefined ? { del } : {}),
+  },
+});
+const op = (
+  verb: "Writing" | "Reading" | "Running",
+  arg: string,
+): SystemBlock => ({
+  kind: "system",
+  label: "差分协处理器",
+  body: `${verb} ${arg}`,
+  digest: { kind: "op", verb, arg },
+});
+
+describe("activityRows", () => {
+  it("folds a patch preview into the write that follows it", () => {
+    // The ordering bug in one assertion: the record holds patch-then-write,
+    // the rendered row is the write carrying the patch.
+    const blocks = [patch(["a.ts"], 11, 1), op("Writing", "a.ts")];
+    const rows = activityRows(blocks);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.block.body).toBe("Writing a.ts");
+    expect(rows[0]?.patch?.digest).toMatchObject({ kind: "patch", add: 11 });
+  });
+
+  it("folds into a Running row too — a heredoc write comes from bash", () => {
+    // The minimal contract is the DEFAULT (ADR 0040): a heredoc write is
+    // previewed by the bash rule and its operation row reads `Running`.
+    // Pairing on the verb `Writing` would have left every one of those diffs
+    // stranded above its command.
+    const rows = activityRows([
+      patch(["notes.md"], 7, 0),
+      op("Running", "cat > notes.md << EOF"),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.patch?.digest).toMatchObject({ add: 7 });
+  });
+
+  it("leaves a DENIED write's preview as its own row — never mis-attributes it", () => {
+    // A denied write publishes its preview and then never starts, so what
+    // follows is the failure row. Without the adjacency requirement the
+    // orphaned diff would attach itself to the NEXT operation, which is a
+    // different file entirely.
+    const fail: SystemBlock = {
+      kind: "system",
+      label: "差分协处理器",
+      body: "↳ edit_file failed: permission_denied",
+      digest: {
+        kind: "tool-fail",
+        tool: "edit_file",
+        code: "permission_denied",
+      },
+    };
+    const rows = activityRows([
+      patch(["secret.env"], 3, 0),
+      fail,
+      op("Writing", "other.ts"),
+    ]);
+    expect(rows).toHaveLength(3);
+    expect(rows.every((r) => r.patch === undefined)).toBe(true);
+    expect(rows[0]?.block.digest?.kind).toBe("patch");
+  });
+
+  it("pairs each preview with its own write in a multi-write run", () => {
+    const rows = activityRows([
+      patch(["a.ts"], 1, 0),
+      op("Writing", "a.ts"),
+      patch(["b.ts"], 2, 0),
+      op("Writing", "b.ts"),
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.patch?.digest).toMatchObject({ add: 1 });
+    expect(rows[1]?.patch?.digest).toMatchObject({ add: 2 });
+  });
+
+  it("a trailing preview survives as its own row", () => {
+    // Mid-run: the tool has been permitted but has not started yet.
+    const rows = activityRows([op("Reading", "a.ts"), patch(["a.ts"], 1, 0)]);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]?.block.digest?.kind).toBe("patch");
+    expect(rows[1]?.patch).toBeUndefined();
+  });
+
+  it("folds a pre-2026-08-25 `skip` preview the same way", () => {
+    const legacy: SystemBlock = {
+      kind: "system",
+      label: "系统",
+      body: "patch preview: a.ts\n\n```diff\n+a\n```",
+      digest: { kind: "skip" },
+    };
+    const rows = activityRows([legacy, op("Writing", "a.ts")]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.patch).toBe(legacy);
+  });
+
+  it("drops terminal markers, like activitySteps", () => {
+    const blocks = [
+      op("Writing", "a.ts"),
+      sys("完成 · 1 file", "差分协处理器", "done-marker"),
+    ];
+    expect(activityRows(blocks)).toHaveLength(1);
   });
 });

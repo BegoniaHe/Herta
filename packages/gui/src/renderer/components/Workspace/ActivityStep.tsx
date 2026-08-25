@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { TFn } from "../../i18n/LocaleProvider.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import { CollapsibleBody } from "./CollapsibleBody.js";
 import { useUnpinConversation } from "./ConversationPin.js";
+import { DiffBody } from "./DiffBody.js";
 import { DiffStat, type DiffStatValue } from "./DiffStat.js";
 import { StepIcon, type StepIconKey, stepIcon } from "./step-icon.js";
 
@@ -43,17 +44,28 @@ export interface ActivityStepProps {
    *  lang (ADR 0019) like every other string in it. */
   readonly removeLabel?: string;
   /**
-   * A patch row's magnitude (2026-08-25) — rendered as an animated element in
-   * place of the body's first line, because the digits count up.
+   * A standalone patch row's magnitude (2026-08-25) — rendered as an animated
+   * element in place of the body's first line, because the digits count up.
    *
-   * A write used to be the one operation with no `↳` outcome row; its patch
-   * block said `patch preview: <files>`, which restates the `Writing` row
-   * above it and says nothing about size.
+   * Only reached when the preview has no write to fold into (a DENIED edit:
+   * the permission rule previews the patch, the tool never runs, so no
+   * `Writing` row follows it). The normal case is `patch` below.
    */
   readonly stat?: DiffStatValue;
-  /** Localized text for a change with no per-file diff (a command wrote it).
-   *  Required when `stat` is set. */
-  readonly statUnmeasuredLabel?: string;
+  /**
+   * The patch this operation wrote, folded into the row (2026-08-25 evening).
+   *
+   * `patch.preview` is published by the permission RULE, which runs BEFORE
+   * the tool — so the diff was projected AHEAD of its own `Writing` row and
+   * the history read backwards: a wall of diff, then the action that caused
+   * it. Folded here, the row states the action and its magnitude, and the
+   * evidence opens underneath it on a click.
+   */
+  readonly patch?: {
+    readonly stat: DiffStatValue;
+    /** Diff content without the ```diff fence. */
+    readonly diff: string;
+  };
 }
 
 /** One row in an activity block: a verb icon + the (collapsible) body. */
@@ -67,6 +79,21 @@ export function ActivityStep(props: ActivityStepProps): JSX.Element {
   const [detailOpen, setDetailOpen] = useState(false);
   const unpin = useUnpinConversation();
   const hasDetail = props.detail !== undefined && props.detail.length > 0;
+  const patch = props.patch;
+  const [patchOpen, setPatchOpen] = useState(false);
+  // Mount the diff on FIRST open and keep it mounted, so collapsing animates
+  // out instead of vanishing. A closed row costs nothing until it is opened —
+  // a long dispatch can carry dozens of patches, each thousands of lines.
+  const [patchMounted, setPatchMounted] = useState(false);
+  const foldRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const el = foldRef.current;
+    if (el === null) return;
+    // Same measured max-height reveal as the activity history panel: a px
+    // target is the only way to transition to `auto`, and the scroller's
+    // overflow-anchor:none keeps the growth pointing downward.
+    el.style.maxHeight = patchOpen ? `${el.scrollHeight}px` : "0px";
+  }, [patchOpen]);
   return (
     <div
       className={`activity-step${props.active ? " is-active" : ""}${
@@ -81,60 +108,100 @@ export function ActivityStep(props: ActivityStepProps): JSX.Element {
             FILENAME, not the text column (owner 2026-08-10: expanding the
             detail pane widened the column and carried the ✕ rightward with
             it). The toggle and the detail sit below, full width. */}
-        <div className="activity-step__headline">
-          <CollapsibleBody
-            body={body}
-            preClassName="activity-step__body"
-            t={props.t}
-            {...(props.stat !== undefined
-              ? {
-                  headline: (
-                    <DiffStat
-                      value={props.stat}
-                      unmeasuredLabel={props.statUnmeasuredLabel ?? ""}
-                    />
-                  ),
-                }
-              : {})}
-          />
-          {props.onRemove !== undefined && (
-            // The app's styled pill, not the native `title` (owner
-            // 2026-08-10 — the same OS-beige-box mismatch the paperclip had),
-            // and PORTALED. This row sits inside the activity history panel
-            // inside the conversation scroller; an in-flow pill was cut there
-            // twice, by two different causes (the panel's reveal clip, then
-            // whatever paints past its bottom edge once the detail pane is
-            // closed). Rendering to <body> at fixed coords ends the class —
-            // nothing can clip an element it does not contain — and the
-            // placement auto-flips when the viewport bottom is close.
-            <Tooltip
-              label={props.removeLabel ?? ""}
-              placement="bottom"
-              align="center"
-              portal
+        {patch !== undefined ? (
+          // The action states itself and its magnitude; the evidence opens
+          // underneath on a click. The whole headline is the control (the
+          // reference tools put the target on the file row, not on a separate
+          // "expand" link), so the accessible name is the row's own text.
+          <button
+            type="button"
+            className={`activity-step__fold-head${patchOpen ? " is-open" : ""}`}
+            aria-expanded={patchOpen}
+            onClick={() => {
+              // Opening grows the record BELOW this row with no scroll event —
+              // unpin so the follow machinery can't later yank the viewport
+              // past the diff (see ConversationPin.tsx).
+              if (!patchOpen) {
+                unpin();
+                setPatchMounted(true);
+              }
+              setPatchOpen((v) => !v);
+            }}
+          >
+            <span className="activity-step__body">{body}</span>
+            <DiffStat value={patch.stat} />
+            <svg
+              className="activity-step__fold-chevron"
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
             >
-              <button
-                type="button"
-                className="activity-step__remove"
-                aria-label={props.removeLabel}
-                onClick={props.onRemove}
+              <path d="M3.5 2l3 3-3 3" />
+            </svg>
+          </button>
+        ) : (
+          <div className="activity-step__headline">
+            <CollapsibleBody
+              body={body}
+              preClassName="activity-step__body"
+              t={props.t}
+              {...(props.stat !== undefined
+                ? { headline: <DiffStat value={props.stat} /> }
+                : {})}
+            />
+            {props.onRemove !== undefined && (
+              // The app's styled pill, not the native `title` (owner
+              // 2026-08-10 — the same OS-beige-box mismatch the paperclip had),
+              // and PORTALED. This row sits inside the activity history panel
+              // inside the conversation scroller; an in-flow pill was cut there
+              // twice, by two different causes (the panel's reveal clip, then
+              // whatever paints past its bottom edge once the detail pane is
+              // closed). Rendering to <body> at fixed coords ends the class —
+              // nothing can clip an element it does not contain — and the
+              // placement auto-flips when the viewport bottom is close.
+              <Tooltip
+                label={props.removeLabel ?? ""}
+                placement="bottom"
+                align="center"
+                portal
               >
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 12 12"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.4"
-                  strokeLinecap="round"
-                  aria-hidden="true"
+                <button
+                  type="button"
+                  className="activity-step__remove"
+                  aria-label={props.removeLabel}
+                  onClick={props.onRemove}
                 >
-                  <path d="M3 3l6 6M9 3l-6 6" />
-                </svg>
-              </button>
-            </Tooltip>
-          )}
-        </div>
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 12 12"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M3 3l6 6M9 3l-6 6" />
+                  </svg>
+                </button>
+              </Tooltip>
+            )}
+          </div>
+        )}
+        {patch !== undefined && (
+          <div
+            ref={foldRef}
+            className={`activity-step__fold${patchOpen ? " is-open" : ""}`}
+          >
+            {patchMounted && <DiffBody text={patch.diff} />}
+          </div>
+        )}
         {hasDetail && (
           <button
             type="button"

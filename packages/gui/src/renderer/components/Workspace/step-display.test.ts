@@ -18,7 +18,6 @@ const ZH: Partial<Record<MessageKey, string>> = {
   "activity.result.exit": "退出",
   "activity.result.lines": "行",
   "activity.step.patchPreview": "补丁预览",
-  "activity.result.changedNoDiff": "已改动（命令，无逐行差异）",
   "activity.bg.label": "后台",
   "activity.bg.running": "运行中",
   "activity.bg.stopped": "已停止",
@@ -57,6 +56,10 @@ const sys = (body: string, digest?: SystemBlock["digest"]): SystemBlock => ({
  * A write was the ONE operation with no `↳` outcome row: its patch block said
  * `patch preview: <files>`, which restates the `Writing` row above it and says
  * nothing about size. Every other operation answers itself.
+ *
+ * Since 2026-08-25 evening a preview normally FOLDS into the write it previews
+ * (`activityRows`), so this path renders only the standalone case: a DENIED
+ * edit, previewed by the permission rule but never written.
  */
 describe("stepDisplayBody — patch magnitude (2026-08-25)", () => {
   const body = "patch preview: a.ts (+96 -5)\n\n```diff\n+x\n-y\n```";
@@ -72,10 +75,10 @@ describe("stepDisplayBody — patch magnitude (2026-08-25)", () => {
     expect(out).toContain("+x");
   });
 
-  it("says so when a COMMAND made the change — never `+0 −0`", () => {
-    // `sed -i`, a heredoc, an `mv`: the dispatch baseline puts these in
-    // changedFiles, and no editor produced a diff for them. A zero here would
-    // state a number nobody measured.
+  it("leaves the canonical line alone when there is nothing to count", () => {
+    // Owner, 2026-08-25 evening: this used to read `↳ 已改动（命令，无逐行差异）`
+    // — a sentence about the absence of a number, where the canonical line at
+    // least names the file. A `+0 −0` is still never acceptable.
     const out = stepDisplayBody(
       sys("patch preview: a.ts\n\n```diff\n```", {
         kind: "patch",
@@ -83,7 +86,7 @@ describe("stepDisplayBody — patch magnitude (2026-08-25)", () => {
       }),
       t,
     );
-    expect(out.split("\n")[0]).toBe("↳ 已改动（命令，无逐行差异）");
+    expect(out.split("\n")[0]).toBe("patch preview: a.ts");
     expect(out).not.toContain("+0");
   });
 

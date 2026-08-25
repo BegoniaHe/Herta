@@ -2903,13 +2903,15 @@ button.agent-preview:active {
    The dark chrome (background / border / radius) is NOT on this <pre> — it
    lives on the clip box below, see there for why; the pre is the scrolling
    text region inside it. */
+/* The scroll container. Since 2026-08-25 evening it holds a <DiffBody>, not
+   raw text, so the wrapping and the mono face live on the rows — what stays
+   here is the height cap, the scroll, and the padding. Vertical only: the
+   row tints are full-bleed bands, so side padding would leave an untinted
+   margin down both edges of the well. */
 .approval-panel__diff {
   margin: 0;
-  padding: 8px 10px;
+  padding: 6px 0;
   color: #e2e8f0;
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-all;
   max-height: 240px;
   overflow-y: auto;
 }
@@ -4312,10 +4314,6 @@ button.session-item__badge--dismiss {
 .diff-stat__n--del {
   color: #a4544c;
 }
-.diff-stat--unmeasured {
-  color: var(--muted-4);
-  font-style: italic;
-}
 /* The roll-up on the done marker: the same shape as the rows it sums, one
    step stronger so it reads as their total rather than another row. */
 .diff-stat--rollup {
@@ -4342,6 +4340,214 @@ button.session-item__badge--dismiss {
   /* The digits also stop counting — see useCountUp. */
   .diff-stat {
     animation: none;
+  }
+}
+
+/* ── A write's row, with its diff folded in (2026-08-25 evening) ──────────
+   `patch.preview` is published by the permission RULE, which runs BEFORE the
+   tool — so the record holds the diff and THEN the `写入` that produced it,
+   and the history read backwards (owner). The row folds them back together:
+   the action and its magnitude on one line, the evidence one click below.
+
+   The whole headline is the control, not a separate "expand" link: the thing
+   the reader wants to open is the file row itself. */
+.activity-step__fold-head {
+  appearance: none;
+  border: none;
+  background: none;
+  /* Negative margin against the padding, so the text still lines up with the
+     rows above and below while the hit area is comfortably larger. */
+  margin: 0 -6px;
+  padding: 1px 6px;
+  width: calc(100% + 12px);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  font-size: 12px;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 140ms var(--ease-out-soft);
+}
+.activity-step__fold-head:hover {
+  background: color-mix(in srgb, var(--muted-faint) 14%, transparent);
+}
+.activity-step__fold-head .activity-step__body {
+  flex: 1;
+  min-width: 0;
+}
+.activity-step__fold-head .diff-stat {
+  flex: none;
+  line-height: 1.5;
+}
+.activity-step__fold-chevron {
+  flex: none;
+  margin-top: 4px;
+  color: var(--muted-4);
+  transition: transform 200ms var(--ease-signature), color 140ms ease;
+}
+.activity-step__fold-head:hover .activity-step__fold-chevron {
+  color: var(--muted-strong);
+}
+.activity-step__fold-head.is-open .activity-step__fold-chevron {
+  transform: rotate(90deg);
+}
+/* Measured max-height reveal, same as the activity history panel: the px
+   target is set by the JS in ActivityStep (a transition needs a length, and
+   `auto` is not one). */
+.activity-step__fold {
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition: max-height 240ms var(--ease-out-soft), opacity 160ms ease;
+}
+.activity-step__fold.is-open {
+  opacity: 1;
+}
+
+/* ── Rendered diff (2026-08-25 evening) ───────────────────────────────────
+   Was a single <pre> of the raw fenced body — every line the same weight,
+   the `+`/`-` doing all the work, and the ``` fences on screen (owner: "the
+   diff block is plain"). Now one row per line, tinted by role, with the sign
+   lifted out of the text into a fixed gutter.
+
+   The tints are the SAME desaturated pair as .diff-stat above, at low alpha:
+   a full-strength git-green block would out-shout the failure amber, which is
+   the one colour in this panel that must win. */
+.diff-body {
+  margin: 6px 0 2px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--muted-faint) 6%, transparent);
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas,
+    "DejaVu Sans Mono", monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+.diff-body__line {
+  display: flex;
+  gap: 8px;
+  padding-right: 8px;
+  /* A blank line is still a line: without this it collapses to nothing and
+     the diff appears to skip rows it did not skip. */
+  min-height: 1.55em;
+}
+.diff-body__gutter {
+  flex: none;
+  width: 18px;
+  text-align: center;
+  color: var(--muted-4);
+  background: color-mix(in srgb, var(--muted-faint) 9%, transparent);
+  user-select: none;
+}
+.diff-body__text {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted-3);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.diff-body__line.is-add {
+  background: rgba(63, 125, 80, 0.1);
+}
+.diff-body__line.is-add .diff-body__gutter {
+  color: #3f7d50;
+  background: rgba(63, 125, 80, 0.16);
+}
+.diff-body__line.is-add .diff-body__text {
+  color: var(--muted-strong);
+}
+.diff-body__line.is-del {
+  background: rgba(164, 84, 76, 0.1);
+}
+.diff-body__line.is-del .diff-body__gutter {
+  color: #a4544c;
+  background: rgba(164, 84, 76, 0.16);
+}
+.diff-body__line.is-del .diff-body__text {
+  color: var(--muted-strong);
+}
+.diff-body__line.is-hunk .diff-body__text,
+.diff-body__line.is-file .diff-body__text {
+  color: var(--muted-4);
+}
+.diff-body__line.is-hunk {
+  background: color-mix(in srgb, var(--muted-faint) 12%, transparent);
+}
+/* `\ 412 unchanged lines omitted` — a statement ABOUT the diff, not part of
+   it, so it reads as an aside rather than as content. */
+.diff-body__line.is-meta .diff-body__text {
+  color: var(--muted-4);
+  font-style: italic;
+}
+:root[data-theme="dark"] .diff-body__line.is-add {
+  background: rgba(111, 168, 111, 0.13);
+}
+:root[data-theme="dark"] .diff-body__line.is-add .diff-body__gutter {
+  color: #6fa86f;
+  background: rgba(111, 168, 111, 0.2);
+}
+:root[data-theme="dark"] .diff-body__line.is-del {
+  background: rgba(196, 115, 107, 0.13);
+}
+:root[data-theme="dark"] .diff-body__line.is-del .diff-body__gutter {
+  color: #c4736b;
+  background: rgba(196, 115, 107, 0.2);
+}
+/* Inside the approval card's dark preview well: the well supplies the box, so
+   this drops its own chrome, and its colours are FIXED — that well is #0f172a
+   in both themes, so theme-token tints would wash out in light mode. Written
+   after the dark overrides above so it wins in either theme. */
+.diff-body--on-dark {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  font-size: 12px;
+}
+.diff-body--on-dark .diff-body__text {
+  color: #94a3b8;
+  /* A path or a minified line has no spaces to break at; the well is narrow
+     and must never scroll sideways. */
+  word-break: break-all;
+}
+.diff-body--on-dark .diff-body__gutter {
+  color: #64748b;
+  background: rgba(226, 232, 240, 0.05);
+}
+.diff-body--on-dark .diff-body__line.is-add {
+  background: rgba(74, 222, 128, 0.11);
+}
+.diff-body--on-dark .diff-body__line.is-add .diff-body__gutter {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.18);
+}
+.diff-body--on-dark .diff-body__line.is-del {
+  background: rgba(248, 113, 113, 0.11);
+}
+.diff-body--on-dark .diff-body__line.is-del .diff-body__gutter {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.18);
+}
+.diff-body--on-dark .diff-body__line.is-add .diff-body__text,
+.diff-body--on-dark .diff-body__line.is-del .diff-body__text {
+  color: #e2e8f0;
+}
+.diff-body--on-dark .diff-body__line.is-hunk {
+  background: rgba(226, 232, 240, 0.07);
+}
+.diff-body--on-dark .diff-body__line.is-hunk .diff-body__text,
+.diff-body--on-dark .diff-body__line.is-file .diff-body__text,
+.diff-body--on-dark .diff-body__line.is-meta .diff-body__text {
+  color: #64748b;
+}
+@media (prefers-reduced-motion: reduce) {
+  .activity-step__fold,
+  .activity-step__fold-chevron,
+  .activity-step__fold-head {
+    transition: none;
   }
 }
 /* Evidence-detail expander (2026-07-23): the block's evidenceDetail —

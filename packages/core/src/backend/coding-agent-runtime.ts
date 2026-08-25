@@ -63,6 +63,24 @@ export interface CodingAgentRuntimeDeps {
   /** Working-set prompt budget override (ADR 0025 slice 2); defaults to
    *  DEFAULT_BACKEND_PROMPT_BUDGET in the turn loop. */
   budget?: BackendPromptBudget;
+  /**
+   * Snapshot of the workspace's version-control state, taken at brief START
+   * and again at brief END to attribute what this dispatch changed.
+   *
+   * INJECTED because the probe needs git and core cannot import `@herta/tools`
+   * (tools already depends on core). Absent, or returning null, and the report
+   * simply falls back to the editors' own harvest, exactly as before.
+   */
+  repoProbe?: (signal?: AbortSignal) => Promise<RepoSnapshot | null>;
+}
+
+/** What the workspace's VCS looked like at one instant. */
+export interface RepoSnapshot {
+  /** HEAD's commit id, or null on an unborn branch / no repo. */
+  readonly head: string | null;
+  /** Workspace-relative paths that differ from HEAD (staged, unstaged or
+   *  untracked). */
+  readonly dirty: readonly string[];
 }
 
 export interface RunBriefOptions {
@@ -107,6 +125,17 @@ export class CodingAgentRuntime {
 
   constructor(deps: CodingAgentRuntimeDeps) {
     this.deps = deps;
+  }
+
+  /** The repo snapshot, or null when there is no probe, no repo, or the probe
+   *  failed. Never throws: attribution is a nicety and must not fail a brief. */
+  private async probeRepo(signal?: AbortSignal): Promise<RepoSnapshot | null> {
+    if (this.deps.repoProbe === undefined) return null;
+    try {
+      return await this.deps.repoProbe(signal);
+    } catch {
+      return null;
+    }
   }
 
   async runBrief(
@@ -160,6 +189,20 @@ export class CodingAgentRuntime {
       >();
       let okEvidence = 0;
       let deniedPermissions = 0;
+
+      // The dispatch BASELINE. `changedByPath` above only ever learns about a
+      // path from one of the three editors, and `bash` is not one of them — so
+      // on the DEFAULT (minimal) contract every `sed -i`, heredoc, `mv`, `rm`,
+      // formatter and codemod contributed nothing, and a commission that did
+      // real work reported `完成 · 0 个文件`. Neither editor can delete at all,
+      // so the highest-blast-radius operation was the one the attribution was
+      // structurally blind to.
+      //
+      // Taken at START as well as END, and the difference is what this
+      // dispatch is credited with. Without the start snapshot an end-only
+      // status would report the USER's own pre-existing uncommitted work as
+      // 板砖's — the same lie inverted.
+      const baseline = await this.probeRepo(opts.signal);
 
       const absorb = (event: AgentEvent): void => {
         // Backend-layer only (audit 2026-07-10 §6): the per-session bus is
@@ -362,6 +405,39 @@ export class CodingAgentRuntime {
         builder.addResidualRisk(
           `${stoppedBackground} background command(s) still running at brief end were stopped`,
         );
+      }
+
+      // Attribute anything the editors did not report — shell writes, moves,
+      // deletes — by diffing the workspace against the START snapshot.
+      if (baseline !== null) {
+        const after = await this.probeRepo(opts.signal);
+        if (after !== null && after.head === baseline.head) {
+          const wasDirty = new Set(baseline.dirty);
+          for (const path of after.dirty) {
+            // Already dirty before the brief: outside this mechanism's reach.
+            // The report says so rather than claiming it.
+            if (wasDirty.has(path)) continue;
+            if (changedByPath.has(path)) continue; // an editor already named it
+            changedByPath.set(path, {
+              path,
+              kind: "modified",
+              diffSummary: "changed via a command (no per-file diff)",
+            });
+          }
+          const carried = baseline.dirty.filter((p) => !changedByPath.has(p));
+          if (carried.length > 0) {
+            builder.addResidualRisk(
+              `${carried.length} file(s) were already modified before this dispatch and are not attributed to it: ${carried.slice(0, 5).join(", ")}${carried.length > 5 ? ", …" : ""}`,
+            );
+          }
+        } else if (after !== null && after.head !== baseline.head) {
+          // A commit (or checkout) moved HEAD, so "dirty vs HEAD" no longer
+          // describes the same tree at both ends. Say that instead of
+          // computing a difference that means nothing.
+          builder.addResidualRisk(
+            "HEAD moved during this dispatch, so file changes could not be attributed by comparing against the starting commit",
+          );
+        }
       }
 
       // Flush the applied-write harvest (deduped by path) into the report.

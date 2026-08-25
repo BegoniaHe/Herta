@@ -329,6 +329,7 @@ export function classifyShellCommandDetailed(
   ];
 
   const asks: Array<Extract<Verdict, { kind: "ask" }>> = [];
+  const segmentCodes = new Set<string>();
   const classified: string[] = [];
   // A `cd` INSIDE the workspace moves the cwd for the segments after it on
   // this line (`cd src/lib; cd ../../test` is fine; `cd src && cd ../..` is
@@ -342,6 +343,8 @@ export function classifyShellCommandDetailed(
     if (r.verdict.kind === "block")
       return { verdict: r.verdict, segments: classified };
     if (r.verdict.kind === "ask") asks.push(r.verdict);
+    // Intra-segment classes too, not just the one `combine` promoted.
+    for (const c of r.codes ?? []) segmentCodes.add(c);
     if (r.cwd !== undefined) cwd = r.cwd;
   }
   if (asks.length === 0)
@@ -350,7 +353,9 @@ export function classifyShellCommandDetailed(
   asks.sort((a, b) => RISK_RANK[b.risk] - RISK_RANK[a.risk]);
   const top = asks[0] as Extract<Verdict, { kind: "ask" }>;
   const reasons = [...new Set(asks.map((a) => a.reason))];
-  const codes = [...new Set(asks.map((a) => a.code))];
+  // The promoted code of each segment FIRST (highest risk leads), then any
+  // other class raised inside a segment that `combine` did not promote.
+  const codes = [...new Set([...asks.map((a) => a.code), ...segmentCodes])];
   return {
     verdict: {
       kind: "ask",
@@ -652,6 +657,31 @@ interface SegmentVerdict {
   verdict: Verdict;
   /** New cwd for later segments when this one was an in-workspace `cd`. */
   cwd?: string;
+  /**
+   * Every DISTINCT ask class this segment raised — the verdict's own `code` is
+   * only the highest-risk one.
+   *
+   * `combine` collapses a segment's asks into one verdict, so a single segment
+   * that does two things used to surface only the louder one: with
+   * `GIT_SEQUENCE_EDITOR=… git rebase -i`, the destructive rebase outranked
+   * the env-escalation ask and the card stopped naming it. That is the same
+   * information loss the cross-segment `codes` channel was added to fix on
+   * 2026-08-17 (`kill 574; curl localhost` labelled only 「访问网络」).
+   */
+  codes?: string[];
+}
+
+/** One segment's answer, carrying every ask class it raised. */
+function segmentVerdict(
+  asks: ReadonlyArray<Extract<Verdict, { kind: "ask" }>>,
+  cwd?: string,
+): SegmentVerdict {
+  const codes = [...new Set(asks.map((a) => a.code))];
+  return {
+    verdict: combine([...asks]),
+    ...(codes.length > 0 ? { codes } : {}),
+    ...(cwd !== undefined ? { cwd } : {}),
+  };
 }
 
 /** The env-key rule is run_command's ALLOW-list (fail closed): a key that
@@ -822,7 +852,7 @@ function classifySegment(
           }
         }
       }
-      return { verdict: combine(asks) };
+      return segmentVerdict(asks);
     }
     // `case X in PATTERN) CMD ;;` — later branches split off on `;;`, but the
     // FIRST one rides the same segment as the keyword, so it was never
@@ -837,13 +867,13 @@ function classifySegment(
         if (inner.kind === "ask") asks.push(inner);
       }
     }
-    return { verdict: combine(asks) };
+    return segmentVerdict(asks);
   }
 
   // redirections
   if (words.length === 0) {
     // bare assignment or bare redirect
-    return { verdict: combine(asks) };
+    return segmentVerdict(asks);
   }
   const a0 = words[0] as string;
   const name = basename(a0);
@@ -879,7 +909,7 @@ function classifySegment(
     }
     const bad = Object.keys(env).length > 0 ? findDisallowedEnvKey(env) : null;
     if (bad !== null) asks.push(envAsk("exports", bad));
-    return { verdict: combine(asks) };
+    return segmentVerdict(asks);
   }
 
   if (name === "cd" || name === "pushd") {
@@ -911,14 +941,14 @@ function classifySegment(
       /[$`]/.test(target)
     ) {
       asks.push(cdAsk(target ?? "(home)"));
-      return { verdict: combine(asks) };
+      return segmentVerdict(asks);
     }
     const dest = destinationOf(target, opts);
     if (dest === null) {
       asks.push(cdAsk(target));
-      return { verdict: combine(asks) };
+      return segmentVerdict(asks);
     }
-    return { verdict: combine(asks), cwd: dest };
+    return segmentVerdict(asks, dest);
   }
 
   if (OPAQUE_BUILTINS.has(name)) {
@@ -928,7 +958,7 @@ function classifySegment(
       code: "command_ask_interpreter",
       reason: `${name} runs text the harness cannot classify — review it`,
     });
-    return { verdict: combine(asks) };
+    return segmentVerdict(asks);
   }
 
   // `trap ACTION SIGSPEC` — the shell runs ACTION later, and the persistent
@@ -956,12 +986,12 @@ function classifySegment(
       action.trim().length === 0 ||
       /^-[plP]$/.test(action)
     ) {
-      return { verdict: combine(asks) };
+      return segmentVerdict(asks);
     }
     const inner = classifyAction(action, opts, depth, `trap ${action}`);
     if (inner.kind === "block") return { verdict: inner };
     if (inner.kind === "ask") asks.push(inner);
-    return { verdict: combine(asks) };
+    return segmentVerdict(asks);
   }
 
   // `alias name=value` stores command text the shell substitutes later.
@@ -979,7 +1009,7 @@ function classifySegment(
       if (inner.kind === "block") return { verdict: inner };
       if (inner.kind === "ask") asks.push(inner);
     }
-    return { verdict: combine(asks) };
+    return segmentVerdict(asks);
   }
 
   // ── builtins that DO take a command, a variable, or an expression ──
@@ -1003,7 +1033,7 @@ function classifySegment(
       if (inner.kind === "block") return { verdict: inner };
       if (inner.kind === "ask") asks.push(inner);
     }
-    return { verdict: combine(asks) };
+    return segmentVerdict(asks);
   }
 
   // `hash -p FILE NAME` points NAME at FILE for the rest of the session, so a
@@ -1016,7 +1046,7 @@ function classifySegment(
       code: "command_ask_env",
       reason: `hash -p re-points a command name at ${words[words.indexOf("-p") + 1] ?? "a file"} for the rest of the session — later commands would run it instead`,
     });
-    return { verdict: combine(asks) };
+    return segmentVerdict(asks);
   }
 
   // `printf -v VAR` and `read [-r] VAR …` both ASSIGN, so their targets go
@@ -1049,7 +1079,7 @@ function classifySegment(
     }
     const bad = Object.keys(env).length > 0 ? findDisallowedEnvKey(env) : null;
     if (bad !== null) asks.push(envAsk("assigns", bad));
-    return { verdict: combine(asks) };
+    return segmentVerdict(asks);
   }
 
   // Arithmetic evaluation expands array subscripts, so a command substitution
@@ -1063,10 +1093,10 @@ function classifySegment(
       if (inner.kind === "block") return { verdict: inner };
       if (inner.kind === "ask") asks.push(inner);
     }
-    return { verdict: combine(asks) };
+    return segmentVerdict(asks);
   }
 
-  if (STATE_BUILTINS.has(name)) return { verdict: combine(asks) };
+  if (STATE_BUILTINS.has(name)) return segmentVerdict(asks);
 
   // Everything else: the argv classifier, with in-workspace absolute paths
   // rewritten relative so `cat /e/repo/src/x` classifies as `cat src/x`.
@@ -1083,7 +1113,7 @@ function classifySegment(
   });
   if (v.kind === "block") return { verdict: v };
   if (v.kind === "ask") asks.push(v);
-  return { verdict: combine(asks) };
+  return segmentVerdict(asks);
 }
 
 /** Native path a `cd` target lands on when it stays inside the workspace;

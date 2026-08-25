@@ -80,6 +80,7 @@ import {
   type DigestModel,
   findBash,
   PersistentShell,
+  probeRepoState,
   registerEditFileRule,
   registerMinimalRules,
   registerRunCommandRule,
@@ -269,6 +270,13 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
       // is picked up on the next dispatch.
       workspaceRoot: wsHolder.current,
       memory,
+      // The dispatch baseline (2026-08-25). INJECTED because the probe needs
+      // git and core cannot import `@herta/tools` — tools already depends on
+      // core, so importing the other way would close a cycle. Without it the
+      // report only ever learns about a path from one of the three editors,
+      // and `bash` is not one of them: on the DEFAULT contract every shell
+      // write, move and delete was invisible to `changedFiles`.
+      repoProbe: (signal) => probeRepoState(wsHolder.current, signal),
     });
 
   return {

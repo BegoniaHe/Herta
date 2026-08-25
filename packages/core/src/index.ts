@@ -31,6 +31,7 @@ export {
 export {
   CodingAgentRuntime,
   type CodingAgentRuntimeDeps,
+  type RepoSnapshot,
   type RunBriefOptions,
 } from "./backend/coding-agent-runtime.js";
 export {

@@ -758,6 +758,117 @@ describe("classifyShellBody — every command in a compound body (audit S4)", ()
   });
 });
 
+/**
+ * Uncommitted work is the one thing the harness cannot get back.
+ *
+ * Every non-read git subcommand used to be `command_ask_vcs`, which is
+ * rule-eligible — so approving ONE `git checkout -b x` with "always allow in
+ * this project" persisted `{argvPrefix:['git','checkout'], anyArgs:true}`, and
+ * that rule then covered `git checkout -- .` with no card, forever
+ * (reproduced end to end, 2026-08-25). The destructive class is neither
+ * rule-eligible nor cacheable, so reclassifying shuts both doors.
+ */
+describe("git shapes that discard work or rewrite history (2026-08-25)", () => {
+  const code = (argv: string[]) => {
+    const v = classifyCommand(argv);
+    return v.kind === "ask" ? v.code : v.kind;
+  };
+  const risk = (argv: string[]) => {
+    const v = classifyCommand(argv);
+    return v.kind === "ask" ? v.risk : v.kind;
+  };
+
+  it("discarding uncommitted work is destructive, not ordinary vcs", () => {
+    for (const argv of [
+      ["git", "checkout", "--", "."],
+      ["git", "checkout", "--", "src/a.ts"],
+      ["git", "checkout", "."],
+      ["git", "switch", "--", "."],
+      ["git", "restore", "."],
+      ["git", "restore", "--worktree", "src/a.ts"],
+      ["git", "stash", "drop"],
+      ["git", "stash", "clear"],
+    ]) {
+      expect(code(argv), argv.join(" ")).toBe("command_ask_destructive");
+      expect(risk(argv), argv.join(" ")).toBe("workspace_destructive");
+    }
+  });
+
+  it("rewriting history or a ref is destructive", () => {
+    for (const argv of [
+      ["git", "commit", "--amend", "-m", "x"],
+      ["git", "rebase", "-i", "HEAD~2"],
+      ["git", "push", "--force"],
+      ["git", "push", "-f", "origin", "main"],
+      ["git", "push", "--force-with-lease", "origin", "main"],
+      ["git", "branch", "-D", "feature/x"],
+      ["git", "branch", "-M", "main"],
+      ["git", "tag", "-d", "v1"],
+      ["git", "update-ref", "-d", "refs/heads/x"],
+      ["git", "reflog", "expire", "--all"],
+      ["git", "filter-branch", "--all"],
+    ]) {
+      expect(code(argv), argv.join(" ")).toBe("command_ask_destructive");
+    }
+  });
+
+  it("the everyday shapes stay vcs, so ADR 0030 rules still derive", () => {
+    for (const argv of [
+      ["git", "add", "-A"],
+      ["git", "commit", "-m", "x"],
+      ["git", "checkout", "-b", "feature/x"],
+      ["git", "switch", "-c", "feature/x"],
+      ["git", "checkout", "main"],
+      ["git", "merge", "main"],
+      ["git", "cherry-pick", "abc123"],
+      ["git", "fetch", "origin"],
+      ["git", "pull"],
+      ["git", "push", "origin", "main"],
+      ["git", "mv", "a", "b"],
+      ["git", "tag", "-a", "v1", "-m", "one"],
+      ["git", "rebase", "--abort"],
+      ["git", "restore", "--staged", "src/a.ts"],
+    ]) {
+      expect(code(argv), argv.join(" ")).toBe("command_ask_vcs");
+    }
+  });
+
+  it("keeps the two shapes deliberately pinned as NON-destructive", () => {
+    // `stash pop` RESTORES work; `branch -d` refuses an unmerged branch.
+    // Both were settled on 2026-08-17 and must not drift into destructive.
+    expect(code(["git", "stash", "pop"])).toBe("command_ask_vcs");
+    expect(code(["git", "stash"])).toBe("command_ask_vcs");
+    expect(code(["git", "branch", "-d", "merged"])).toBe("command_ask_vcs");
+  });
+
+  it("`-c` is a config injection only BEFORE the subcommand", () => {
+    // `git -c core.pager=… diff` names a program for git to run; `git switch
+    // -c branch` creates a branch. Treating both as the config flag turned an
+    // everyday command into an ask.
+    expect(code(["git", "-c", "diff.external=evil", "diff"])).toBe(
+      "command_ask_unknown",
+    );
+    expect(code(["git", "--config-env=x=Y", "log"])).toBe(
+      "command_ask_unknown",
+    );
+    expect(code(["git", "switch", "-c", "feature/x"])).toBe("command_ask_vcs");
+    expect(code(["git", "checkout", "-b", "feature/x"])).toBe(
+      "command_ask_vcs",
+    );
+  });
+
+  it("the read-only subcommands are untouched", () => {
+    for (const argv of [
+      ["git", "status"],
+      ["git", "diff"],
+      ["git", "log", "--oneline"],
+      ["git", "show", "HEAD"],
+    ]) {
+      expect(classifyCommand(argv).kind, argv.join(" ")).toBe("allow");
+    }
+  });
+});
+
 describe("classifyShellBody — exec-wrappers and quoted nesting (2026-08-24)", () => {
   // A wrapper is a program whose job is to run another program. The block tier
   // was reading the WRAPPER's name and concluding nothing catastrophic was

@@ -189,10 +189,20 @@ describe("classifyShellCommand — ask tier", () => {
   it("asks for escalation-prone env assignments (run_command's env denylist)", () => {
     expect(ask("GIT_CONFIG_COUNT=1 git status").code).toBe("command_ask_env");
     expect(ask("export NODE_OPTIONS=--require=x").code).toBe("command_ask_env");
-    expect(
-      ask("GIT_SEQUENCE_EDITOR='sed -i s/pick/edit/' git rebase -i HEAD~2")
-        .code,
-    ).toBe("command_ask_env");
+    // This line does TWO things — it plants a sequence editor AND rewrites
+    // history — and since 2026-08-25 `git rebase` carries the destructive
+    // tier, which outranks the env ask on risk. The top label follows the
+    // higher risk; the env class is still named, via `codes` (the mechanism
+    // added on 2026-08-17 so a chained line does not hide its other asks).
+    const seq = classifyShellCommandDetailed(
+      "GIT_SEQUENCE_EDITOR='sed -i s/pick/edit/' git rebase -i HEAD~2",
+      opts,
+    );
+    expect(seq.verdict.kind).toBe("ask");
+    if (seq.verdict.kind !== "ask") throw new Error();
+    expect(seq.verdict.risk).toBe("workspace_destructive");
+    expect(seq.codes).toContain("command_ask_env");
+    expect(seq.codes).toContain("command_ask_destructive");
   });
 
   it("asks for reads of credential / out-of-workspace paths, incl. via input redirection", () => {

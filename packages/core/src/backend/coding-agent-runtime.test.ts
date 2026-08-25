@@ -1042,3 +1042,103 @@ describe("CodingAgentRuntime.runBrief", () => {
     await first;
   });
 });
+
+/**
+ * `changedByPath` only ever learns about a path from one of the three editors,
+ * and `bash` is not one of them — so on the DEFAULT (minimal) contract every
+ * `sed -i`, heredoc, `mv`, `rm`, formatter and codemod contributed nothing and
+ * a commission that did real work reported `完成 · 0 个文件`. Neither editor
+ * can delete at all, so the highest-blast-radius operation was the one the
+ * attribution was structurally blind to.
+ */
+describe("the dispatch baseline (2026-08-25)", () => {
+  const runWith = async (
+    snapshots: Array<{ head: string | null; dirty: string[] } | null>,
+  ) => {
+    const provider = new FakeProvider({
+      turns: [[{ type: "finish", reason: "stop" }]],
+    });
+    let call = 0;
+    const runtime = new CodingAgentRuntime({
+      sessionId: "s-1",
+      provider,
+      tools: new InMemoryToolRegistry(),
+      permissions: new NoopPermissionEngine(),
+      backendBuilder: new BackendContextBuilder({
+        tools: new InMemoryToolRegistry(),
+      }),
+      bus: new InMemoryEventBus<AgentEvent>(),
+      clock: () => new Date("2026-05-07T00:00:00.000Z"),
+      workspaceRoot: wsRoot,
+      memory: new NoopMemoryManager(),
+      repoProbe: async () => snapshots[call++] ?? null,
+    });
+    return runtime.runBrief(sampleBrief, { userMessages: [{ text: "go" }] });
+  };
+
+  it("credits a shell-written file the editors never reported", async () => {
+    const report = await runWith([
+      { head: "abc", dirty: [] },
+      { head: "abc", dirty: ["src/b.ts", "src/new.ts"] },
+    ]);
+    expect(report.changedFiles.map((f) => f.path).sort()).toEqual([
+      "src/b.ts",
+      "src/new.ts",
+    ]);
+  });
+
+  it("does NOT credit work the user had already done", async () => {
+    // Without the START snapshot, an end-only status reports the user's own
+    // uncommitted work as 板砖's — the same lie inverted.
+    const report = await runWith([
+      { head: "abc", dirty: ["src/mine.ts"] },
+      { head: "abc", dirty: ["src/mine.ts", "src/theirs.ts"] },
+    ]);
+    expect(report.changedFiles.map((f) => f.path)).toEqual(["src/theirs.ts"]);
+    // And it SAYS the carried-in file is outside its reach rather than
+    // silently ignoring it.
+    expect(report.residualRisks.join(" ")).toContain("src/mine.ts");
+  });
+
+  it("refuses to attribute anything when HEAD moved under it", async () => {
+    // A commit or checkout means "dirty vs HEAD" no longer describes the same
+    // tree at both ends, so the difference would be meaningless.
+    const report = await runWith([
+      { head: "abc", dirty: [] },
+      { head: "def", dirty: ["src/x.ts"] },
+    ]);
+    expect(report.changedFiles).toEqual([]);
+    expect(report.residualRisks.join(" ")).toContain("HEAD moved");
+  });
+
+  it("is inert with no probe, and survives one that fails", async () => {
+    const noProbe = await runWith([]); // repoProbe returns null both times
+    expect(noProbe.changedFiles).toEqual([]);
+    expect(noProbe.residualRisks.join(" ")).not.toContain("HEAD moved");
+
+    const provider = new FakeProvider({
+      turns: [[{ type: "finish", reason: "stop" }]],
+    });
+    const runtime = new CodingAgentRuntime({
+      sessionId: "s-1",
+      provider,
+      tools: new InMemoryToolRegistry(),
+      permissions: new NoopPermissionEngine(),
+      backendBuilder: new BackendContextBuilder({
+        tools: new InMemoryToolRegistry(),
+      }),
+      bus: new InMemoryEventBus<AgentEvent>(),
+      clock: () => new Date("2026-05-07T00:00:00.000Z"),
+      workspaceRoot: wsRoot,
+      memory: new NoopMemoryManager(),
+      // Attribution is a nicety; it must never be able to fail a brief.
+      repoProbe: async () => {
+        throw new Error("git exploded");
+      },
+    });
+    const report = await runtime.runBrief(sampleBrief, {
+      userMessages: [{ text: "go" }],
+    });
+    expect(report.changedFiles).toEqual([]);
+  });
+});

@@ -795,6 +795,90 @@ export function splitShellSegments(body: string): string[] {
   return out.map((s) => s.trim()).filter((s) => s.length > 0);
 }
 
+/**
+ * git shapes that DISCARD uncommitted work or REWRITE history, described so
+ * the card says which — or null for the ordinary repository changes, which
+ * stay `command_ask_vcs`.
+ *
+ * Why this is its own tier rather than prose in a prompt. `command_ask_vcs` is
+ * rule-eligible, so approving ONE benign git line with "always allow in this
+ * project" persists `{argvPrefix:['git','checkout'], anyArgs:true}` — and that
+ * rule then covers `git checkout -- .`, which throws away everything the user
+ * has not committed, with no card, in that project, forever. Reproduced end to
+ * end on 2026-08-25. Moving these to `command_ask_destructive` shuts both
+ * persistence doors at once: the class is absent from RULE_ELIGIBLE_ASK_CODES,
+ * and `SessionApprovalCache.isCacheable` only ever caches `workspace_write`.
+ *
+ * Uncommitted work is the one thing the harness cannot get back, and it cannot
+ * tell "precious" from "scratch" — so the ask class is the only place that
+ * judgement can live (D4).
+ *
+ * Deliberately NOT here, and pinned by tests that say so: `git stash pop`
+ * (RESTORES work), `git branch -d` (refuses an unmerged branch), and the
+ * everyday `add`/`commit`/`merge`/`fetch`/`pull`/`mv`/`rm`/`checkout -b`,
+ * so ADR 0030's `git commit:*` rules still derive exactly as before.
+ */
+function destructiveGitShape(argv: readonly string[]): string | null {
+  const sub = argv[1];
+  if (typeof sub !== "string") return null;
+  const rest = argv.slice(2);
+  const has = (...flags: string[]) => rest.some((a) => flags.includes(a));
+
+  // ── discards uncommitted work ──
+  if (sub === "checkout" || sub === "switch") {
+    // Creating or moving to a branch is ordinary; PATH mode overwrites files
+    // from the index or a commit. `--` is the unambiguous marker; a bare `.`
+    // or a path operand with no branch-creating flag is the same thing.
+    const creating = has("-b", "-B", "-c", "-C", "--orphan", "--guess");
+    const pathMode =
+      rest.includes("--") ||
+      (!creating && rest.some((a) => a === "." || a === "*"));
+    if (pathMode) {
+      return `git ${sub} in path mode overwrites uncommitted changes in those paths`;
+    }
+    return null;
+  }
+  if (sub === "restore") {
+    // `--staged` alone only unstages; anything else rewrites the worktree.
+    const stagedOnly = has("--staged", "-S") && !has("--worktree", "-W");
+    if (!stagedOnly) return "git restore overwrites uncommitted changes";
+    return null;
+  }
+  if (sub === "stash" && (rest[0] === "drop" || rest[0] === "clear")) {
+    return `git stash ${rest[0]} deletes stashed work`;
+  }
+
+  // ── rewrites history or a ref ──
+  if (sub === "commit" && has("--amend")) {
+    return "git commit --amend rewrites the last commit";
+  }
+  if (sub === "rebase" && rest[0] !== "--abort" && rest[0] !== "--quit") {
+    return "git rebase rewrites history";
+  }
+  if (sub === "push" && has("-f", "--force")) {
+    return "git push --force overwrites the remote branch";
+  }
+  if (sub === "push" && rest.some((a) => a.startsWith("--force-with-lease"))) {
+    return "git push --force-with-lease overwrites the remote branch";
+  }
+  if (sub === "branch" && has("-D", "-M", "--force")) {
+    return "git branch -D/-M force-deletes or force-renames a branch";
+  }
+  if (sub === "tag" && has("-d", "--delete", "-f", "--force")) {
+    return "git tag -d/-f deletes or moves a tag";
+  }
+  if (sub === "update-ref" && has("-d", "--delete")) {
+    return "git update-ref -d deletes a ref";
+  }
+  if (sub === "reflog" && rest[0] === "expire") {
+    return "git reflog expire discards the recovery log";
+  }
+  if (sub === "filter-branch" || sub === "filter-repo") {
+    return `git ${sub} rewrites the whole history`;
+  }
+  return null;
+}
+
 /** How many interpreter layers the block scan will unwrap before it refuses
  *  to keep guessing. */
 const MAX_REENTRY_DEPTH = 3;
@@ -847,8 +931,6 @@ const ESCAPE_HATCH_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map<
       "--ext-diff",
       "--textconv",
       "--no-textconv",
-      "-c", // `git -c diff.external=… diff` — config on the command line
-      "--config-env",
     ]),
   ],
   ["rg", new Set(["--pre", "--hostname-bin"])],
@@ -953,12 +1035,43 @@ const ARG_INDEPENDENT_PROGRAMS: ReadonlySet<string> = new Set([
   "tty",
 ]);
 
+/**
+ * git's CONFIG flags, which set arbitrary repo config on the command line and
+ * can therefore name a program for git to run.
+ *
+ * They only mean that BEFORE the subcommand — `git -c k=v diff`. After it they
+ * belong to the subcommand and mean something else entirely, which is how a
+ * first pass turned the everyday `git switch -c feature/x` into an ask.
+ */
+const GIT_CONFIG_FLAGS: ReadonlySet<string> = new Set([
+  "-c",
+  "--config-env",
+  "--exec-path",
+]);
+
+/** A git config flag used BEFORE the subcommand, or null. */
+function gitConfigFlag(argv: readonly string[]): string | null {
+  for (let i = 1; i < argv.length; i += 1) {
+    const a = argv[i] as string;
+    if (!a.startsWith("-")) return null; // reached the subcommand
+    if (GIT_CONFIG_FLAGS.has(a)) return a;
+    const eq = a.indexOf("=");
+    if (eq > 0 && GIT_CONFIG_FLAGS.has(a.slice(0, eq))) return a.slice(0, eq);
+  }
+  return null;
+}
+
 /** The escape-hatch flag an argv carries for its own program, or null. */
 function escapeHatchFlag(
   argv: readonly string[],
   shell: boolean,
 ): string | null {
-  const flags = ESCAPE_HATCH_FLAGS.get(interpreterName(argv[0] as string));
+  const program = interpreterName(argv[0] as string);
+  if (program === "git") {
+    const cfg = gitConfigFlag(argv);
+    if (cfg !== null) return cfg;
+  }
+  const flags = ESCAPE_HATCH_FLAGS.get(program);
   if (flags === undefined) return null;
   // A deny-list read against literal tokens cannot survive expansion: bash
   // turns `${x:--r}` and `{-O./pager.sh,needle}` into the very flags this
@@ -1124,6 +1237,17 @@ export function classifyCommand(
       code: "command_ask_destructive",
       reason: "git clean -f",
     };
+  }
+  if (id === "git") {
+    const destructiveGit = destructiveGitShape(argv);
+    if (destructiveGit !== null) {
+      return {
+        kind: "ask",
+        risk: "workspace_destructive",
+        code: "command_ask_destructive",
+        reason: destructiveGit,
+      };
+    }
   }
   if (id === "chmod") {
     return {

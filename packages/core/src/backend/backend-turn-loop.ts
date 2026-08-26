@@ -397,6 +397,10 @@ export async function* runBackendTurnLoop(
                 id: call.id,
                 decision: "blocked",
                 tool: call.tool,
+                // Code + refused-risk ride along (2026-08-26) so the status
+                // gate can tell a withheld read from a refused mutation.
+                code,
+                ...(decision.risk !== undefined ? { risk: decision.risk } : {}),
               });
               outcomes.set(call.id, {
                 ok: false,
@@ -543,6 +547,10 @@ export async function* runBackendTurnLoop(
             id: call.id,
             decision: "blocked",
             tool: call.tool,
+            // Code + refused-risk ride along (2026-08-26) so the status
+            // gate can tell a withheld read from a refused mutation.
+            code,
+            ...(decision.risk !== undefined ? { risk: decision.risk } : {}),
           });
           const result: ToolResult = {
             ok: false,

@@ -77,6 +77,12 @@ export type AgentEvent =
        *  the tool-call id and `tool` carries its own context. */
       decision: "allow" | "deny" | "blocked";
       tool?: string;
+      /** blocked only (2026-08-26): the deny verdict's code and refused-risk
+       *  tier, threaded so the status gate can tell a withheld READ (or a
+       *  malformed call) from a refused mutation — the rule always had both
+       *  in hand and used to drop them here. */
+      code?: string;
+      risk?: RiskLevel;
     }
   | { type: "patch.preview"; layer: EventLayer; diff: string; files: string[] }
   | { type: "verification.started"; layer: EventLayer; command: string }

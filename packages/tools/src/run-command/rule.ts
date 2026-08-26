@@ -51,10 +51,14 @@ export function makeRunCommandRule(): PermissionRule {
         argv,
       );
       if (readerDenial !== null) {
+        // A refused READ (2026-08-26, same as the bash rule's reader guard):
+        // withheld information, not a refused mutation — must not cap the
+        // brief's status.
         return {
           kind: "deny",
           code: readerDenial.code,
           reason: readerDenial.message,
+          risk: "workspace_read",
         };
       }
       return { kind: "allow" };

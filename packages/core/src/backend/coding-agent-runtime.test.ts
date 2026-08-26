@@ -825,6 +825,240 @@ describe("CodingAgentRuntime.runBrief", () => {
     expect(blocked?.tool).toBe("run_command");
   });
 
+  it("a WITHHELD READ does not cap the status (git-dev lab 2026-08-26)", async () => {
+    // The reader guard denying a `.git` / `.herta` probe the model then
+    // routed around capped fully completed briefs at 部分完成. The status
+    // gate's intent has always named MUTATIONS; a read-tier rule-deny now
+    // says so on the event and stays out of the count.
+    const provider = new FakeProvider({
+      turns: [
+        [
+          {
+            type: "tool-call-request",
+            call: {
+              id: "tc1",
+              tool: "write_new_file",
+              input: { path: "src/x.ts" },
+            },
+          },
+          { type: "finish", reason: "tool_calls" },
+        ],
+        [
+          {
+            type: "tool-call-request",
+            call: {
+              id: "tc2",
+              tool: "run_command",
+              input: { argv: ["ls", ".git"] },
+            },
+          },
+          { type: "finish", reason: "tool_calls" },
+        ],
+        [
+          { type: "text-delta", text: "done without it" },
+          { type: "finish", reason: "stop" },
+        ],
+      ],
+    });
+    const tools = new InMemoryToolRegistry();
+    tools.register({
+      name: "write_new_file",
+      schema: () => ({
+        name: "write_new_file",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
+      }),
+      run: async () => ({
+        ok: true,
+        summary: "wrote src/x.ts",
+        data: { relPath: "src/x.ts", created: true },
+      }),
+    });
+    tools.register({
+      name: "run_command",
+      schema: () => ({
+        name: "run_command",
+        description: "run",
+        inputSchema: { type: "object", properties: {} },
+      }),
+      run: async () => ({ ok: true, summary: "should never run" }),
+    });
+    const readDenyingEngine: PermissionEngine = {
+      check: async (call) =>
+        call.tool === "run_command"
+          ? {
+              kind: "deny",
+              reason: "read-only command targets ./.git",
+              code: "path_denied",
+              risk: "workspace_read",
+            }
+          : { kind: "allow" },
+      resolve: () => {},
+    };
+    const runtime = new CodingAgentRuntime({
+      sessionId: "s-1",
+      provider,
+      tools,
+      permissions: readDenyingEngine,
+      backendBuilder: new BackendContextBuilder({ tools }),
+      bus: new InMemoryEventBus<AgentEvent>(),
+      clock: () => new Date("2026-05-07T00:00:00.000Z"),
+      workspaceRoot: wsRoot,
+      memory: new NoopMemoryManager(),
+    });
+
+    const report = await runtime.runBrief(sampleBrief);
+
+    // The refusal still reaches the report's permission trail…
+    expect(report.permissions.some((p) => p.decision === "blocked")).toBe(true);
+    // …but a withheld read is not a refused mutation: the run completed.
+    expect(report.status).toBe("completed");
+  });
+
+  it("an invalid_input rule-deny does not cap the status — malformed, not refused", async () => {
+    // The study's L3 finding, reproduced shape: a bad argument shape is
+    // retried, not a permission the harness withheld.
+    const provider = new FakeProvider({
+      turns: [
+        [
+          {
+            type: "tool-call-request",
+            call: {
+              id: "tc1",
+              tool: "write_new_file",
+              input: { path: "src/x.ts" },
+            },
+          },
+          { type: "finish", reason: "tool_calls" },
+        ],
+        [
+          {
+            type: "tool-call-request",
+            call: { id: "tc2", tool: "run_command", input: { argv: 42 } },
+          },
+          { type: "finish", reason: "tool_calls" },
+        ],
+        [
+          { type: "text-delta", text: "recovered" },
+          { type: "finish", reason: "stop" },
+        ],
+      ],
+    });
+    const tools = new InMemoryToolRegistry();
+    tools.register({
+      name: "write_new_file",
+      schema: () => ({
+        name: "write_new_file",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
+      }),
+      run: async () => ({
+        ok: true,
+        summary: "wrote src/x.ts",
+        data: { relPath: "src/x.ts", created: true },
+      }),
+    });
+    tools.register({
+      name: "run_command",
+      schema: () => ({
+        name: "run_command",
+        description: "run",
+        inputSchema: { type: "object", properties: {} },
+      }),
+      run: async () => ({ ok: true, summary: "should never run" }),
+    });
+    const invalidInputEngine: PermissionEngine = {
+      check: async (call) =>
+        call.tool === "run_command"
+          ? {
+              kind: "deny",
+              reason: "argv must be an array",
+              code: "invalid_input",
+            }
+          : { kind: "allow" },
+      resolve: () => {},
+    };
+    const runtime = new CodingAgentRuntime({
+      sessionId: "s-1",
+      provider,
+      tools,
+      permissions: invalidInputEngine,
+      backendBuilder: new BackendContextBuilder({ tools }),
+      bus: new InMemoryEventBus<AgentEvent>(),
+      clock: () => new Date("2026-05-07T00:00:00.000Z"),
+      workspaceRoot: wsRoot,
+      memory: new NoopMemoryManager(),
+    });
+
+    const report = await runtime.runBrief(sampleBrief);
+    expect(report.status).toBe("completed");
+  });
+
+  it("a USER-denied read-only ask does not cap the status either", async () => {
+    // Same mutation-only intent on the user path: the request's own risk
+    // tier is already in hand via permission.requested.
+    const provider = new FakeProvider({
+      turns: [
+        [
+          {
+            type: "tool-call-request",
+            call: { id: "tc1", tool: "read_file", input: { path: "a.ts" } },
+          },
+          { type: "finish", reason: "tool_calls" },
+        ],
+        [
+          { type: "text-delta", text: "done" },
+          { type: "finish", reason: "stop" },
+        ],
+      ],
+    });
+    const tools = new InMemoryToolRegistry();
+    tools.register({
+      name: "read_file",
+      schema: () => ({
+        name: "read_file",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+      }),
+      run: async () => ({ ok: true, summary: "read 1 file" }),
+    });
+    // A REAL user-path deny: the engine returns an ask whose decision
+    // resolves "deny", and the LOOP emits requested + resolved — so the
+    // request's own risk tier is what the status gate sees.
+    const denyingReadEngine = {
+      check: async (call: { id: string; tool: string }) =>
+        call.tool !== "read_file"
+          ? { kind: "allow" as const }
+          : {
+              kind: "ask" as const,
+              request: {
+                id: "perm-r",
+                call,
+                risk: "workspace_read",
+                reason: "recursive read",
+              },
+              decision: Promise.resolve("deny" as const),
+            },
+    } as unknown as PermissionEngine;
+    const runtime = new CodingAgentRuntime({
+      sessionId: "s-1",
+      provider,
+      tools,
+      permissions: denyingReadEngine,
+      backendBuilder: new BackendContextBuilder({ tools }),
+      bus: new InMemoryEventBus<AgentEvent>(),
+      clock: () => new Date("2026-05-07T00:00:00.000Z"),
+      workspaceRoot: wsRoot,
+      memory: new NoopMemoryManager(),
+    });
+
+    const report = await runtime.runBrief(sampleBrief);
+    // No mutation was refused and no ok-evidence exists — a read-only run
+    // that was declined lands at partial via the ordinary evidence route,
+    // NOT at blocked.
+    expect(report.status).not.toBe("blocked");
+  });
+
   it("populates report.tests[] when run_command emits a testRun", async () => {
     const provider = new FakeProvider({
       turns: [
@@ -1054,6 +1288,13 @@ describe("CodingAgentRuntime.runBrief", () => {
 describe("the dispatch baseline (2026-08-25)", () => {
   const runWith = async (
     snapshots: Array<{ head: string | null; dirty: string[] } | null>,
+    rangeDiff?: (
+      fromHead: string,
+      toHead: string,
+    ) => Promise<
+      | readonly { path: string; kind: "created" | "modified" | "deleted" }[]
+      | null
+    >,
   ) => {
     const provider = new FakeProvider({
       turns: [[{ type: "finish", reason: "stop" }]],
@@ -1072,6 +1313,7 @@ describe("the dispatch baseline (2026-08-25)", () => {
       workspaceRoot: wsRoot,
       memory: new NoopMemoryManager(),
       repoProbe: async () => snapshots[call++] ?? null,
+      ...(rangeDiff !== undefined ? { repoRangeDiff: rangeDiff } : {}),
     });
     return runtime.runBrief(sampleBrief, { userMessages: [{ text: "go" }] });
   };
@@ -1100,13 +1342,70 @@ describe("the dispatch baseline (2026-08-25)", () => {
     expect(report.residualRisks.join(" ")).toContain("src/mine.ts");
   });
 
-  it("refuses to attribute anything when HEAD moved under it", async () => {
+  it("refuses to attribute anything when HEAD moved and no range differ is wired", async () => {
     // A commit or checkout means "dirty vs HEAD" no longer describes the same
     // tree at both ends, so the difference would be meaningless.
     const report = await runWith([
       { head: "abc", dirty: [] },
       { head: "def", dirty: ["src/x.ts"] },
     ]);
+    expect(report.changedFiles).toEqual([]);
+    expect(report.residualRisks.join(" ")).toContain("HEAD moved");
+  });
+
+  it("attributes the committed range when HEAD moved FORWARD (2026-08-26)", async () => {
+    // The git-dev lab: the blanket refusal above fired on every brief that
+    // ended in a commit — the normal ending of a git brief — so shell writes
+    // vanished from changedFiles the moment the model committed them. A new
+    // head that descends from the old one is this dispatch's own work.
+    const report = await runWith(
+      [
+        { head: "abc", dirty: ["pre.ts"] },
+        { head: "def", dirty: ["pre.ts", "loose.ts"] },
+      ],
+      async (from, to) =>
+        from === "abc" && to === "def"
+          ? [
+              { path: "src/a.ts", kind: "modified" },
+              { path: "src/new.ts", kind: "created" },
+              // Pre-dirty at brief start: partly the user's edit even though
+              // this dispatch committed it — must NOT be attributed.
+              { path: "pre.ts", kind: "modified" },
+            ]
+          : null,
+    );
+    const byPath = new Map(report.changedFiles.map((f) => [f.path, f.kind]));
+    expect(byPath.get("src/a.ts")).toBe("modified");
+    expect(byPath.get("src/new.ts")).toBe("created");
+    // The still-uncommitted delta attributes exactly as in the same-head case.
+    expect(byPath.get("loose.ts")).toBe("modified");
+    expect(byPath.has("pre.ts")).toBe(false);
+    expect(report.residualRisks.join(" ")).toContain("pre.ts");
+    expect(report.residualRisks.join(" ")).not.toContain("HEAD moved");
+  });
+
+  it("keeps the honest refusal when the range is not attributable (rebase/amend)", async () => {
+    const report = await runWith(
+      [
+        { head: "abc", dirty: [] },
+        { head: "def", dirty: [] },
+      ],
+      async () => null,
+    );
+    expect(report.changedFiles).toEqual([]);
+    expect(report.residualRisks.join(" ")).toContain("HEAD moved");
+  });
+
+  it("survives a range differ that throws — attribution can never fail a brief", async () => {
+    const report = await runWith(
+      [
+        { head: "abc", dirty: [] },
+        { head: "def", dirty: [] },
+      ],
+      async () => {
+        throw new Error("git exploded");
+      },
+    );
     expect(report.changedFiles).toEqual([]);
     expect(report.residualRisks.join(" ")).toContain("HEAD moved");
   });

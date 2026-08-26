@@ -72,6 +72,24 @@ export interface CodingAgentRuntimeDeps {
    * simply falls back to the editors' own harvest, exactly as before.
    */
   repoProbe?: (signal?: AbortSignal) => Promise<RepoSnapshot | null>;
+  /**
+   * The files a committed range `fromHead..toHead` touched, or null when the
+   * range cannot be attributed (toHead does not descend from fromHead —
+   * rebase/amend/reset — or git could not answer). Injected for the same
+   * reason as `repoProbe`.
+   *
+   * Added 2026-08-26 (git-dev lab): the probe's HEAD-moved refusal fired on
+   * every brief that ended in a commit — the NORMAL ending of a git brief —
+   * so shell-written files vanished from `changedFiles` all over again the
+   * moment the model committed them. A new HEAD that DESCENDS from the old
+   * one is this dispatch's own forward work (commits, merges) and is
+   * attributable; anything else keeps the honest refusal.
+   */
+  repoRangeDiff?: (
+    fromHead: string,
+    toHead: string,
+    signal?: AbortSignal,
+  ) => Promise<readonly RepoRangeFile[] | null>;
 }
 
 /** What the workspace's VCS looked like at one instant. */
@@ -81,6 +99,12 @@ export interface RepoSnapshot {
   /** Workspace-relative paths that differ from HEAD (staged, unstaged or
    *  untracked). */
   readonly dirty: readonly string[];
+}
+
+/** One file a committed range touched (see `repoRangeDiff`). */
+export interface RepoRangeFile {
+  readonly path: string;
+  readonly kind: "created" | "modified" | "deleted";
 }
 
 export interface RunBriefOptions {
@@ -138,6 +162,22 @@ export class CodingAgentRuntime {
     }
   }
 
+  /** The committed range's files, or null when unattributable (non-descendant
+   *  move, no injected differ, git failure). Same never-throws contract as
+   *  `probeRepo` and for the same reason. */
+  private async rangeDiff(
+    fromHead: string,
+    toHead: string,
+    signal?: AbortSignal,
+  ): Promise<readonly RepoRangeFile[] | null> {
+    if (this.deps.repoRangeDiff === undefined) return null;
+    try {
+      return await this.deps.repoRangeDiff(fromHead, toHead, signal);
+    } catch {
+      return null;
+    }
+  }
+
   async runBrief(
     brief: HertaToAgentBrief,
     opts: RunBriefOptions = {},
@@ -183,9 +223,17 @@ export class CodingAgentRuntime {
       // - okEvidence: only successful tool results argue for "completed" —
       //   a run whose sole evidence is `denied`/failures must not claim it.
       // - deniedPermissions: makes the `blocked` status reachable.
+      // "deleted" only ever arrives from the committed-range attribution
+      // (2026-08-26) — no editor can delete, which is exactly why the range
+      // matters: the highest-blast-radius operation was the one the report
+      // was structurally blind to.
       const changedByPath = new Map<
         string,
-        { path: string; kind: "created" | "modified"; diffSummary: string }
+        {
+          path: string;
+          kind: "created" | "modified" | "deleted";
+          diffSummary: string;
+        }
       >();
       let okEvidence = 0;
       let deniedPermissions = 0;
@@ -330,9 +378,21 @@ export class CodingAgentRuntime {
             });
             // Blocked counts like denied for the status gate (finding 6): a
             // run whose mutations were refused — by the user OR by policy —
-            // must not report 完成.
+            // must not report 完成. The intent has always named MUTATIONS
+            // (git-dev lab 2026-08-26): a withheld READ (the reader guard
+            // refusing a `.git`/`.herta` probe the model then routed around)
+            // and a malformed call (`invalid_input` — bad argument shape,
+            // retried, not a refusal of anything) capped fully completed
+            // briefs at 部分完成. A user deny carries its risk on the
+            // request; a rule-deny now carries it on the event; anything
+            // without a stated risk still counts, conservatively.
             if (event.decision === "deny" || event.decision === "blocked") {
-              deniedPermissions += 1;
+              const refusedRisk =
+                event.decision === "deny" ? pending?.risk : event.risk;
+              const withheldRead = refusedRisk === "workspace_read";
+              const malformed =
+                event.decision === "blocked" && event.code === "invalid_input";
+              if (!withheldRead && !malformed) deniedPermissions += 1;
             }
             pendingPermissions.delete(event.id);
             break;
@@ -408,11 +468,38 @@ export class CodingAgentRuntime {
       }
 
       // Attribute anything the editors did not report — shell writes, moves,
-      // deletes — by diffing the workspace against the START snapshot.
+      // deletes — by diffing the workspace against the START snapshot. When
+      // HEAD moved FORWARD (the new head descends from the old one — 板砖
+      // committed or merged, the normal ending of a git brief), the committed
+      // range is this dispatch's own work and attributes too (2026-08-26; the
+      // blanket refusal below used to fire on nearly every git brief and
+      // swallowed shell-written files the moment the model committed them).
       if (baseline !== null) {
         const after = await this.probeRepo(opts.signal);
-        if (after !== null && after.head === baseline.head) {
+        const range =
+          after === null ||
+          after.head === baseline.head ||
+          baseline.head === null ||
+          after.head === null
+            ? null
+            : await this.rangeDiff(baseline.head, after.head, opts.signal);
+        if (
+          after !== null &&
+          (after.head === baseline.head || range !== null)
+        ) {
           const wasDirty = new Set(baseline.dirty);
+          for (const f of range ?? []) {
+            // Already dirty before the brief: partly the user's edit, even
+            // if this dispatch committed it — outside this mechanism's
+            // reach, and the carried note below says so.
+            if (wasDirty.has(f.path)) continue;
+            if (changedByPath.has(f.path)) continue;
+            changedByPath.set(f.path, {
+              path: f.path,
+              kind: f.kind,
+              diffSummary: "changed and committed during this dispatch",
+            });
+          }
           for (const path of after.dirty) {
             // Already dirty before the brief: outside this mechanism's reach.
             // The report says so rather than claiming it.
@@ -431,9 +518,10 @@ export class CodingAgentRuntime {
             );
           }
         } else if (after !== null && after.head !== baseline.head) {
-          // A commit (or checkout) moved HEAD, so "dirty vs HEAD" no longer
-          // describes the same tree at both ends. Say that instead of
-          // computing a difference that means nothing.
+          // HEAD moved somewhere the old head cannot reach (rebase, amend,
+          // reset, history rewrite) — or the range could not be read. "Dirty
+          // vs HEAD" no longer describes the same tree at both ends; say
+          // that instead of computing a difference that means nothing.
           builder.addResidualRisk(
             "HEAD moved during this dispatch, so file changes could not be attributed by comparing against the starting commit",
           );

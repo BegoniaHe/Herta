@@ -149,7 +149,15 @@ export function makeBashRule(deps: BashRuleDeps): PermissionRule {
         peelReaderHead(words),
       );
       if (denial !== null) {
-        return { kind: "deny", code: denial.code, reason: denial.message };
+        // A refused READ (2026-08-26): the reader guard only runs on
+        // read-classified segments, so this deny withholds information, not
+        // a mutation — the status gate must not cap a completed brief on it.
+        return {
+          kind: "deny",
+          code: denial.code,
+          reason: denial.message,
+          risk: "workspace_read",
+        };
       }
     }
     return { kind: "allow" };

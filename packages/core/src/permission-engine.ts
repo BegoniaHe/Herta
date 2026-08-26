@@ -50,6 +50,13 @@ export type RuleVerdict =
        *  the loop sends verbatim instead of `failed: <code>` + JSON. Absent
        *  → the loop's default rendering (unchanged for every other rule). */
       modelText?: string;
+      /** The tier of what was REFUSED, when the rule can say (2026-08-26).
+       *  A `workspace_read` refusal is a withheld read, not a refused
+       *  mutation, and must not cap the brief's status — the git-dev lab
+       *  caught the reader guard's `.git`/`.herta` denials capping fully
+       *  completed briefs at 部分完成. Absent → the status gate stays
+       *  conservative and counts the denial. */
+      risk?: RiskLevel;
     };
 
 export type PermissionRule = (
@@ -71,7 +78,15 @@ export type PermissionDecision =
       request: PermissionRequest;
       decision: Promise<"allow" | "deny">;
     }
-  | { kind: "deny"; reason: string; code?: string; modelText?: string };
+  | {
+      kind: "deny";
+      reason: string;
+      code?: string;
+      modelText?: string;
+      /** See RuleVerdict deny — threaded so the status gate can tell a
+       *  withheld read from a refused mutation. */
+      risk?: RiskLevel;
+    };
 
 export interface PermissionEngine {
   check(call: ToolCallRequest, ctx: ToolContext): Promise<PermissionDecision>;
@@ -123,6 +138,7 @@ export class RulePermissionEngine implements PermissionEngine {
         ...(verdict.modelText !== undefined
           ? { modelText: verdict.modelText }
           : {}),
+        ...(verdict.risk !== undefined ? { risk: verdict.risk } : {}),
       };
     }
 

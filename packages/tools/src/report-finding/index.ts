@@ -67,7 +67,7 @@ export function reportFindingTool(opts: ReportFindingToolOpts = {}): HertaTool {
       return {
         name: "report_finding",
         description:
-          "Record ONE conclusion of your analysis so it reaches the record and the final report — your final message text is NOT shown to anyone. `claim`: one sentence stating what you found. `cites`: 1–6 locations that support it, each `path`, `path:line` or `path:from-to` (workspace-relative; attachments and .herta/logs allowed); every cite is checked to exist. Call once per conclusion; consolidate rather than exceed the per-brief cap. Use for explore/analysis briefs; not needed when the deliverable is a file change.",
+          'Record ONE conclusion of your analysis so it reaches the record and the final report — your final message text is NOT shown to anyone. `claim`: one sentence stating what you found. `cites`: 1–6 FILE locations that support it, each `path`, `path:line` or `path:from-to` (workspace-relative; attachments and .herta/logs allowed); every cite is checked to exist. Example: {claim: "remove() splices by id, not index", cites: ["src/store.mjs:20-22", "README.md"]}. A commit hash, command, or prose is NOT a cite — name those inside the claim and cite the files they concern. Call once per conclusion; consolidate rather than exceed the per-brief cap. Use for explore/analysis briefs; not needed when the deliverable is a file change.',
         inputSchema: reportFindingJsonSchema,
       };
     },

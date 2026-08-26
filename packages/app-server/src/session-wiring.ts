@@ -78,6 +78,7 @@ import {
   createMinimalTools,
   createMvpTools,
   type DigestModel,
+  diffCommittedRange,
   findBash,
   PersistentShell,
   probeRepoState,
@@ -277,6 +278,11 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
       // and `bash` is not one of them: on the DEFAULT contract every shell
       // write, move and delete was invisible to `changedFiles`.
       repoProbe: (signal) => probeRepoState(wsHolder.current, signal),
+      // The baseline's second half (2026-08-26): attribute the committed
+      // range when this dispatch moved HEAD forward, instead of refusing
+      // attribution on every brief that ends in a commit.
+      repoRangeDiff: (from, to, signal) =>
+        diffCommittedRange(wsHolder.current, from, to, signal),
     });
 
   return {

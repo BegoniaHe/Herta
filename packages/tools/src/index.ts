@@ -82,7 +82,8 @@ export {
 export type { EditFileInput } from "./edit-file/schema.js";
 export type { ToolErrorCode } from "./errors.js";
 export { TOOL_ERROR_CODES } from "./errors.js";
-export { probeRepoState } from "./git/repo-probe.js";
+export type { RangeChangedFile } from "./git/repo-probe.js";
+export { diffCommittedRange, probeRepoState } from "./git/repo-probe.js";
 export type { GitDiffData, GitDiffFile } from "./git-diff/index.js";
 export { gitDiffTool } from "./git-diff/index.js";
 export type { GitDiffInput } from "./git-diff/schema.js";

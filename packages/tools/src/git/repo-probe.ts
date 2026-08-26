@@ -34,6 +34,95 @@ export async function probeRepoState(
   }
 }
 
+/** One file a committed range touched. Mirrors core's `RepoRangeFile`. */
+export interface RangeChangedFile {
+  readonly path: string;
+  readonly kind: "created" | "modified" | "deleted";
+}
+
+/** Both ends come from OUR OWN `rev-parse HEAD`, but the guard costs nothing
+ *  and keeps this function safe to call with anything: a non-hex "head"
+ *  never reaches a git argv. */
+const COMMIT_ID = /^[0-9a-f]{4,64}$/;
+
+/**
+ * The files the committed range `fromHead..toHead` touched — the dispatch
+ * baseline's second half (2026-08-26). Answers ONLY when `toHead` DESCENDS
+ * from `fromHead` (this dispatch committed or merged forward, so the range
+ * is its own work); a rebase/amend/reset — where the old head is no longer
+ * an ancestor — returns null and the runtime keeps its honest refusal note.
+ *
+ * `--no-renames` on purpose: a rename reports as delete + create, which is
+ * exactly what happened to the tree, and spares the parser the Rxxx
+ * old\0new shape. Same null-not-throw contract as `probeRepoState`.
+ */
+export async function diffCommittedRange(
+  workspaceRoot: string,
+  fromHead: string,
+  toHead: string,
+  signal?: AbortSignal,
+): Promise<readonly RangeChangedFile[] | null> {
+  try {
+    return await rangeDiff(workspaceRoot, fromHead, toHead, signal);
+  } catch {
+    return null;
+  }
+}
+
+async function rangeDiff(
+  workspaceRoot: string,
+  fromHead: string,
+  toHead: string,
+  signal?: AbortSignal,
+): Promise<readonly RangeChangedFile[] | null> {
+  if (!COMMIT_ID.test(fromHead) || !COMMIT_ID.test(toHead)) return null;
+  const sig = signal ?? new AbortController().signal;
+  const opts = { timeoutMs: 5_000 } as const;
+
+  // Exit 1 is an ANSWER (not an ancestor → not attributable), not a failure.
+  const ancestor = await spawnGit(
+    workspaceRoot,
+    hardenedGitArgs(["merge-base", "--is-ancestor", fromHead, toHead]),
+    sig,
+    { ...opts, allowExitCodes: [1] },
+  );
+  if (!ancestor.ok || ancestor.exitCode !== 0) return null;
+
+  const diff = await spawnGit(
+    workspaceRoot,
+    hardenedGitArgs([
+      "diff",
+      "--name-status",
+      "-z",
+      "--no-renames",
+      fromHead,
+      toHead,
+      "--",
+    ]),
+    sig,
+    opts,
+  );
+  if (!diff.ok) return null;
+
+  const fields = diff.stdout.split("\0");
+  const out: RangeChangedFile[] = [];
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const status = fields[i] ?? "";
+    const path = fields[i + 1] ?? "";
+    if (status.length === 0 || path.length === 0) continue;
+    out.push({
+      path,
+      kind:
+        status[0] === "A"
+          ? "created"
+          : status[0] === "D"
+            ? "deleted"
+            : "modified",
+    });
+  }
+  return out;
+}
+
 async function probe(
   workspaceRoot: string,
   signal?: AbortSignal,

@@ -4401,7 +4401,9 @@ button.session-item__badge--dismiss {
 }
 /* Measured max-height reveal, same as the activity history panel: the px
    target is set by the JS in ActivityStep (a transition needs a length, and
-   `auto` is not one). */
+   `auto` is not one). Shared by the folded patch and the evidence-detail
+   pane (2026-08-26 — the 明细 used to pop with no animation while the diff
+   beside it eased). */
 .activity-step__fold {
   overflow: hidden;
   max-height: 0;

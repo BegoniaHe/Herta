@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { type RefObject, useLayoutEffect, useRef, useState } from "react";
 import type { TFn } from "../../i18n/LocaleProvider.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import { CollapsibleBody } from "./CollapsibleBody.js";
@@ -75,6 +75,24 @@ export interface ActivityStepProps {
   readonly at?: string;
 }
 
+/**
+ * Measured max-height reveal, same as the activity history panel: a px
+ * target is the only way to transition to `auto`, and the scroller's
+ * overflow-anchor:none keeps the growth pointing downward. Shared by the
+ * folded patch and the evidence-detail pane (2026-08-26 — the detail used
+ * to pop with no animation while the diff beside it eased); both render a
+ * `.activity-step__fold` wrapper, which carries the transition.
+ */
+function useMeasuredFold(open: boolean): RefObject<HTMLDivElement> {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el === null) return;
+    el.style.maxHeight = open ? `${el.scrollHeight}px` : "0px";
+  }, [open]);
+  return ref;
+}
+
 /** One row in an activity block: a verb icon + the (collapsible) body. */
 export function ActivityStep(props: ActivityStepProps): JSX.Element {
   const icon = props.icon ?? stepIcon(props.body);
@@ -86,21 +104,18 @@ export function ActivityStep(props: ActivityStepProps): JSX.Element {
   const [detailOpen, setDetailOpen] = useState(false);
   const unpin = useUnpinConversation();
   const hasDetail = props.detail !== undefined && props.detail.length > 0;
+  // Mount the detail on FIRST open and keep it mounted, so collapsing
+  // animates out instead of vanishing — the same lifecycle as the patch
+  // fold below (an unopened pane costs nothing).
+  const [detailMounted, setDetailMounted] = useState(false);
+  const detailFoldRef = useMeasuredFold(detailOpen);
   const patch = props.patch;
   const [patchOpen, setPatchOpen] = useState(false);
   // Mount the diff on FIRST open and keep it mounted, so collapsing animates
   // out instead of vanishing. A closed row costs nothing until it is opened —
   // a long dispatch can carry dozens of patches, each thousands of lines.
   const [patchMounted, setPatchMounted] = useState(false);
-  const foldRef = useRef<HTMLDivElement | null>(null);
-  useLayoutEffect(() => {
-    const el = foldRef.current;
-    if (el === null) return;
-    // Same measured max-height reveal as the activity history panel: a px
-    // target is the only way to transition to `auto`, and the scroller's
-    // overflow-anchor:none keeps the growth pointing downward.
-    el.style.maxHeight = patchOpen ? `${el.scrollHeight}px` : "0px";
-  }, [patchOpen]);
+  const foldRef = useMeasuredFold(patchOpen);
   return (
     <div
       className={`activity-step${props.active ? " is-active" : ""}${
@@ -233,7 +248,10 @@ export function ActivityStep(props: ActivityStepProps): JSX.Element {
               // reaches the scroll handler as a plain "reader left the
               // bottom" — lighting the jump chip nobody asked for and
               // disarming the next send's travel (owner 2026-08-10).
-              if (!detailOpen) unpin();
+              if (!detailOpen) {
+                unpin();
+                setDetailMounted(true);
+              }
               setDetailOpen((v) => !v);
             }}
           >
@@ -242,8 +260,17 @@ export function ActivityStep(props: ActivityStepProps): JSX.Element {
             )}
           </button>
         )}
-        {hasDetail && detailOpen && (
-          <pre className="activity-step__detail">{props.detail}</pre>
+        {hasDetail && (
+          // The same animated fold as the patch above — the detail pane used
+          // to mount/unmount bare, popping open next to a diff that eased.
+          <div
+            ref={detailFoldRef}
+            className={`activity-step__fold${detailOpen ? " is-open" : ""}`}
+          >
+            {detailMounted && (
+              <pre className="activity-step__detail">{props.detail}</pre>
+            )}
+          </div>
         )}
       </div>
     </div>

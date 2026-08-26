@@ -98,6 +98,31 @@ describe("ActivityStep", () => {
     ).toContain("hello world");
   });
 
+  it("the detail pane rides the same animated fold as the patch (2026-08-26)", () => {
+    // It used to mount/unmount bare — popping open and vanishing next to a
+    // diff that eased through .activity-step__fold. Same wrapper now: open
+    // marks the fold, close keeps the pane mounted so the collapse can
+    // animate out.
+    const { container } = renderWithLocale(
+      <ActivityStep
+        body="↳ exit 0 · 3 lines"
+        t={tEn}
+        active={false}
+        detail={"↳ 输出:\nhello world"}
+      />,
+    );
+    const toggle = container.querySelector(
+      ".activity-step__detail-toggle",
+    ) as HTMLButtonElement;
+    fireEvent.click(toggle); // open
+    const fold = container.querySelector(".activity-step__fold.is-open");
+    expect(fold).not.toBeNull();
+    expect(fold?.querySelector(".activity-step__detail")).not.toBeNull();
+    fireEvent.click(toggle); // close
+    expect(container.querySelector(".activity-step__fold.is-open")).toBeNull();
+    expect(container.querySelector(".activity-step__detail")).not.toBeNull();
+  });
+
   it("shows no detail toggle without evidenceDetail", () => {
     const { container } = renderWithLocale(
       <ActivityStep body="Reading a.ts" t={tEn} active={false} />,

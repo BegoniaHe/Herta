@@ -213,7 +213,7 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
     ]);
   });
 
-  it("createMinimalTools (ADR 0040): the trained pair plus the record channels (and the digest tool, ADR 0043), and the record channels accept the shell's path spelling", async () => {
+  it("createMinimalTools (ADR 0040): the trained pair plus the record channels (digest ADR 0043, todo_write ADR 0047 §4), and the record channels accept the shell's path spelling", async () => {
     ws = await mkTmpWorkspace({ "src/a.ts": "one\ntwo\nthree\n" });
     const tools = createMinimalTools({
       bashPath: "/nonexistent/bash",
@@ -226,6 +226,10 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
       "report_finding",
       "show_excerpt",
       "str_replace_editor",
+      // ADR 0047 §4 (owner, 2026-08-26): without it the 待办 lane was
+      // structurally empty on the default contract and the GUI plan card
+      // never lit for a minimal dispatch.
+      "todo_write",
     ]);
     // Native and forward-slash spellings of the workspace pass; a relative
     // path passes; on Windows the /e/… MSYS form is understood too (live GUI

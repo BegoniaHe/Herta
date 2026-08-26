@@ -197,6 +197,15 @@ export interface MinimalToolsOpts extends DigestToolsOpts {
  * `view` is silent to the record like read_file is), and `digest_document`
  * (ADR 0043: a whole attached document's content in one call — a shell can
  * only read it end to end).
+ *
+ * `todo_write` joined 2026-08-26 (ADR 0047 §4, owner decision): without it
+ * the done marker's 待办 lane was STRUCTURALLY empty on the default
+ * contract — the git-dev lab reproduced a brief that said 记到待办 while
+ * `nextActions` stayed `[]`, and cross-dispatch inheritance survived only
+ * on the bounded user-history tail. It is the same harness-state channel
+ * class as report_finding (a shell cannot write the plan the GUI's rail
+ * card and the next dispatch read), so mounting it amends the trained
+ * 4-tool shape deliberately, not casually.
  */
 export function createMinimalTools(opts: MinimalToolsOpts): HertaTool[] {
   // The two record channels accept the SHELL's path spelling too — the model
@@ -214,6 +223,7 @@ export function createMinimalTools(opts: MinimalToolsOpts): HertaTool[] {
     }),
     reportFindingTool({ mapPath }),
     showExcerptTool({ mapPath }),
+    todoWriteTool(),
     digestDocumentTool({
       model: opts.digestModel,
       mapPath,

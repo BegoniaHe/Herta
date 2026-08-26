@@ -871,11 +871,67 @@ export class SessionImpl implements Session {
       start: tail.start,
       topics: this._topics,
     });
+    // Stored-attachment GC last: the record is already truncated and
+    // broadcast, and a failed unlink must not fail the rewind (best-effort,
+    // like the ✕). See the method for the D-Record-only amendment.
+    await this.cleanUpWithdrawnAttachments(result.withdrawn);
     return {
       ok: true,
       userText: result.userText,
       editedFiles: spanEditedFiles(result.withdrawn),
     };
+  }
+
+  /**
+   * Garbage-collect the STORED COPIES of attachments whose record blocks a
+   * rewind just withdrew (owner decision 2026-08-26, amending D-Record-only —
+   * see the 2026-06-21-rewind-last-turn spec). That rule still holds for
+   * 板砖's real filesystem side-effects (files it edited, commands it ran);
+   * the harness's own attachment store is record-keyed bookkeeping, and a
+   * copy whose citing block no longer exists is a document the user can
+   * neither see nor take back — the ✕ affordance left with the row.
+   *
+   * Same trust shape as removeAttachment: only paths the HARNESS wrote into
+   * a block's digest are deleted, re-checked against this session's
+   * attachment prefix — nothing renderer-supplied reaches unlink. A path a
+   * SURVIVING block still cites is kept: content-hashed names make
+   * re-attaching the same document idempotent, so two blocks can share one
+   * stored file. Sidecars (outline, ADR 0043 digest) go with their text,
+   * exactly as the ✕ takes them.
+   */
+  private async cleanUpWithdrawnAttachments(
+    withdrawn: TerminalRecord,
+  ): Promise<void> {
+    const prefix = `${attachmentDirFor(this.sessionId)}/`;
+    const surviving = new Set<string>();
+    for (const b of this._record) {
+      if (b.kind !== "system" || b.digest?.kind !== "attachment") continue;
+      if (b.digest.path.length > 0) surviving.add(b.digest.path);
+    }
+    const toRemove: string[] = [];
+    for (const b of withdrawn) {
+      if (b.kind !== "system" || b.digest?.kind !== "attachment") continue;
+      const d = b.digest;
+      if (d.unreadable === "removed") continue; // the ✕ already took the files
+      if (!d.path.startsWith(prefix)) continue; // harness-written, or nothing stored
+      if (surviving.has(d.path)) continue;
+      toRemove.push(d.path, digestSidecarFor(d.path));
+      const outline = d.outline?.path;
+      if (outline?.startsWith(prefix) === true) {
+        toRemove.push(outline);
+      }
+    }
+    for (const rel of toRemove) {
+      try {
+        await rm(join(this.wsHolder.current, ...rel.split("/")), {
+          force: true,
+        });
+      } catch {
+        // Best-effort, mirroring removeAttachment: a file already gone
+        // (manual delete, workspace switched) must not fail the rewind
+        // whose record truncation has already landed.
+      }
+    }
   }
 
   /**

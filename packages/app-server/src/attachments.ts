@@ -66,8 +66,10 @@ export const OUTLINE_PREVIEW_ENTRIES = 40;
 export const OUTLINE_PREVIEW_CHARS = 2000;
 
 /** Where a session's attachments live, relative to the backend workspace.
- *  Session-scoped so deleting or rewinding a session takes its documents with
- *  it, and so the path class in `resolveSafePath` can be a fixed prefix. */
+ *  Session-scoped so deleting a session (managed workspace) takes its
+ *  documents with it, a rewind can GC exactly the withdrawn blocks' copies
+ *  (2026-08-26), and the path class in `resolveSafePath` stays a fixed
+ *  prefix. */
 export function attachmentDirFor(sessionId: string): string {
   return `.herta/attachments/${sessionId}`;
 }

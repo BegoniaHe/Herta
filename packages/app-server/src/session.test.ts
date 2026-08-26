@@ -1551,6 +1551,104 @@ describe("Session — attachFiles (ADR 0033)", () => {
     await cleanup();
   });
 
+  it("rewind keeps an attachment whose row sits above the cut (attached before the send)", async () => {
+    // The common flow: attach, then send. The attach block precedes the user
+    // block, so the rewind's truncation never touches it — and the GC must
+    // not either: the row is still on screen, its ✕ still works, and its
+    // file must still exist behind both.
+    const { session, backendWs, srcDir, cleanup } = await mkAttachSession();
+    writeFileSync(join(srcDir, "spec.md"), "# spec\nbody\n");
+    const a = await session.attachFiles([join(srcDir, "spec.md")]);
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    const rel = a.files[0]?.path ?? "";
+    await session.submitText("看看这个文件");
+    const r = await session.rewindLastTurn();
+    expect(r.ok).toBe(true);
+    expect(
+      session.record.some(
+        (b) => b.kind === "system" && b.digest?.kind === "attachment",
+      ),
+    ).toBe(true);
+    expect(existsSync(join(backendWs, ...rel.split("/")))).toBe(true);
+    await cleanup();
+  });
+
+  it("rewind garbage-collects the stored copies of WITHDRAWN attachment blocks — sidecars included (2026-08-26)", async () => {
+    // D-Record-only amendment: an attachment block inside the withdrawn span
+    // (attached after the turn's reply, then rewound before the next send)
+    // takes its row's ✕ affordance with it — so the stored copy would be
+    // orphaned with no in-app way to delete it. The rewind GCs it: text,
+    // outline sidecar, and any ADR 0043 digest sidecar, same set as the ✕.
+    const { makePdf } = await import("./testing/document-fixtures.js");
+    const { session, backendWs, srcDir, cleanup } = await mkAttachSession();
+    await session.submitText("hi");
+    writeFileSync(
+      join(srcDir, "book.pdf"),
+      makePdf([["one"], ["two"]], {
+        bookmarks: [
+          { title: "Chapter 1", page: 1 },
+          { title: "Chapter 2", page: 2 },
+        ],
+      }),
+    );
+    const a = await session.attachFiles([join(srcDir, "book.pdf")]);
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    const rel = a.files[0]?.path ?? "";
+    const block = session.record.find(
+      (b) => b.kind === "system" && b.digest?.kind === "attachment",
+    );
+    const digest = block?.kind === "system" ? block.digest : undefined;
+    const sidecar =
+      digest?.kind === "attachment" ? (digest.outline?.path ?? "") : "";
+    expect(existsSync(join(backendWs, ...sidecar.split("/")))).toBe(true);
+    const digestRel = rel.replace(/\.txt$/, ".digest.txt");
+    writeFileSync(join(backendWs, ...digestRel.split("/")), "# 文档摘要\n");
+
+    const r = await session.rewindLastTurn();
+    expect(r.ok).toBe(true);
+    // The block left the record with the turn…
+    expect(
+      session.record.some(
+        (b) => b.kind === "system" && b.digest?.kind === "attachment",
+      ),
+    ).toBe(false);
+    // …and the stored copies left the disk with it.
+    expect(existsSync(join(backendWs, ...rel.split("/")))).toBe(false);
+    expect(existsSync(join(backendWs, ...sidecar.split("/")))).toBe(false);
+    expect(existsSync(join(backendWs, ...digestRel.split("/")))).toBe(false);
+    await cleanup();
+  });
+
+  it("rewind keeps a stored file a SURVIVING block still cites (idempotent re-attach shares the path)", async () => {
+    // Content-hashed names make re-attaching the identical document a write
+    // to the SAME stored path — two blocks, one file. Withdrawing the later
+    // block must not delete the earlier row's document out from under it.
+    const { session, backendWs, srcDir, cleanup } = await mkAttachSession();
+    writeFileSync(join(srcDir, "spec.md"), "# spec\nbody\n");
+    const first = await session.attachFiles([join(srcDir, "spec.md")]);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const rel = first.files[0]?.path ?? "";
+    await session.submitText("看看这个文件");
+    const again = await session.attachFiles([join(srcDir, "spec.md")]);
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(again.files[0]?.path).toBe(rel);
+
+    const r = await session.rewindLastTurn();
+    expect(r.ok).toBe(true);
+    // The pre-send block survives, so its file must too.
+    expect(
+      session.record.some(
+        (b) => b.kind === "system" && b.digest?.kind === "attachment",
+      ),
+    ).toBe(true);
+    expect(existsSync(join(backendWs, ...rel.split("/")))).toBe(true);
+    await cleanup();
+  });
+
   it("the removal survives a reload — it is on disk, not just in memory", async () => {
     const { session, cfg, srcDir, cleanup } = await mkAttachSession();
     writeFileSync(join(srcDir, "spec.md"), "# spec\nbody\n");

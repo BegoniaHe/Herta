@@ -670,6 +670,10 @@ export class V2ActorDriver {
    *
    * Filesystem side-effects from a withdrawn `@板砖` turn are NOT reverted — this
    * withdraws the record only (see 2026-06-21-rewind-last-turn spec, D-Record-only).
+   * The one carve-out lives a layer up: SessionImpl garbage-collects the harness's
+   * own stored attachment copies for attachment blocks in the withdrawn span
+   * (`cleanUpWithdrawnAttachments`, amendment 2026-08-26) — user project files
+   * stay untouched.
    */
   rewindLastUserTurn(): { userText: string; withdrawn: TerminalRecord } | null {
     let userIndex = -1;

@@ -17,9 +17,12 @@ export function submitMessage(
   bridge: HertaBridge,
   store: SessionStore,
   text: string,
+  /** Pictures staged in the composer that ride THIS message (ADR 0048 §4).
+   *  Their record blocks land right after the user block. */
+  stagedImageIds?: readonly string[],
 ): void {
   store.markPendingUser(text);
-  bridge.submitText(text).then(
+  bridge.submitText(text, stagedImageIds).then(
     (result) => {
       if (result && "needsKey" in result) {
         store.requestKeyPrompt(text);

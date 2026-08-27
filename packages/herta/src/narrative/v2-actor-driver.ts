@@ -311,11 +311,17 @@ export class V2ActorDriver {
     // on rejection). False for regenerate (a resume-recovery redo should not
     // re-play the interjection or the catching-herself line).
     voiceEligible = true,
+    // Attachment blocks sent WITH this message (ADR 0048 §4) — appended after
+    // the user block by the actor turn, so they sit inside the turn's span.
+    userAttachments: readonly SystemBlock[] = [],
   ): Promise<TerminalRecord> {
     const prevLen = this.record.length;
 
     // Slice 13: classify intent before the actor runs. Router failure
     // is non-fatal — we keep the prior state and proceed.
+    // The attachments are NOT in this preliminary record: the recap
+    // summarizes history BEFORE this turn, and the router classifies what the
+    // user SAID. Both would be unmoved by a picture appended after the fact.
     const prelimRecord = [...this.record, { kind: "user" as const, text }];
 
     // Long-session compaction runs FIRST — before intent routing — so the recap
@@ -495,6 +501,7 @@ export class V2ActorDriver {
           : {}),
         signal,
         precomputedRecap,
+        ...(userAttachments.length > 0 ? { userAttachments } : {}),
         lang: this.deps.lang ?? "zh",
         intentState: corpusActive ? this.currentIntentState : undefined,
         attachedMetaThink:

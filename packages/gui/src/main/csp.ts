@@ -86,8 +86,10 @@ export function buildCsp(opts: CspOptions): string {
     // least dangerous of the inline allowances, since style injection here has
     // no sink to reach.
     "style-src 'self' 'unsafe-inline'",
-    // Bundled art plus the small assets Vite inlines as data: URIs.
-    "img-src 'self' data: blob:",
+    // Bundled art plus the small assets Vite inlines as data: URIs, and the
+    // custom scheme attachment images are served over (ADR 0048) — stored
+    // pictures stay on disk instead of riding the record as data: URIs.
+    "img-src 'self' data: blob: herta-attachment:",
     // The custom scheme the voice clips are served over.
     "media-src 'self' herta-voice: data: blob:",
     "font-src 'self' data:",

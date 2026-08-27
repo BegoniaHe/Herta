@@ -197,6 +197,10 @@ export const zh = {
   "composer.attach.busy": "这一回合还没结束，等她说完再放文件。",
   "composer.attach.tooMany": "一次最多十个文件。",
   "composer.attach.failed": "文件没能加进来。",
+  "composer.attach.denied": "涉及密钥或凭据，没有收下。",
+  // The staged strip (ADR 0048): pictures waiting to be sent WITH a message.
+  "composer.staged": "待发送的图片",
+  "composer.staged.remove": "移除",
   "connect.button": "接入黑塔空间站",
   "connect.failed": "会话没能建立——请重试。",
   "workspace.rewind": "回到此处",

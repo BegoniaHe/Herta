@@ -354,6 +354,10 @@ export interface SessionService {
   openSessionFromMain(sessionId: string): Promise<void>;
   /** Tray-facing: create + activate a fresh session ("New Chat"). */
   createSessionFromMain(): Promise<void>;
+  /** The active session's effective backend workspace — where attachments
+   *  live (ADR 0048). Null before bootstrap. Read fresh per call: the user
+   *  can change the workspace mid-session. */
+  backendWorkspace(): string | null;
 }
 
 export interface SessionServiceHooks {
@@ -495,34 +499,49 @@ export function createSessionService(
   function registerHandlers(): void {
     if (handlersRegistered) return;
     handlersRegistered = true;
-    handle(CMD.submitText, async (_e, text: string) => {
-      // Length only — chat content must not land in terminal/log capture
-      // (audit 2026-07-13 T1.5; mirrors the repo's memory discipline).
-      console.log(`[herta] submitText invoked (${text.length} chars)`);
-      const active = host?.activeSession ?? null;
-      if (active === null) {
-        console.warn("[herta] submitText ignored — no active session yet");
-        return undefined;
-      }
-      try {
-        const before = active.record.length;
-        const result = await active.submitText(text);
-        if ("needsKey" in result) {
-          console.log("[herta] submitText deferred — no DeepSeek key set");
-        } else {
-          console.log(
-            `[herta] submitText turn done: ${result.turnId} (record ${before} → ${active.record.length} blocks)`,
-          );
+    handle(
+      CMD.submitText,
+      async (_e, text: string, stagedImageIds?: readonly string[]) => {
+        // Length only — chat content must not land in terminal/log capture
+        // (audit 2026-07-13 T1.5; mirrors the repo's memory discipline). The
+        // staged COUNT is safe for the same reason a file count is.
+        console.log(
+          `[herta] submitText invoked (${text.length} chars${
+            stagedImageIds !== undefined && stagedImageIds.length > 0
+              ? `, ${stagedImageIds.length} image(s)`
+              : ""
+          })`,
+        );
+        const active = host?.activeSession ?? null;
+        if (active === null) {
+          console.warn("[herta] submitText ignored — no active session yet");
+          return undefined;
         }
-        return result;
-      } catch (err) {
-        // Surface turn failures in the MAIN-process terminal. Without this
-        // the rejection only reaches the renderer's voided invoke (DevTools
-        // console), so the user watching the terminal sees nothing.
-        console.error("[herta] submitText turn failed:", err);
-        throw err;
-      }
-    });
+        try {
+          const before = active.record.length;
+          const result = await active.submitText(
+            text,
+            stagedImageIds !== undefined && stagedImageIds.length > 0
+              ? { stagedImageIds }
+              : {},
+          );
+          if ("needsKey" in result) {
+            console.log("[herta] submitText deferred — no DeepSeek key set");
+          } else {
+            console.log(
+              `[herta] submitText turn done: ${result.turnId} (record ${before} → ${active.record.length} blocks)`,
+            );
+          }
+          return result;
+        } catch (err) {
+          // Surface turn failures in the MAIN-process terminal. Without this
+          // the rejection only reaches the renderer's voided invoke (DevTools
+          // console), so the user watching the terminal sees nothing.
+          console.error("[herta] submitText turn failed:", err);
+          throw err;
+        }
+      },
+    );
     handle(CMD.interrupt, (_e, turnId?: string) =>
       host?.activeSession?.interrupt({ turnId }),
     );
@@ -687,6 +706,43 @@ export function createSessionService(
         };
       },
     );
+    handle(
+      CMD.stageImages,
+      async (
+        _e,
+        sessionId: string,
+        inputs: readonly {
+          readonly path?: string;
+          readonly bytes?: Uint8Array;
+          readonly name?: string;
+        }[],
+      ) => {
+        const s = host?.activeSession ?? null;
+        if (s === null || s.sessionId !== sessionId) {
+          return { ok: false as const, message: "no matching active session" };
+        }
+        if (s.stageImages === undefined) {
+          return { ok: false as const, message: "attachments unavailable" };
+        }
+        const r = await s.stageImages(inputs);
+        if (r.ok)
+          return { ok: true as const, staged: r.staged, rejected: r.rejected };
+        return {
+          ok: false as const,
+          message:
+            r.reason === "turn_in_progress"
+              ? "a turn is in progress"
+              : r.reason === "too_many"
+                ? "too many files at once"
+                : "no files",
+        };
+      },
+    );
+    handle(CMD.unstageImage, async (_e, sessionId: string, id: string) => {
+      const s = host?.activeSession ?? null;
+      if (s === null || s.sessionId !== sessionId) return false;
+      return (await s.unstageImage?.(id)) ?? false;
+    });
     handle(
       CMD.removeAttachment,
       async (_e, sessionId: string, path: string) => {
@@ -1023,6 +1079,8 @@ export function createSessionService(
       if (block !== null) return;
       await createAndPoint({});
     },
+    backendWorkspace: (): string | null =>
+      host?.activeSession?.backendWorkspace ?? null,
   };
 }
 

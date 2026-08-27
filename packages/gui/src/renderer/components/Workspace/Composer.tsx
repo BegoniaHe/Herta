@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { attachmentImageUrl } from "../../../shared/attachment-image.js";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useSessionLang } from "../../hooks/useActiveSession.js";
 import {
@@ -13,6 +14,7 @@ import { stopAllVoice } from "../../voice/play-voice.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import { AuraVisual } from "../UtilityRail/AuraVisual.js";
 import { SendArrowIcon } from "./SendArrowIcon.js";
+import { useStagedImages } from "./useStagedImages.js";
 import { useWorkspaceRefs } from "./WorkspaceRefs.js";
 
 /** Whether the ghost hint should show: caret is at the END of `value`, the
@@ -34,6 +36,13 @@ function shouldHint(
 /** How long the rewind notice's slide-out runs before it unmounts. Must match
  *  the `.composer-notice.is-exiting` animation duration in reference-ux.css. */
 const NOTICE_EXIT_MS = 240;
+
+/** Filename extension for a pasted image whose File carries no name. The
+ *  MIME subtype is the only thing the clipboard tells us. */
+function pasteName(mime: string): string {
+  const sub = mime.split("/")[1] ?? "png";
+  return `image.${sub === "jpeg" ? "jpg" : sub.replace(/[^a-z0-9]/gi, "")}`;
+}
 
 export function Composer(): JSX.Element {
   const t = useT();
@@ -89,18 +98,46 @@ export function Composer(): JSX.Element {
   const busy = status !== "idle";
   const suppressed = overlay?.kind === "pending-permission";
 
+  // Staged pictures (ADR 0048 §4). Refusals go through the same notice lane
+  // every other composer refusal uses.
+  const onStageRefusal = useCallback(
+    (reason: string) => {
+      sessionStore.setComposerNotice(
+        reason === "a turn is in progress"
+          ? t("composer.attach.busy")
+          : reason === "too many files at once"
+            ? t("composer.attach.tooMany")
+            : reason === "denied"
+              ? t("composer.attach.denied")
+              : t("composer.attach.failed"),
+      );
+    },
+    [sessionStore, t],
+  );
+  const images = useStagedImages(sessionId, onStageRefusal);
+
   // Shared submit path for the ↑ button (form submit) and Enter-to-send.
   const doSubmit = (): void => {
     const trimmed = text.trim();
-    if (trimmed.length === 0 || busy) return;
+    // A picture alone is a message: "look at this" is often the whole point,
+    // and requiring words to send one would make the strip a trap.
+    if ((trimmed.length === 0 && images.staged.length === 0) || busy) return;
     // EN surface alias: translate a typed "@brick" (any case) back to the wire
     // trigger "@板砖" BEFORE it enters the record/dispatch — code spans exempt
     // (a backticked `@brick` is quotation). See aliasBrickInput, kept in
     // lockstep with the CLI's converter of the same name.
     const dispatched = aliasBrickInput(trimmed, lang);
+    // Take the staged pictures BEFORE dispatching: they ride this message,
+    // and the strip must empty on the same frame the text does (ADR 0048 §4).
+    const stagedIds = images.take();
     // Optimistic echo + dispatch. With no DeepSeek key set, the backend
     // reports needsKey and submitMessage opens the no-key onboarding card.
-    submitMessage(bridge, sessionStore, dispatched);
+    submitMessage(
+      bridge,
+      sessionStore,
+      dispatched,
+      stagedIds.length > 0 ? stagedIds : undefined,
+    );
     setText("");
     // The rewind file-edit notice persists through editing; clear it once the
     // (re-)send actually goes out (a session switch clears it via onReset).
@@ -219,10 +256,35 @@ export function Composer(): JSX.Element {
   // not be at its smallest exactly while the user is aiming at it.
   const shrunk = !focusWithin && !dragOver;
 
+  /**
+   * A picked or dropped batch splits by KIND (ADR 0048 §4): pictures stage in
+   * the strip and wait for the message they belong to; documents ingest
+   * immediately, as they always have — their extraction takes seconds and the
+   * early row is what tells the user the file is ready to ask about.
+   *
+   * Main decides which is which, by sniffing the bytes: the renderer holds
+   * only a path and an extension, and an extension is the user's claim, not
+   * the file's content.
+   */
   const sendAttachments = (paths: readonly string[]): void => {
     if (paths.length === 0 || sessionId === null) return;
+    void images.stagePaths(paths).then(({ notImages }) => {
+      if (notImages.length > 0) ingestDocuments(paths, notImages);
+    });
+  };
+
+  const ingestDocuments = (
+    paths: readonly string[],
+    notImages: readonly string[],
+  ): void => {
+    if (sessionId === null) return;
+    // Match back to the ORIGINAL paths: main answers with display names, and
+    // attachFiles needs the paths it was given.
+    const names = new Set(notImages);
+    const docs = paths.filter((p) => names.has(p.split(/[\\/]/).at(-1) ?? p));
+    if (docs.length === 0) return;
     void bridge
-      .attachFiles(sessionId, paths)
+      .attachFiles(sessionId, docs)
       .then((r) => {
         // Refusals are SHOWN. `attachFiles` is idle-only, and a drop that
         // silently did nothing mid-turn would read as a broken drop target
@@ -282,6 +344,28 @@ export function Composer(): JSX.Element {
         if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
         setFocusWithin(false);
       }}
+      onPaste={(e) => {
+        // A screenshot is Ctrl+V, not a file picker (ADR 0048 §4) — clipboard
+        // bytes with no path at all, which is why staging takes bytes as a
+        // first-class input rather than only paths.
+        const files = Array.from(e.clipboardData.files).filter((f) =>
+          f.type.startsWith("image/"),
+        );
+        if (files.length === 0) return; // ordinary text paste: leave it alone
+        e.preventDefault();
+        if (busy) {
+          sessionStore.setComposerNotice(t("composer.attach.busy"));
+          return;
+        }
+        void Promise.all(
+          files.map(async (f) => ({
+            // A pasted screenshot's File carries a generic name ("image.png")
+            // or none; the fallback keeps the record row readable.
+            name: f.name.length > 0 ? f.name : `pasted-${pasteName(f.type)}`,
+            bytes: new Uint8Array(await f.arrayBuffer()),
+          })),
+        ).then((items) => images.stageBytes(items));
+      }}
       onDragEnter={(e) => {
         if (!e.dataTransfer.types.includes("Files")) return;
         dragDepth.current += 1;
@@ -331,6 +415,42 @@ export function Composer(): JSX.Element {
         >
           {noticeText}
         </div>
+      )}
+      {/* Staged pictures (ADR 0048 §4) — above the input, where the message
+          they belong to is being written. Nothing here is in the record yet:
+          the × removes a picture as if it had never arrived, which is the
+          whole reason staging exists on an append-only record. */}
+      {images.staged.length > 0 && (
+        <ul className="composer-staged" aria-label={t("composer.staged")}>
+          {images.staged.map((img) => (
+            <li className="composer-staged__item" key={img.id}>
+              <img
+                className="composer-staged__thumb"
+                src={attachmentImageUrl(img.path)}
+                alt={img.name}
+                title={img.name}
+                draggable={false}
+              />
+              <button
+                type="button"
+                className="composer-staged__remove"
+                aria-label={`${t("composer.staged.remove")} ${img.name}`}
+                onClick={() => images.unstage(img.id)}
+              >
+                <svg
+                  viewBox="0 0 10 10"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  aria-hidden="true"
+                >
+                  <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
+                </svg>
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
       <div className="composer-input-wrap">
         <div className="composer-highlight" aria-hidden="true">

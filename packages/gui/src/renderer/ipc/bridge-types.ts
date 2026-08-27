@@ -170,6 +170,31 @@ export interface DeepSeekKeyStatus {
   readonly encrypted: boolean;
 }
 
+/** One picture waiting in the composer (ADR 0048 §4). `path` is
+ *  workspace-relative — the renderer turns it into a `herta-attachment://`
+ *  URL to draw, and never learns an absolute filesystem path. */
+export interface StagedImageInfo {
+  readonly id: string;
+  readonly name: string;
+  readonly path: string;
+  readonly width?: number;
+  readonly height?: number;
+}
+
+/** Reply from `stageImages`. Per-file refusals ride `rejected` so one bad
+ *  item never discards its siblings; only whole-action failures use `ok:
+ *  false` with a message, like every other command here. */
+export type StageImagesReply =
+  | {
+      readonly ok: true;
+      readonly staged: readonly StagedImageInfo[];
+      readonly rejected: readonly {
+        readonly name: string;
+        readonly reason: string;
+      }[];
+    }
+  | { readonly ok: false; readonly message?: string };
+
 /**
  * The typed surface the preload exposes to the renderer as
  * `window.herta`. Commands round-trip through ipcRenderer.invoke;
@@ -180,7 +205,13 @@ export interface HertaBridge {
    *  the custom window controls on it — macOS keeps its native traffic
    *  lights, so the buttons render only elsewhere. */
   readonly platform: string;
-  submitText(text: string): Promise<SubmitTextResult>;
+  /** `stagedImageIds` sends the pictures waiting in the composer with this
+   *  message (ADR 0048 §4); their record blocks land right after the user
+   *  block, inside the turn's span. */
+  submitText(
+    text: string,
+    stagedImageIds?: readonly string[],
+  ): Promise<SubmitTextResult>;
   interrupt(turnId?: string): Promise<{ readonly ok: boolean }>;
   /** Withdraw the latest 开拓者 turn (record-only, idle-only). Resolves with the
    *  withdrawn user text to restore into the composer, or a failure reason.
@@ -272,6 +303,26 @@ export interface HertaBridge {
     sessionId: string,
     path: string,
   ): Promise<{ readonly ok: boolean; readonly message?: string }>;
+  /**
+   * Stage pictures in the composer (ADR 0048 §4): stored and captioning now,
+   * appended to the record only when the message is sent — so the × before
+   * sending truly un-happens it, and the caption cost hides under typing.
+   *
+   * Takes a path (picker, drop) OR raw bytes (paste — a clipboard screenshot
+   * has no path at all). Non-images come back in `rejected` with reason
+   * `not_image`; the caller routes those to `attachFiles`, which is still the
+   * document path.
+   */
+  stageImages(
+    sessionId: string,
+    inputs: readonly {
+      readonly path?: string;
+      readonly bytes?: Uint8Array;
+      readonly name?: string;
+    }[],
+  ): Promise<StageImagesReply>;
+  /** Drop a staged picture and delete its stored copy. */
+  unstageImage(sessionId: string, id: string): Promise<boolean>;
   /** The real filesystem path of a dropped `File`. Electron 43 removed
    *  `File.path`, so only the preload can answer this — the renderer never
    *  holds a File beyond the drop handler. */

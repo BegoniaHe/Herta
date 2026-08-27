@@ -16,6 +16,10 @@ import {
   updateGlobalSettings,
   type WindowStateSnapshot,
 } from "./app-global-settings.js";
+import {
+  registerAttachmentProtocol,
+  registerAttachmentScheme,
+} from "./attachment-protocol.js";
 import { buildCsp } from "./csp.js";
 import { applyLoginPath } from "./login-path.js";
 import { installChromiumFetch } from "./net-transport.js";
@@ -39,8 +43,10 @@ import { applyWindowsPath } from "./win-path.js";
 import { captureWindowState, restoreWindowBounds } from "./window-state.js";
 
 // Privileged-scheme registration MUST happen before app ready (Electron
-// requirement), so the `herta-voice` audio scheme is declared at module load.
+// requirement), so the `herta-voice` audio scheme and the `herta-attachment`
+// image scheme (ADR 0048) are declared at module load.
 registerVoiceScheme();
+registerAttachmentScheme();
 
 /**
  * The dev-server URL — ONLY in a non-packaged build (audit 2026-08-05, S2).
@@ -553,6 +559,13 @@ void app.whenReady().then(async () => {
       resourcesPath: process.resourcesPath,
       workspaceRoot: appWorkspaceRoot(),
     }),
+  );
+  // Serve attachment images over herta-attachment:// (ADR 0048). The root is
+  // a GETTER: attachments live under the BACKEND workspace, which the user
+  // can change mid-session, and a captured root would serve stale paths
+  // afterwards. Falls back to the app workspace before any session exists.
+  registerAttachmentProtocol(
+    () => mainService?.backendWorkspace() ?? appWorkspaceRoot(),
   );
   createWindow();
   // Auto-update: created after the window so state pushes have a target.

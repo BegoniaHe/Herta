@@ -842,4 +842,174 @@ describe("Composer — attachments (ADR 0033)", () => {
     });
     expect(screen.getByText(/Ten files at a time/i)).toBeInTheDocument();
   });
+
+  // ── Staged images (ADR 0048 §4) ─────────────────────────────────────────
+
+  it("a dropped PICTURE stages instead of entering the record", async () => {
+    const mock = createMockHertaBridge();
+    const { container } = renderAttached(mock);
+    const form = container.querySelector(".composer") as HTMLElement;
+    await act(async () => {
+      fireEvent.drop(form, fileDrop([{ name: "shot.png" }]));
+    });
+    expect(mock.calls.stageImages).toHaveLength(1);
+    // The document lane is NOT used: nothing was appended to the record.
+    expect(mock.calls.attachFiles).toHaveLength(0);
+    expect(container.querySelectorAll(".composer-staged__item")).toHaveLength(
+      1,
+    );
+  });
+
+  it("a mixed drop splits by kind: pictures stage, documents ingest", async () => {
+    const mock = createMockHertaBridge();
+    const { container } = renderAttached(mock);
+    const form = container.querySelector(".composer") as HTMLElement;
+    await act(async () => {
+      fireEvent.drop(
+        form,
+        fileDrop([{ name: "shot.png" }, { name: "spec.md" }]),
+      );
+    });
+    expect(container.querySelectorAll(".composer-staged__item")).toHaveLength(
+      1,
+    );
+    // Documents keep their immediate-ingest UX (extraction takes seconds, and
+    // the early row is what says the file is ready to ask about).
+    expect(mock.calls.attachFiles).toHaveLength(1);
+    expect(mock.calls.attachFiles[0]?.[1]).toEqual(["spec.md"]);
+  });
+
+  it("sends the staged ids WITH the message, then empties the strip", async () => {
+    const mock = createMockHertaBridge();
+    const { container } = renderAttached(mock);
+    const form = container.querySelector(".composer") as HTMLElement;
+    await act(async () => {
+      fireEvent.drop(form, fileDrop([{ name: "shot.png" }]));
+    });
+    const input = screen.getByPlaceholderText(
+      "Message Herta…",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "看看这个" } });
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+    expect(mock.calls.submitText).toEqual(["看看这个"]);
+    expect(mock.calls.submitTextStaged[0]).toEqual(["staged-0"]);
+    // The strip empties on the same frame the text does.
+    expect(container.querySelectorAll(".composer-staged__item")).toHaveLength(
+      0,
+    );
+  });
+
+  it("a picture alone is a message — no text required", async () => {
+    // "look at this" is often the whole point; requiring words would make the
+    // strip a trap the user cannot send from.
+    const mock = createMockHertaBridge();
+    const { container } = renderAttached(mock);
+    const form = container.querySelector(".composer") as HTMLElement;
+    await act(async () => {
+      fireEvent.drop(form, fileDrop([{ name: "shot.png" }]));
+    });
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+    expect(mock.calls.submitTextStaged[0]).toEqual(["staged-0"]);
+  });
+
+  it("the × removes a staged picture and tells main to delete the copy", async () => {
+    const mock = createMockHertaBridge();
+    const { container } = renderAttached(mock);
+    const form = container.querySelector(".composer") as HTMLElement;
+    await act(async () => {
+      fireEvent.drop(form, fileDrop([{ name: "shot.png" }]));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Remove shot.png"));
+    });
+    expect(container.querySelectorAll(".composer-staged__item")).toHaveLength(
+      0,
+    );
+    expect(mock.calls.unstageImage).toEqual([["s-1", "staged-0"]]);
+    // …and it can no longer ride a message.
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+    expect(mock.calls.submitText).toHaveLength(0); // nothing to send at all
+  });
+
+  it("a pasted screenshot stages by BYTES — the clipboard has no path", async () => {
+    const mock = createMockHertaBridge();
+    const { container } = renderAttached(mock);
+    const form = container.querySelector(".composer") as HTMLElement;
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const file = {
+      name: "",
+      type: "image/png",
+      arrayBuffer: async () => bytes.buffer,
+    };
+    await act(async () => {
+      fireEvent.paste(form, { clipboardData: { files: [file] } });
+    });
+    expect(mock.calls.stageImages).toHaveLength(1);
+    const [, inputs] = mock.calls.stageImages[0] as [
+      string,
+      readonly { name?: string; bytes?: Uint8Array }[],
+    ];
+    // A pasted File carries no name; the fallback keeps the record readable.
+    expect(inputs[0]?.name).toBe("pasted-image.png");
+    expect(inputs[0]?.bytes).toBeInstanceOf(Uint8Array);
+  });
+
+  it("an ordinary text paste is left completely alone", async () => {
+    const mock = createMockHertaBridge();
+    const { container } = renderAttached(mock);
+    const form = container.querySelector(".composer") as HTMLElement;
+    await act(async () => {
+      fireEvent.paste(form, { clipboardData: { files: [] } });
+    });
+    expect(mock.calls.stageImages).toHaveLength(0);
+  });
+
+  it("staged pictures do not survive a session switch", async () => {
+    // Transient per-session state (the 2026-07-19 "pill survived session
+    // delete" class): the ids belong to the session that made them and would
+    // not resolve anywhere else.
+    const mock = createMockHertaBridge();
+    const { container } = renderAttached(mock);
+    const form = container.querySelector(".composer") as HTMLElement;
+    await act(async () => {
+      fireEvent.drop(form, fileDrop([{ name: "shot.png" }]));
+    });
+    expect(container.querySelectorAll(".composer-staged__item")).toHaveLength(
+      1,
+    );
+    act(() => {
+      mock.emitReset({
+        sessionId: "s-2",
+        workspaceRoot: "/r",
+        record: [],
+        overlay: null,
+        backendWorkspace: "/r",
+        backendWorkspaceIsDefault: true,
+      });
+    });
+    expect(container.querySelectorAll(".composer-staged__item")).toHaveLength(
+      0,
+    );
+  });
+
+  it("surfaces a staging refusal instead of failing silently", async () => {
+    const mock = createMockHertaBridge({
+      stageImagesResult: { ok: false, message: "a turn is in progress" },
+    });
+    const { container } = renderAttached(mock);
+    const form = container.querySelector(".composer") as HTMLElement;
+    await act(async () => {
+      fireEvent.drop(form, fileDrop([{ name: "shot.png" }]));
+    });
+    expect(screen.getByText(/This turn isn't finished/i)).toBeInTheDocument();
+    expect(container.querySelectorAll(".composer-staged__item")).toHaveLength(
+      0,
+    );
+  });
 });

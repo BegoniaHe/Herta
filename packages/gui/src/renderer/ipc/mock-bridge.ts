@@ -29,6 +29,8 @@ import type {
   SessionOpenFailure,
   SessionSnapshot,
   SpeechControlEvent,
+  StagedImageInfo,
+  StageImagesReply,
   ThemePref,
   UpdateState,
 } from "./bridge-types.js";
@@ -59,6 +61,10 @@ export interface MockHertaBridgeOpts {
   /** Lets a test drive the refusal paths (turn in progress, too many). */
   readonly attachFilesResult?: { ok: boolean; message?: string };
   readonly removeAttachmentResult?: { ok: boolean; message?: string };
+  /** Seed for stageImages (ADR 0048 §4). Default: every input stages, with a
+   *  synthetic id/path — enough for the composer strip to render. */
+  readonly stageImagesResult?: StageImagesReply;
+  readonly unstageImageResult?: boolean;
   readonly getDreamConfigResult?: DreamConfig;
   /** Seed for getBackendConfig (Settings → Coprocessor). Default
    *  `{ thinking: "high", contract: "minimal" }` (the real handler's
@@ -109,6 +115,9 @@ export interface MockHertaBridge {
   readonly bridge: HertaBridge;
   readonly calls: {
     submitText: string[];
+    /** The staged-image ids sent WITH each submitText, positionally paired
+     *  with `submitText` (ADR 0048 §4). */
+    submitTextStaged: Array<readonly string[] | undefined>;
     interrupt: Array<string | undefined>;
     rewindLastTurn: number;
     maybePlayEasterEgg: number;
@@ -130,6 +139,17 @@ export interface MockHertaBridge {
     pickAttachments: number;
     attachFiles: Array<[string, readonly string[]]>;
     removeAttachment: Array<[string, string]>;
+    stageImages: Array<
+      [
+        string,
+        readonly {
+          readonly path?: string;
+          readonly bytes?: Uint8Array;
+          readonly name?: string;
+        }[],
+      ]
+    >;
+    unstageImage: Array<[string, string]>;
     pathForFile: number;
     getDreamConfig: number;
     setDreamConfig: DreamConfig[];
@@ -194,6 +214,7 @@ export function createMockHertaBridge(
 
   const calls: MockHertaBridge["calls"] = {
     submitText: [],
+    submitTextStaged: [],
     interrupt: [],
     rewindLastTurn: 0,
     maybePlayEasterEgg: 0,
@@ -232,6 +253,8 @@ export function createMockHertaBridge(
     pickAttachments: 0,
     attachFiles: [],
     removeAttachment: [],
+    stageImages: [],
+    unstageImage: [],
     pathForFile: 0,
   };
 
@@ -276,8 +299,9 @@ export function createMockHertaBridge(
       windowMaximizedCbs.add(cb);
       return () => windowMaximizedCbs.delete(cb);
     },
-    submitText: async (text) => {
+    submitText: async (text, stagedImageIds) => {
       calls.submitText.push(text);
+      calls.submitTextStaged.push(stagedImageIds);
       return opts.submitTextResult ?? { turnId: "mock-turn" };
     },
     interrupt: async (turnId) => {
@@ -365,6 +389,39 @@ export function createMockHertaBridge(
     removeAttachment: async (sid, path) => {
       calls.removeAttachment.push([sid, path]);
       return opts.removeAttachmentResult ?? { ok: true };
+    },
+    stageImages: async (sid, inputs) => {
+      calls.stageImages.push([sid, inputs]);
+      if (opts.stageImagesResult !== undefined) return opts.stageImagesResult;
+      // Default: split by EXTENSION. The real main process decides by magic
+      // bytes — a mock cannot, and must not pretend to — but it does have to
+      // route documents to `not_image` the way the real one does, or every
+      // document test here would silently stage instead of ingesting.
+      const staged: StagedImageInfo[] = [];
+      const rejected: { name: string; reason: string }[] = [];
+      inputs.forEach((input, i) => {
+        const name =
+          input.name ??
+          (input.path ?? "").split(/[\\/]/).at(-1) ??
+          `image-${i}.png`;
+        if (!/\.(png|jpe?g|gif|webp|bmp)$/i.test(name)) {
+          rejected.push({ name, reason: "not_image" });
+          return;
+        }
+        staged.push({
+          // Positional ids so a test can predict them.
+          id: `staged-${staged.length}`,
+          name,
+          path: `.herta/attachments/${sid}/${name}`,
+          width: 800,
+          height: 600,
+        });
+      });
+      return { ok: true, staged, rejected };
+    },
+    unstageImage: async (sid, id) => {
+      calls.unstageImage.push([sid, id]);
+      return opts.unstageImageResult ?? true;
     },
     // jsdom Files have no real path; the mock returns the name so a drop test
     // can assert what got forwarded without pretending to know a temp path.

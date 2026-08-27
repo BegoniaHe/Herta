@@ -24,7 +24,12 @@ import {
   planStaggerEntrance,
 } from "./conversation-entrance.js";
 import { GalaxyTravelRow } from "./GalaxyTravelRow.js";
-import { activityHasTerminalMarker, groupRecord } from "./group-record.js";
+import {
+  activityHasTerminalMarker,
+  groupRecord,
+  liftUserImages,
+  type SystemBlock,
+} from "./group-record.js";
 import { HertaBubble } from "./HertaBubble.js";
 import { MorphClone } from "./MorphClone.js";
 import { PendingActivity } from "./PendingActivity.js";
@@ -137,6 +142,8 @@ function renderBlock(
   lang: "zh" | "en",
   // Set only on the LATEST user block when idle — wires its rewind control.
   onRewind?: () => void,
+  // Pictures sent WITH this message (ADR 0048 §4), lifted onto the bubble.
+  images?: readonly SystemBlock[],
 ): JSX.Element | null {
   // Per-block timestamp (Slice 4): `at` is stamped at the output boundaries
   // (live sink emit + JSONL persist), so each bubble shows its own time.
@@ -156,6 +163,7 @@ function renderBlock(
           at={block.at}
           lang={lang}
           {...(onRewind !== undefined ? { onRewind } : {})}
+          {...(images !== undefined && images.length > 0 ? { images } : {})}
         />
       );
     case "herta":
@@ -1449,7 +1457,13 @@ export const Conversation = memo(function Conversation(): JSX.Element {
   // Memoized on record identity: the store mutates `record` only per BLOCK
   // (deltas accumulate in streamingText), so the grouping — O(n) over all
   // blocks — reruns per block, not per delta/frame.
-  const items = useMemo(() => groupRecord(record), [record]);
+  const items = useMemo(
+    // Pictures sent with a message ride the bubble rather than the activity
+    // run that carries them in the record (ADR 0048 §4) — same record,
+    // different overlay.
+    () => liftUserImages(groupRecord(record)),
+    [record],
+  );
   // The CURRENT dispatch's 任务清单, scanned across the WHOLE record — an
   // in-turn beat splits one backend run into several activity groups, and
   // each ActivityBlock sees only its own blocks, so the continuation group
@@ -1542,6 +1556,7 @@ export const Conversation = memo(function Conversation(): JSX.Element {
               // render (see handleRewind's own idle check, and the
               // `.is-busy` rule that hides the control mid-turn).
               item.index === lastUserIndex ? handleRewind : undefined,
+              item.images,
             )}
           </ErrorBoundary>
         ) : null,

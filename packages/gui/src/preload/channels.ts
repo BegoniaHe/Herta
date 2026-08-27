@@ -23,6 +23,8 @@ export const CMD = {
   pickAttachments: "session:pickAttachments",
   attachFiles: "session:attachFiles",
   removeAttachment: "session:removeAttachment",
+  stageImages: "session:stageImages",
+  unstageImage: "session:unstageImage",
   getDreamConfig: "settings:getDreamConfig",
   setDreamConfig: "settings:setDreamConfig",
   getBackendConfig: "settings:getBackendConfig",

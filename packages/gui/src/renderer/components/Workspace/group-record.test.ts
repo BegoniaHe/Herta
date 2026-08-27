@@ -7,6 +7,7 @@ import {
   activitySteps,
   activitySummary,
   groupRecord,
+  liftUserImages,
   type SystemBlock,
 } from "./group-record.js";
 
@@ -229,5 +230,136 @@ describe("activityRows", () => {
       sys("完成 · 1 file", "差分协处理器", "done-marker"),
     ];
     expect(activityRows(blocks)).toHaveLength(1);
+  });
+});
+
+describe("liftUserImages (ADR 0048 §4)", () => {
+  /** The attachment name, narrowed off the digest union. */
+  const attName = (b: SystemBlock): string | undefined =>
+    b.digest?.kind === "attachment" ? b.digest.name : undefined;
+  const image = (name: string, caption?: string): SystemBlock => ({
+    kind: "system",
+    label: "系统",
+    body: `附件 ${name} · 图片 PNG · ${caption ?? "已存图片，未能读图"}`,
+    digest: {
+      kind: "attachment",
+      name,
+      path: `.herta/attachments/s1/${name}`,
+      lines: 0,
+      chars: 0,
+      image: { format: "png", width: 800, height: 600 },
+      ...(caption !== undefined ? { caption } : {}),
+    },
+  });
+  const doc = (name: string): SystemBlock => ({
+    kind: "system",
+    label: "系统",
+    body: `附件 ${name} · 120 行 · 4.8K 字`,
+    digest: {
+      kind: "attachment",
+      name,
+      path: `.herta/attachments/s1/${name}`,
+      lines: 120,
+      chars: 4800,
+    },
+  });
+
+  it("lifts the pictures that came with a message onto its bubble", () => {
+    const items = liftUserImages(
+      groupRecord([user("看看这个"), image("shot.png", "一张截图。")]),
+    );
+    // The activity run was entirely images, so it contributes no row at all —
+    // the picture shows once, on the bubble, not twice.
+    expect(items).toHaveLength(1);
+    const first = items[0];
+    expect(first?.kind).toBe("block");
+    if (first?.kind !== "block") return;
+    expect(first.images?.map(attName)).toEqual(["shot.png"]);
+  });
+
+  it("keeps the rest of the run as an activity item, re-keyed", () => {
+    const items = liftUserImages(
+      groupRecord([
+        user("看看这个"),
+        image("shot.png"),
+        sys("Reading a.ts"),
+        sys("完成"),
+      ]),
+    );
+    expect(items).toHaveLength(2);
+    const activity = items[1];
+    expect(activity?.kind).toBe("activity");
+    if (activity?.kind !== "activity") return;
+    expect(activity.blocks).toHaveLength(2);
+    // Index moves past the lifted block, so downstream "is this group newer
+    // than the last user turn" comparisons still describe what is in it.
+    expect(activity.startIndex).toBe(2);
+  });
+
+  it("lifts only the LEADING images of the run", () => {
+    // A picture 板砖 produced mid-dispatch did not come with the message and
+    // stays an ordinary row.
+    const items = liftUserImages(
+      groupRecord([
+        user("看看"),
+        image("sent.png"),
+        sys("Running build"),
+        image("made.png"),
+      ]),
+    );
+    const first = items[0];
+    if (first?.kind !== "block") throw new Error("expected block");
+    expect(first.images?.map(attName)).toEqual(["sent.png"]);
+    const activity = items[1];
+    if (activity?.kind !== "activity") throw new Error("expected activity");
+    expect(activity.blocks).toHaveLength(2);
+  });
+
+  it("never lifts a document attachment — there is nothing to look at", () => {
+    const items = liftUserImages(groupRecord([user("看看"), doc("spec.md")]));
+    expect(items).toHaveLength(2);
+    const first = items[0];
+    if (first?.kind !== "block") throw new Error("expected block");
+    expect(first.images).toBeUndefined();
+  });
+
+  it("leaves an image that did NOT follow a user block alone", () => {
+    // The pre-slice-2 shape (attach, then type) and anything Herta's own turn
+    // produced: not "sent with a message", so not on a bubble.
+    const items = liftUserImages(
+      groupRecord([image("early.png"), user("看看这个")]),
+    );
+    expect(items[0]?.kind).toBe("activity");
+    const second = items[1];
+    if (second?.kind !== "block") throw new Error("expected block");
+    expect(second.images).toBeUndefined();
+  });
+
+  it("leaves a herta block's following run alone", () => {
+    const items = liftUserImages(groupRecord([herta("嗯。"), image("x.png")]));
+    expect(items[1]?.kind).toBe("activity");
+  });
+
+  it("passes an untouched record through unchanged", () => {
+    const grouped = groupRecord([user("hi"), herta("嗯。"), sys("Reading a")]);
+    expect(liftUserImages(grouped)).toEqual(grouped);
+  });
+
+  it("handles several messages each with their own pictures", () => {
+    const items = liftUserImages(
+      groupRecord([
+        user("第一张"),
+        image("a.png"),
+        herta("看到了。"),
+        user("第二张"),
+        image("b.png"),
+      ]),
+    );
+    expect(items).toHaveLength(3);
+    const a = items[0];
+    const b = items[2];
+    if (a?.kind !== "block" || b?.kind !== "block") throw new Error("shape");
+    expect(a.images?.map(attName)).toEqual(["a.png"]);
+    expect(b.images?.map(attName)).toEqual(["b.png"]);
   });
 });

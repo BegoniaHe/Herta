@@ -205,6 +205,36 @@ export type AttachResult =
       readonly reason: "turn_in_progress" | "too_many" | "no_files";
     };
 
+/** One picture waiting in the composer (ADR 0048 §4). Stored and captioning;
+ *  nothing about it is in the record until the message it rides is sent. */
+export interface StagedImageInfo {
+  readonly id: string;
+  readonly name: string;
+  /** Workspace-relative stored path — what the thumbnail protocol serves. */
+  readonly path: string;
+  readonly width?: number;
+  readonly height?: number;
+}
+
+/** Result of `stageImages`. A picture refused at the door (`denied`,
+ *  `too_large`, `read_error`) or that is not an image at all (`not_image` —
+ *  documents ingest immediately instead, ADR 0048 §4) comes back in
+ *  `rejected` while its siblings still stage; only whole-action failures use
+ *  the `ok: false` shape. */
+export type StageImagesResult =
+  | {
+      readonly ok: true;
+      readonly staged: readonly StagedImageInfo[];
+      readonly rejected: readonly {
+        readonly name: string;
+        readonly reason: string;
+      }[];
+    }
+  | {
+      readonly ok: false;
+      readonly reason: "turn_in_progress" | "too_many" | "no_files";
+    };
+
 /** Result of `removeAttachment`. `removed` counts the blocks marked, which is
  *  >1 when the same document was attached more than once. */
 export type RemoveAttachmentResult =
@@ -386,7 +416,12 @@ export interface Session {
    *  a two-step confirm, so it refuses and fronts the window instead. */
   readonly turnInFlight: boolean;
 
-  submitText(text: string): Promise<SubmitTextResult>;
+  /** `stagedImageIds` sends pictures with the message (ADR 0048 §4): their
+   *  blocks land right after the user block, inside this turn's span. */
+  submitText(
+    text: string,
+    opts?: { readonly stagedImageIds?: readonly string[] },
+  ): Promise<SubmitTextResult>;
   /**
    * D2 (resume recovery): if this session ends on an ORPHANED user message — a
    * reply lost to a mid-stream app-close — regenerate the reply as a normal
@@ -454,6 +489,20 @@ export interface Session {
   /** Take back an attached document: delete the stored file and mark every
    *  block citing it removed. Idle-only, like attachFiles. */
   removeAttachment?(path: string): Promise<RemoveAttachmentResult>;
+  /** Stage pictures in the composer (ADR 0048 §4): store + start captioning
+   *  now, append to the record only when the message is sent. Accepts a path
+   *  (picker, drop) or raw bytes (paste — a clipboard screenshot has no path
+   *  at all). Idle-only, like attachFiles. */
+  stageImages?(
+    inputs: readonly {
+      readonly path?: string;
+      readonly bytes?: Uint8Array;
+      readonly name?: string;
+    }[],
+  ): Promise<StageImagesResult>;
+  /** Drop a staged picture and delete its stored copy. Nothing about it ever
+   *  reached the record, so — unlike removeAttachment — nothing is marked. */
+  unstageImage?(id: string): Promise<boolean>;
 
   subscribeRecord(): AsyncIterable<RecordEvent>;
   subscribeOverlay(): AsyncIterable<OverlayEvent>;

@@ -211,6 +211,10 @@ export const en = {
     "This turn isn't finished — wait for her, then drop the file.",
   "composer.attach.tooMany": "Ten files at a time, at most.",
   "composer.attach.failed": "Those files didn't make it in.",
+  "composer.attach.denied": "Credential-shaped — not taken.",
+  // The staged strip (ADR 0048): pictures waiting to be sent WITH a message.
+  "composer.staged": "Images to send",
+  "composer.staged.remove": "Remove",
   "connect.button": "Connect to Herta",
   "connect.failed": "Couldn't start a session — try again.",
   "workspace.rewind": "Rewind to here",

@@ -4,6 +4,7 @@ import type {
   CompletionProviderAdapter,
   EventBus,
   ProviderAdapter,
+  SystemBlock,
   TerminalRecord,
   TerminalRecordBlock,
 } from "@herta/core";
@@ -85,6 +86,16 @@ export interface ActorTurnDeps {
   readonly runtimeFactory: () => CodingAgentRuntime;
   /** Outer abort signal; passed through to provider and backend. */
   readonly signal?: AbortSignal;
+  /**
+   * Attachment blocks the 开拓者 sent WITH this message (ADR 0048 §4) —
+   * appended immediately after the user block, inside the turn's span, so the
+   * picture and the words arrive as one episode and a rewind takes both.
+   *
+   * Already sanitized by their producer (`ingestAttachment` /
+   * `captionStoredImage`), like every other system block: the serializer does
+   * not sanitize at read, so construction is the only gate.
+   */
+  readonly userAttachments?: readonly SystemBlock[];
   /** Max speech iterations before the loop terminates defensively. Default 5. */
   readonly maxIterations?: number;
   /**
@@ -1203,9 +1214,14 @@ export async function runActorCompletionTurn(
   // earlier iteration of this same call) and stay visible.
   const priorTurnLength = state.record.length;
 
+  // Images the 开拓者 sent WITH this message land immediately after their
+  // user block (ADR 0048 §4). Inside the turn's span, so the picture and the
+  // words it came with are one episode: Herta reads them together, and a
+  // rewind withdraws them together. Empty for every turn without attachments.
   let record: TerminalRecord = [
     ...state.record,
     { kind: "user", text: userText },
+    ...(deps.userAttachments ?? []),
   ];
 
   // Long-session compaction (2026-05-24). Computed EXACTLY ONCE per turn,

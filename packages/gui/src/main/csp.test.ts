@@ -82,8 +82,9 @@ describe("buildCsp (audit BL2)", () => {
     expect(csp).toContain("style-src 'self' 'unsafe-inline'");
     // Voice clips are served over the custom scheme.
     expect(csp).toContain("herta-voice:");
-    // Vite inlines small assets as data: URIs.
-    expect(csp).toContain("img-src 'self' data: blob:");
+    // Vite inlines small assets as data: URIs; attachment images ride their
+    // own scheme (ADR 0048) rather than the record.
+    expect(csp).toContain("img-src 'self' data: blob: herta-attachment:");
   });
 
   it("dev: relaxes exactly what Vite needs, and nothing else", () => {

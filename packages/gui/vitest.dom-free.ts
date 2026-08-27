@@ -29,6 +29,7 @@ export const DOM_FREE_TESTS = [
   // exception: it asserts on bounds objects shaped like a browser's).
   "src/main/app-global-settings.test.ts",
   "src/main/app-settings.test.ts",
+  "src/main/attachment-protocol.test.ts",
   "src/main/csp.test.ts",
   "src/main/key-store.test.ts",
   "src/main/login-path.test.ts",

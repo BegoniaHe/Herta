@@ -533,13 +533,185 @@ async function ingestDocument(opts: {
 }
 
 /**
- * Store an image and read it once (ADR 0048).
+ * An image on disk, not yet read (ADR 0048 slice 2).
  *
- * The order is deliberate: STORE first, caption second. The picture is the
- * user's file and belongs in the workspace whatever the instrument does — so
- * every captioning outcome below is a different row about a file that is
- * already on disk and already citable. Nothing here can throw the attach.
+ * The two phases are split because the composer stages a picture the moment
+ * it arrives and only sends it later: storing must finish immediately (the
+ * strip needs a path and a size to draw), while the captioning call runs in
+ * the background under the user's typing. `ingestImage` below is the two
+ * phases back to back — the shape every non-staging caller wants.
  */
+export interface StoredImage {
+  readonly displayName: string;
+  readonly relPath: string;
+  readonly image: ImageInfo;
+  /** Held for the caption call, which needs the bytes again. */
+  readonly bytes: Buffer;
+}
+
+export type StoreImageResult =
+  | { readonly ok: true; readonly stored: StoredImage }
+  /** The write failed. Nothing is on disk; the block says so. */
+  | { readonly ok: false; readonly failed: IngestedAttachment };
+
+/**
+ * Phase 1 — put the picture in the workspace. Never captions, never throws.
+ *
+ * STORE first, caption second, always: the picture is the user's file and
+ * belongs in the workspace whatever the instrument does, so every captioning
+ * outcome is a different row about a file that is already on disk and already
+ * citable.
+ */
+export async function storeImage(opts: {
+  readonly image: ImageInfo;
+  readonly displayName: string;
+  readonly bytes: Buffer;
+  readonly workspaceRoot: string;
+  readonly sessionId: string;
+}): Promise<StoreImageResult> {
+  const relPath = await storeBytes({
+    workspaceRoot: opts.workspaceRoot,
+    sessionId: opts.sessionId,
+    storedName: safeStoredName(opts.displayName, opts.bytes),
+    bytes: opts.bytes,
+  });
+  if (relPath === null) {
+    return { ok: false, failed: notStored(opts.displayName, "read_error") };
+  }
+  return {
+    ok: true,
+    stored: {
+      displayName: opts.displayName,
+      relPath,
+      image: opts.image,
+      bytes: opts.bytes,
+    },
+  };
+}
+
+/**
+ * Phase 2 — read the stored picture once and build its block. Never throws:
+ * every failure (no key, HTTP error, timeout, empty or truncated completion,
+ * over the ceiling) is the same honest row about a file that IS on disk.
+ */
+export async function captionStoredImage(
+  stored: StoredImage,
+  opts: {
+    readonly lang: PageMarkerLang;
+    readonly caption: ImageCaptioner | null;
+    readonly signal?: AbortSignal;
+  },
+): Promise<IngestedAttachment> {
+  const block = (
+    unreadable?: AttachmentUnreadable,
+    caption?: string,
+  ): IngestedAttachment => ({
+    block: buildBlock({
+      displayName: stored.displayName,
+      relPath: stored.relPath,
+      lines: 0,
+      chars: 0,
+      image: stored.image,
+      ...(caption !== undefined ? { caption } : {}),
+      ...(unreadable !== undefined ? { unreadable } : {}),
+    }),
+    relPath: stored.relPath,
+    ...(unreadable !== undefined ? { unreadable } : {}),
+  });
+
+  if (opts.caption === null) return block("no_caption");
+  if (stored.bytes.length > MAX_CAPTION_IMAGE_BYTES) return block("too_large");
+
+  const prompt = captionPrompt(opts.lang);
+  try {
+    const raw = await opts.caption(
+      {
+        system: prompt.system,
+        user: prompt.user,
+        imageDataUri: `data:${imageMimeType(stored.image.format)};base64,${stored.bytes.toString("base64")}`,
+      },
+      opts.signal ?? AbortSignal.timeout(CAPTION_TIMEOUT_MS),
+    );
+    const caption = boundCaption(raw);
+    // An instrument that answered with nothing but whitespace (or with a
+    // string redaction emptied) said nothing about the image — the honest row
+    // is the uncaptioned one, not a block whose caption is blank.
+    return caption === "" ? block("no_caption") : block(undefined, caption);
+  } catch {
+    return block("no_caption");
+  }
+}
+
+export type StageImageResult =
+  | { readonly ok: true; readonly stored: StoredImage }
+  /** `not_image` is not a failure — the caller routes those to the ordinary
+   *  attach path (documents ingest immediately and do not stage, ADR 0048
+   *  §4). The rest are refusals the user must be told about. */
+  | {
+      readonly ok: false;
+      readonly reason: "not_image" | "denied" | "too_large" | "read_error";
+    };
+
+/**
+ * Stage one picture (ADR 0048 §4): the same door guards as `ingestAttachment`,
+ * stopping after the store so the caption can run in the background.
+ *
+ * Accepts a path OR raw bytes. Bytes are the paste lane — a screenshot on the
+ * clipboard has no path at all, and without this the whole staged-image flow
+ * would serve a workflow (Ctrl+V) it could not accept.
+ */
+export async function stageImageSource(opts: {
+  readonly sourcePath?: string;
+  readonly bytes?: Buffer;
+  readonly displayName: string;
+  readonly workspaceRoot: string;
+  readonly sessionId: string;
+}): Promise<StageImageResult> {
+  // Same guard, same place, same reason as the ordinary attach: the display
+  // name is renderer-supplied and the path is arbitrary, so both are checked
+  // before anything is read.
+  if (
+    isCredentialShapedSource(opts.displayName) ||
+    (opts.sourcePath !== undefined && isCredentialShapedSource(opts.sourcePath))
+  ) {
+    return { ok: false, reason: "denied" };
+  }
+
+  let bytes: Buffer;
+  if (opts.bytes !== undefined) {
+    // Pasted bytes are already in memory, so the ceiling is a straight length
+    // check rather than a stat.
+    if (opts.bytes.length > MAX_ATTACHMENT_STORE_BYTES) {
+      return { ok: false, reason: "too_large" };
+    }
+    bytes = opts.bytes;
+  } else if (opts.sourcePath !== undefined) {
+    try {
+      if ((await stat(opts.sourcePath)).size > MAX_ATTACHMENT_STORE_BYTES) {
+        return { ok: false, reason: "too_large" };
+      }
+      bytes = await readFile(opts.sourcePath);
+    } catch {
+      return { ok: false, reason: "read_error" };
+    }
+  } else {
+    return { ok: false, reason: "read_error" };
+  }
+
+  const image = sniffImage(bytes);
+  if (image === null) return { ok: false, reason: "not_image" };
+
+  const result = await storeImage({
+    image,
+    displayName: opts.displayName,
+    bytes,
+    workspaceRoot: opts.workspaceRoot,
+    sessionId: opts.sessionId,
+  });
+  return result.ok ? result : { ok: false, reason: "read_error" };
+}
+
+/** Both phases, back to back — the direct (non-staged) attach path. */
 async function ingestImage(opts: {
   readonly image: ImageInfo;
   readonly displayName: string;
@@ -549,54 +721,12 @@ async function ingestImage(opts: {
   readonly lang: PageMarkerLang;
   readonly caption: ImageCaptioner | null;
 }): Promise<IngestedAttachment> {
-  const relPath = await storeBytes({
-    workspaceRoot: opts.workspaceRoot,
-    sessionId: opts.sessionId,
-    storedName: safeStoredName(opts.displayName, opts.bytes),
-    bytes: opts.bytes,
+  const result = await storeImage(opts);
+  if (!result.ok) return result.failed;
+  return captionStoredImage(result.stored, {
+    lang: opts.lang,
+    caption: opts.caption,
   });
-  if (relPath === null) return notStored(opts.displayName, "read_error");
-
-  const stored = (
-    unreadable?: AttachmentUnreadable,
-    caption?: string,
-  ): IngestedAttachment => ({
-    block: buildBlock({
-      displayName: opts.displayName,
-      relPath,
-      lines: 0,
-      chars: 0,
-      image: opts.image,
-      ...(caption !== undefined ? { caption } : {}),
-      ...(unreadable !== undefined ? { unreadable } : {}),
-    }),
-    relPath,
-    ...(unreadable !== undefined ? { unreadable } : {}),
-  });
-
-  if (opts.caption === null) return stored("no_caption");
-  if (opts.bytes.length > MAX_CAPTION_IMAGE_BYTES) return stored("too_large");
-
-  const prompt = captionPrompt(opts.lang);
-  try {
-    const raw = await opts.caption(
-      {
-        system: prompt.system,
-        user: prompt.user,
-        imageDataUri: `data:${imageMimeType(opts.image.format)};base64,${opts.bytes.toString("base64")}`,
-      },
-      AbortSignal.timeout(CAPTION_TIMEOUT_MS),
-    );
-    const caption = boundCaption(raw);
-    // An instrument that answered with nothing but whitespace (or with a
-    // string redaction emptied) said nothing about the image — the honest row
-    // is the uncaptioned one, not a block whose caption is blank.
-    return caption === "" ? stored("no_caption") : stored(undefined, caption);
-  } catch {
-    // Every failure is the same row: no key, HTTP error, timeout, empty
-    // completion. The file is on disk; the reading did not happen.
-    return stored("no_caption");
-  }
 }
 
 /** What the block carries about a stored outline: the sidecar's path, the

@@ -5717,3 +5717,107 @@ button.session-item__badge--dismiss {
   opacity: 0;
   transition: none;
 }
+
+/* ── Staged images (ADR 0048 §4) ─────────────────────────────────────────
+   Pictures waiting in the composer for the message they belong to. The strip
+   sits ABOVE the input, inside the composer's own box, so the composer grows
+   to hold them — the picture and the sentence about it stay one object.
+
+   The composer is a flex ROW (attach · input · send); this strip is a full-
+   width sibling, so the row is wrapped and the strip claims its own line. */
+.composer {
+  flex-wrap: wrap;
+}
+.composer-staged {
+  order: -1; /* before the attach button, whatever the DOM order */
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  /* Above .composer-wave, which is a positioned first child — non-positioned
+     in-flow content slips beneath it (same reason .composer-attach is
+     positioned). */
+  position: relative;
+}
+.composer-staged__item {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--ink-a10);
+  background: var(--ink-a05);
+}
+.composer-staged__thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  /* A staged picture is not a link and not draggable content — dragging one
+     out of the strip would start a file drag back into the composer. */
+  user-select: none;
+}
+/* The ✕ that truly un-happens it. Always visible rather than hover-revealed:
+   this is the ONLY moment the picture can be taken back before it enters an
+   append-only record, so the control must not be a discovery. */
+.composer-staged__remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--scrim-strong, rgba(20, 26, 34, 0.62));
+  color: #fff;
+  cursor: pointer;
+  opacity: 0.86;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease;
+}
+.composer-staged__remove:hover {
+  opacity: 1;
+  background: rgba(20, 26, 34, 0.82);
+}
+.composer-staged__remove svg {
+  width: 10px;
+  height: 10px;
+}
+
+/* ── Sent images, above their bubble (ADR 0048 §4) ───────────────────────
+   The record holds these blocks AFTER the user block (inside the turn's span,
+   so a rewind takes both); the screen reads better with the picture above the
+   words, the way the 开拓者 sent it. Same record, different overlay — D7. */
+/* `.message-row` is a flex ROW (bubble, then the hover action row), so an
+   images div dropped in becomes a COLUMN beside the bubble — which is what it
+   did on first live run: the picture sat to the left of the text instead of
+   above it. Wrapping the row and claiming a full basis puts the pictures on
+   their own line; `order: -1` puts that line first whatever the DOM order. */
+.user-row:has(.message-images) {
+  flex-wrap: wrap;
+}
+.message-images {
+  order: -1;
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end; /* user side of the thread */
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.message-images__thumb {
+  max-width: min(320px, 100%);
+  max-height: 240px;
+  border-radius: 12px;
+  border: 1px solid var(--ink-a10);
+  display: block;
+  object-fit: contain;
+  user-select: none;
+}

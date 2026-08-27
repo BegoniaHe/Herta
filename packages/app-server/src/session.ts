@@ -71,6 +71,7 @@ import {
   digestModelFrom,
   makeDigestProvider,
 } from "./session-wiring.js";
+import { type StagedImage, StagedImageStore } from "./staged-images.js";
 import type {
   ApprovalResult,
   AppServerConfig,
@@ -84,6 +85,7 @@ import type {
   Session,
   SessionAgentEvent,
   SpeechControlEvent,
+  StageImagesResult,
   TitleEvent,
   TurnLifecycleEvent,
   VoiceCueEvent,
@@ -411,6 +413,9 @@ export class SessionImpl implements Session {
   /** The image-captioning instrument (ADR 0048); null = images are stored but
    *  not read (no key, tests, a failed call). */
   private readonly captionImage: ImageCaptioner | null;
+  /** Pictures waiting in the composer (ADR 0048 §4) — stored and captioning,
+   *  but not in the record until the message they belong to is sent. */
+  private readonly stagedImages: StagedImageStore;
   private readonly titleProvider: ProviderAdapter;
   private readonly titleAbort = new AbortController();
   private titlePromise: Promise<void> | null = null;
@@ -475,6 +480,14 @@ export class SessionImpl implements Session {
     this.lang = opts.lang;
     this.pendingContractNote = opts.pendingContractNote;
     this.captionImage = opts.captionImage;
+    this.stagedImages = new StagedImageStore({
+      // Reads the holder fresh: a workspace change between staging and send
+      // must not delete (or fail to find) a copy under the old root.
+      workspaceRoot: () => this.wsHolder.current,
+      sessionId: opts.sessionId,
+      lang: opts.lang,
+      caption: () => this.captionImage,
+    });
   }
 
   /**
@@ -551,8 +564,69 @@ export class SessionImpl implements Session {
     return this.currentTurn !== null;
   }
 
+  /**
+   * Stage pictures in the composer (ADR 0048 §4) — stored and captioned now,
+   * appended to the record only when the message is sent.
+   *
+   * Idle-only, like `attachFiles` and for a weaker but real version of the
+   * same reason: nothing is appended here, but a staged image is meant to
+   * ride the NEXT message, and mid-turn there is no next message to ride.
+   *
+   * Non-images come back as `not_image` rather than being stored — documents
+   * ingest immediately through `attachFiles`, which is their own UX and stays
+   * unchanged (ADR 0048 §4).
+   */
+  async stageImages(
+    inputs: readonly {
+      readonly path?: string;
+      readonly bytes?: Uint8Array;
+      readonly name?: string;
+    }[],
+  ): Promise<StageImagesResult> {
+    if (this.currentTurn !== null) {
+      return { ok: false, reason: "turn_in_progress" };
+    }
+    if (inputs.length === 0) return { ok: false, reason: "no_files" };
+    if (inputs.length + this.stagedImages.size > MAX_ATTACHMENTS_PER_ACTION) {
+      return { ok: false, reason: "too_many" };
+    }
+    const staged: StagedImage[] = [];
+    const rejected: { readonly name: string; readonly reason: string }[] = [];
+    for (const input of inputs) {
+      const displayName =
+        input.name ?? (input.path !== undefined ? basename(input.path) : "");
+      if (displayName === "") {
+        rejected.push({ name: "", reason: "read_error" });
+        continue;
+      }
+      const result = await this.stagedImages.stage({
+        ...(input.path !== undefined ? { sourcePath: input.path } : {}),
+        ...(input.bytes !== undefined
+          ? { bytes: Buffer.from(input.bytes) }
+          : {}),
+        displayName,
+      });
+      if (result.ok) staged.push(result.image);
+      else rejected.push({ name: displayName, reason: result.reason });
+    }
+    return { ok: true, staged, rejected };
+  }
+
+  /** Drop a staged image and delete its stored copy. Nothing reached the
+   *  record, so nothing is left behind to explain. */
+  async unstageImage(id: string): Promise<boolean> {
+    return this.stagedImages.unstage(id);
+  }
+
+  /** What is currently waiting in the composer — for a renderer that
+   *  reconnects (reload, session switch) and needs to redraw the strip. */
+  get stagedImageList(): readonly StagedImage[] {
+    return this.stagedImages.list();
+  }
+
   async submitText(
     text: string,
+    opts: { readonly stagedImageIds?: readonly string[] } = {},
   ): Promise<{ readonly turnId: string } | { readonly needsKey: true }> {
     // No DeepSeek key yet (first run, or it was cleared): don't run the turn —
     // signal the renderer to prompt for one. The opening (no LLM call) already
@@ -583,6 +657,15 @@ export class SessionImpl implements Session {
     this.currentTurn = { turnId, abortController, settled };
     this.projector.emitTurnLifecycle({ kind: "started", turnId });
 
+    // Take the staged pictures BEFORE the turn runs (ADR 0048 §4): their
+    // blocks go in right after the user block, so Herta reads the message and
+    // what came with it as one thing. `commit` awaits the captions started at
+    // stage time — usually long since resolved under the user's typing.
+    let userAttachments: readonly SystemBlock[] = [];
+    if (opts.stagedImageIds !== undefined && opts.stagedImageIds.length > 0) {
+      userAttachments = await this.stagedImages.commit(opts.stagedImageIds);
+    }
+
     try {
       // The actor sink (BusActorStreamingSink) streams every appended block to
       // record subscribers in canonical order DURING the turn via flushBlocks
@@ -591,7 +674,12 @@ export class SessionImpl implements Session {
       // lifecycle and refreshes the synchronous .record snapshot. The driver
       // persists each new block to JSONL inside runTurn; nothing to re-persist
       // here. See docs/superpowers/specs/2026-06-01-gui-record-stream-ordering-design.md.
-      await this.driver.runTurn(text, abortController.signal);
+      await this.driver.runTurn(
+        text,
+        abortController.signal,
+        true,
+        userAttachments,
+      );
       this._record = this.driver.getRecord();
       this.recordTurnEnd("completed");
       this.projector.emitTurnLifecycle({ kind: "finished", turnId });
@@ -1482,6 +1570,12 @@ export class SessionImpl implements Session {
         if (timer !== undefined) clearTimeout(timer);
       }
     }
+
+    // Pictures still sitting in the composer never became part of anything:
+    // no record block ever mentioned them, so their stored copies are pure
+    // orphans (ADR 0048 §4). Best-effort — a copy that survives is a stray
+    // file, never a broken session.
+    await this.stagedImages.clear();
 
     // Give the turn loop one event-loop tick to observe the AbortSignal and
     // emit turn.failed before we close the projector (which would close all

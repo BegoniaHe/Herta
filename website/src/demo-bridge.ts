@@ -1271,6 +1271,15 @@ export function createDemoBridge(
       message: "unavailable in the demo",
     }),
     removeAttachment: async () => ({ ok: true }),
+    // Staging is refused for the same reason attachFiles is: the demo has no
+    // filesystem and no captioning instrument, so a visitor pasting a
+    // screenshot gets an honest refusal rather than a strip that never
+    // resolves (ADR 0048 §4).
+    stageImages: async () => ({
+      ok: false,
+      message: "unavailable in the demo",
+    }),
+    unstageImage: async () => false,
     pathForFile: () => "",
     getDreamConfig: async () => ({ enabled: true }),
     setDreamConfig: async () => {},

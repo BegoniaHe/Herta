@@ -1,8 +1,10 @@
 import { memo, type Ref } from "react";
+import { attachmentImageUrl } from "../../../shared/attachment-image.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { renderBanzhuanText } from "../../lib/banzhuan-text.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import { BubbleTime } from "./BubbleTime.js";
+import type { SystemBlock } from "./group-record.js";
 
 /**
  * Rewind / undo glyph — Heroicons arrow-uturn-down (from
@@ -48,6 +50,29 @@ export interface UserBubbleProps {
   readonly absIndex?: number;
   /** Conversation language for the 板砖→Brick display alias (default "zh"). */
   readonly lang?: "zh" | "en";
+  /** Pictures sent WITH this message (ADR 0048 §4), shown above the bubble —
+   *  where the 开拓者 put them. Their record blocks live after the user block
+   *  (inside the turn's span, so a rewind takes both); only the presentation
+   *  differs, which is what D7 is for. */
+  readonly images?: readonly SystemBlock[];
+}
+
+/** Everything the bubble needs to draw one attached picture. `caption` is
+ *  the instrument's reading — the alt text a screen reader gets, since the
+ *  filename says nothing about what is in the frame. */
+function imageView(block: SystemBlock): {
+  readonly path: string;
+  readonly name: string;
+  readonly caption?: string;
+} | null {
+  const d = block.digest;
+  if (d?.kind !== "attachment" || d.image === undefined) return null;
+  if (d.path.length === 0 || d.unreadable === "removed") return null;
+  return {
+    path: d.path,
+    name: d.name,
+    ...(d.caption !== undefined ? { caption: d.caption } : {}),
+  };
 }
 
 /** memo: bails historical bubbles out of Conversation's per-delta re-renders
@@ -58,12 +83,31 @@ export const UserBubble = memo(function UserBubble(
   const t = useT();
   const lang = props.lang ?? "zh";
   const hasActions = props.onRewind !== undefined || props.at !== undefined;
+  const images = (props.images ?? [])
+    .map(imageView)
+    .filter((v): v is NonNullable<typeof v> => v !== null);
   return (
     <div
       className="message-row user-row"
       data-abs-index={props.absIndex}
       style={props.hidden ? { visibility: "hidden" } : undefined}
     >
+      {images.length > 0 && (
+        <div className="message-images">
+          {images.map((img) => (
+            <img
+              key={img.path}
+              className="message-images__thumb"
+              src={attachmentImageUrl(img.path)}
+              // The caption is what the picture IS; the filename is what it
+              // was called. A screen reader wants the former.
+              alt={img.caption ?? img.name}
+              title={img.name}
+              draggable={false}
+            />
+          ))}
+        </div>
+      )}
       <div ref={props.bubbleRef} className="message-bubble user-bubble">
         <div className="message-text">
           {renderBanzhuanText(props.text, "bubble", lang)}

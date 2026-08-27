@@ -29,12 +29,86 @@ export type RenderItem =
       readonly kind: "block";
       readonly block: TerminalRecordBlock;
       readonly index: number;
+      /** Pictures the 开拓者 sent WITH this message (ADR 0048 §4), lifted out
+       *  of the activity run that follows it so the bubble can show them as
+       *  what they are: part of what was handed over, not work Herta did.
+       *  Only ever set on a `user` block. */
+      readonly images?: readonly SystemBlock[];
     }
   | {
       readonly kind: "activity";
       readonly startIndex: number;
       readonly blocks: readonly SystemBlock[];
     };
+
+/** An image attachment block — a picture that was stored, with or without a
+ *  caption. Text/document attachments are NOT lifted: their content is the
+ *  excerpt in the row, and there is nothing to look at. */
+function isImageAttachment(block: SystemBlock): boolean {
+  return (
+    block.digest?.kind === "attachment" && block.digest.image !== undefined
+  );
+}
+
+/**
+ * Lift the pictures a message came with onto the message itself (ADR 0048 §4).
+ *
+ * The RECORD order is user-block-then-attachments: the picture is evidence
+ * that arrived with the words, and it sits inside the turn's span so a rewind
+ * takes both. The SCREEN reads better the other way round — the thumbnail
+ * above the bubble, the way the 开拓者 experienced sending it — and D7 is
+ * exactly the licence to differ here: same record, different overlay.
+ *
+ * Only the run IMMEDIATELY after a user block is considered, and only its
+ * leading image blocks. An image attached in any other position (an
+ * out-of-turn attach, a picture 板砖 produced) stays an ordinary activity row,
+ * because it did not come with a message.
+ */
+export function liftUserImages(items: readonly RenderItem[]): RenderItem[] {
+  const out: RenderItem[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item === undefined) continue;
+    const next = items[i + 1];
+    if (
+      item.kind !== "block" ||
+      item.block.kind !== "user" ||
+      next === undefined ||
+      next.kind !== "activity"
+    ) {
+      out.push(item);
+      continue;
+    }
+    // Leading images only: a run of [image, image, op, image] gives up its
+    // first two, and the op row keeps everything after it in order.
+    let n = 0;
+    while (n < next.blocks.length) {
+      const b = next.blocks[n];
+      if (b === undefined || !isImageAttachment(b)) break;
+      n += 1;
+    }
+    if (n === 0) {
+      out.push(item);
+      continue;
+    }
+    out.push({ ...item, images: next.blocks.slice(0, n) });
+    const rest = next.blocks.slice(n);
+    // The run may be entirely images — then it contributes no activity item at
+    // all, and the next iteration must not re-emit it.
+    if (rest.length > 0) {
+      out.push({
+        kind: "activity",
+        // Keyed by the first REMAINING block's index, so the key stays unique
+        // and the "is this group newer than the last user turn" comparisons
+        // downstream still describe the blocks actually in it.
+        startIndex: next.startIndex + n,
+        blocks: rest,
+      });
+    }
+    i += 1; // consumed `next`
+  }
+  return out;
+}
 
 /**
  * Fold the flat record into render items: maximal runs of consecutive

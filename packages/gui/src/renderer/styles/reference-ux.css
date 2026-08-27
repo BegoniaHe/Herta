@@ -5967,6 +5967,33 @@ button.session-item__badge--dismiss {
   display: flex;
   padding: 44px;
 }
+/* The house scrollbar (same geometry as .conversation / .composer-input),
+   in its light-on-dark form: a zoomed image panned with the OS's chunky
+   default bars, arrow buttons and all, on top of the frosted app (owner
+   2026-08-27) — and the ink-tinted thumb the light surfaces use would be
+   invisible on this ground. */
+.lightbox-viewport::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.lightbox-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+.lightbox-viewport::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.lightbox-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.36);
+  background-clip: padding-box;
+}
+/* Both bars up (zoomed past the pane on BOTH axes) meet in a corner square
+   that defaults to opaque white on the dark ground. */
+.lightbox-viewport::-webkit-scrollbar-corner {
+  background: transparent;
+}
 .lightbox-img {
   /* margin:auto in a flex container BOTH centers a small image and keeps a
      zoomed-past-the-pane one scrollable from its true top-left (plain

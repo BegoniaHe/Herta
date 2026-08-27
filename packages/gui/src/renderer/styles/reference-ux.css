@@ -2376,6 +2376,24 @@ button.agent-preview:active {
 }
 .morph-clone.is-settled {
   will-change: auto;
+  /* The landing (owner 2026-08-27): the swap is HELD for SHADOW_SETTLE_MS
+     (Conversation.tsx) while the parked clone fades its flight shadows —
+     unmounting on the settle commit popped them off with no transition.
+     The float (::after) fades because is-moving left; box-shadow joins the
+     transition list here so the user-variant rule below can fade the rest
+     shadow too. Animating box-shadow is fine HERE: the element is parked
+     and small, unlike the per-frame flight repaint the ::after cross-fade
+     exists to avoid. */
+  transition:
+    opacity 0.12s linear,
+    box-shadow var(--morph-shadow-duration) var(--ease-signature);
+}
+/* The real user bubble carries NO drop shadow (only its inset highlight),
+   so the user clone's rest shadow fades to a zero-alpha twin — a same-
+   geometry shadow, because `none` does not interpolate. The herta clone
+   keeps its rest shadow: the real herta bubble wears one just like it. */
+.morph-clone.user-bubble.is-settled {
+  box-shadow: 0 8px 22px rgba(32, 45, 58, 0);
 }
 
 /* ── Disconnect morph: the composer rises + morphs into the connect button.
@@ -5920,7 +5938,12 @@ button.session-item__badge--dismiss {
   position: absolute;
   bottom: 100%;
   right: 0;
-  margin: 0 0 6px;
+  /* The landed row separates its wrapped lines by .message-row's row-gap
+     (the 14px `gap` shorthand) PLUS the strip's own 6px margin — the clone
+     must hang its strip at the same 20px, or the pictures jump upward by
+     the row-gap at the swap (owner 2026-08-27: "suddenly moving upwards").
+     Keep in sync with .message-row's gap and .message-images' margin. */
+  margin: 0 0 20px;
   /* Width comes inline, measured off the hidden pending row's strip, so the
      clone wraps its pictures exactly like the row it swaps for. Wrapping and
      flex-end justification are inherited from .message-images. */

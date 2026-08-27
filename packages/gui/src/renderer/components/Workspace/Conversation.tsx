@@ -115,6 +115,14 @@ export const GLIDE_WINDOW_MS = 700;
  *  the `rise.start` call. */
 export const OUTGOING_FLIGHT_MS = 860;
 
+/** How long the PARKED clone holds after landing before the swap, so its
+ *  flight shadows can fade out on screen (CSS `.morph-clone.is-settled`) —
+ *  unmounting on the settle commit popped them off with no transition (owner
+ *  2026-08-27: "the shadow suddenly disappeared"). The clone sits exactly on
+ *  the slot, so the hold is invisible except for the fade. Matches
+ *  `--morph-shadow-duration` in reference-ux.css. */
+export const SHADOW_SETTLE_MS = 320;
+
 // Unpinned live-window trim (2026-08-25). Deliberately laxer than the pinned
 // 260→200: the reader is IN this history, so trims should be rare and only
 // ever claim rows provably off-screen above. Begin considering a cut past
@@ -270,6 +278,10 @@ export const Conversation = memo(function Conversation(): JSX.Element {
    *  travel is handed to the flight's settle, so a send with no flight has to
    *  keep travelling immediately or the reserved room never comes on screen. */
   const outgoingFlightArmedRef = useRef(false);
+  /** The landing hold (SHADOW_SETTLE_MS): swap deferred while the parked
+   *  clone's flight shadows fade. Cleared by every teardown path so a stale
+   *  timer can't unhide a bubble a NEW flight just hid. */
+  const outgoingSettleTimer = useRef<number | null>(null);
 
   // Detection: on the pendingUser null→value edge, mount the flying clone +
   // hide the flow bubble. Geometry/animation happens in the effect below,
@@ -285,12 +297,22 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     prevPendingUser.current = pendingUser;
     if (pendingUser === null) {
       outgoingRise.cancel();
+      if (outgoingSettleTimer.current !== null) {
+        window.clearTimeout(outgoingSettleTimer.current);
+        outgoingSettleTimer.current = null;
+      }
       setOutgoingClone(null);
       setHidePendingUser(false);
       composerRef.current?.classList.remove("is-glass");
       return;
     }
     if (!appeared) return;
+    // A fresh send while a previous landing hold is still fading: the stale
+    // timer must not unhide the bubble this flight is about to fly for.
+    if (outgoingSettleTimer.current !== null) {
+      window.clearTimeout(outgoingSettleTimer.current);
+      outgoingSettleTimer.current = null;
+    }
     if (
       overlayRef.current === null ||
       composerRef.current === null ||
@@ -390,8 +412,16 @@ export const Conversation = memo(function Conversation(): JSX.Element {
       ...(flowRef.current !== null ? { watchWidthOf: flowRef.current } : {}),
       onSettle: () => {
         composer.classList.remove("is-glass");
-        setHidePendingUser(false);
-        setOutgoingClone(null);
+        // Landing hold: the clone is parked exactly on the slot; keep it
+        // there while `.is-settled` fades its flight shadows (the float
+        // ::after, and — user variant — the rest shadow, since the real
+        // user bubble carries none), THEN swap. Unmounting on this commit
+        // popped the shadows off with no transition (owner 2026-08-27).
+        outgoingSettleTimer.current = window.setTimeout(() => {
+          outgoingSettleTimer.current = null;
+          setHidePendingUser(false);
+          setOutgoingClone(null);
+        }, SHADOW_SETTLE_MS);
       },
     });
     return () => window.clearTimeout(glassTimer);
@@ -406,6 +436,12 @@ export const Conversation = memo(function Conversation(): JSX.Element {
   const [incomingClone, setIncomingClone] = useState(false);
   const [hideStreaming, setHideStreaming] = useState(false);
   const prevStreaming = useRef<string | null>(null);
+  /** Same landing hold as the outgoing flight (SHADOW_SETTLE_MS): only the
+   *  float shadow fades here — the herta bubble keeps a rest-like shadow of
+   *  its own — but the pop was the same class. The clone keeps mirroring
+   *  the live tokens through the hold, exactly as it does through a
+   *  glide-hold. */
+  const incomingSettleTimer = useRef<number | null>(null);
   // (The detection layout effect — the null→value edge that mounts the clone —
   // lives below the in-flight block: it keys on `visibleStreamingText`, the
   // stream as the flow shows it, which is defined there.)
@@ -469,8 +505,12 @@ export const Conversation = memo(function Conversation(): JSX.Element {
       ...(flowRef.current !== null ? { watchWidthOf: flowRef.current } : {}),
       onSettle: () => {
         composer.classList.remove("is-glass");
-        setHideStreaming(false);
-        setIncomingClone(false);
+        // Landing hold — see incomingSettleTimer.
+        incomingSettleTimer.current = window.setTimeout(() => {
+          incomingSettleTimer.current = null;
+          setHideStreaming(false);
+          setIncomingClone(false);
+        }, SHADOW_SETTLE_MS);
       },
     });
     return () => window.clearTimeout(glassTimer);
@@ -797,6 +837,10 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     prevStreaming.current = visibleStreamingText;
     if (visibleStreamingText === null) {
       incomingRise.cancel();
+      if (incomingSettleTimer.current !== null) {
+        window.clearTimeout(incomingSettleTimer.current);
+        incomingSettleTimer.current = null;
+      }
       setIncomingClone(false);
       setHideStreaming(false);
       composerRef.current?.classList.remove("is-glass");

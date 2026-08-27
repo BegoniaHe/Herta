@@ -51,20 +51,30 @@ export interface UserBubbleProps {
   /** Conversation language for the 板砖→Brick display alias (default "zh"). */
   readonly lang?: "zh" | "en";
   /** Pictures sent WITH this message (ADR 0048 §4), shown above the bubble —
-   *  where the 开拓者 put them. Their record blocks live after the user block
-   *  (inside the turn's span, so a rewind takes both); only the presentation
-   *  differs, which is what D7 is for. */
-  readonly images?: readonly SystemBlock[];
+   *  where the 开拓者 put them. For a record row their blocks live after the
+   *  user block (inside the turn's span, so a rewind takes both); only the
+   *  presentation differs, which is what D7 is for. For the optimistic echo
+   *  they come from the just-taken composer strip — a VIEW type rather than
+   *  SystemBlock so both sources feed the same rendering. */
+  readonly images?: readonly UserImageView[];
 }
 
 /** Everything the bubble needs to draw one attached picture. `caption` is
  *  the instrument's reading — the alt text a screen reader gets, since the
- *  filename says nothing about what is in the frame. */
-function imageView(block: SystemBlock): {
+ *  filename says nothing about what is in the frame. `width`/`height` are
+ *  the sniffed pixel dimensions: stamped as attributes so the row reserves
+ *  the right box BEFORE the bytes load — without them a morph flight (or a
+ *  session-open scroll) measures a slot that grows under it when the image
+ *  arrives. */
+export interface UserImageView {
   readonly path: string;
   readonly name: string;
   readonly caption?: string;
-} | null {
+  readonly width?: number;
+  readonly height?: number;
+}
+
+function imageView(block: SystemBlock): UserImageView | null {
   const d = block.digest;
   if (d?.kind !== "attachment" || d.image === undefined) return null;
   if (d.path.length === 0 || d.unreadable === "removed") return null;
@@ -72,7 +82,17 @@ function imageView(block: SystemBlock): {
     path: d.path,
     name: d.name,
     ...(d.caption !== undefined ? { caption: d.caption } : {}),
+    ...(d.image.width !== undefined ? { width: d.image.width } : {}),
+    ...(d.image.height !== undefined ? { height: d.image.height } : {}),
   };
+}
+
+/** The record-row source: lifted attachment blocks → views (drops the
+ *  non-image / removed ones). */
+export function imageViewsFromBlocks(
+  blocks: readonly SystemBlock[],
+): readonly UserImageView[] {
+  return blocks.map(imageView).filter((v): v is UserImageView => v !== null);
 }
 
 /** memo: bails historical bubbles out of Conversation's per-delta re-renders
@@ -83,9 +103,7 @@ export const UserBubble = memo(function UserBubble(
   const t = useT();
   const lang = props.lang ?? "zh";
   const hasActions = props.onRewind !== undefined || props.at !== undefined;
-  const images = (props.images ?? [])
-    .map(imageView)
-    .filter((v): v is NonNullable<typeof v> => v !== null);
+  const images = props.images ?? [];
   return (
     <div
       className="message-row user-row"
@@ -103,6 +121,10 @@ export const UserBubble = memo(function UserBubble(
               // was called. A screen reader wants the former.
               alt={img.caption ?? img.name}
               title={img.name}
+              // Pixel dimensions reserve the box before the bytes load (see
+              // UserImageView) — the CSS max clamps scale it, ratio kept.
+              {...(img.width !== undefined ? { width: img.width } : {})}
+              {...(img.height !== undefined ? { height: img.height } : {})}
               draggable={false}
             />
           ))}

@@ -28,8 +28,16 @@ export interface StagedImagesState {
     items: readonly { readonly name: string; readonly bytes: Uint8Array }[],
   ) => Promise<void>;
   readonly unstage: (id: string) => void;
-  /** Take the ids to send with a message and clear the strip. */
-  readonly take: () => readonly string[];
+  /** Take the staged pictures to send with a message and clear the strip.
+   *  Full infos, not ids: the optimistic echo shows them, and the failure
+   *  paths hand them back through `restore`. */
+  readonly take: () => readonly StagedImageInfo[];
+  /** Put pictures back in the strip — a failed submit or a cancelled no-key
+   *  card returns what `take` removed. The staged copies still exist
+   *  main-side (only a successful submit's `commit` consumes them), so the
+   *  ids stay valid. Deduped by id: a double-restore must not double the
+   *  strip. */
+  readonly restore: (infos: readonly StagedImageInfo[]) => void;
 }
 
 export function useStagedImages(
@@ -104,11 +112,21 @@ export function useStagedImages(
     [bridge, sessionId, setStaged],
   );
 
-  const take = useCallback((): readonly string[] => {
-    const ids = staged.map((s) => s.id);
+  const take = useCallback((): readonly StagedImageInfo[] => {
     setStaged([]);
-    return ids;
+    return staged;
   }, [staged, setStaged]);
 
-  return { staged, stagePaths, stageBytes, unstage, take };
+  const restore = useCallback(
+    (infos: readonly StagedImageInfo[]) => {
+      if (infos.length === 0) return;
+      setStaged((prev) => {
+        const have = new Set(prev.map((s) => s.id));
+        return [...prev, ...infos.filter((i) => !have.has(i.id))];
+      });
+    },
+    [setStaged],
+  );
+
+  return { staged, stagePaths, stageBytes, unstage, take, restore };
 }

@@ -65,6 +65,40 @@ describe("UserBubble", () => {
     expect(screen.getByLabelText("Rewind to here")).toBeInTheDocument();
     expect(document.querySelector(".message-actions")).not.toBeNull();
   });
+
+  it("pictures render ABOVE the bubble with dimension attrs and the caption as alt (ADR 0048 §4)", () => {
+    const { container } = renderWithLocale(
+      <UserBubble
+        text="看看这个"
+        images={[
+          {
+            path: ".herta/attachments/s/a.png",
+            name: "a.png",
+            caption: "一张三色横条图",
+            width: 640,
+            height: 480,
+          },
+          // No caption yet (the optimistic echo): alt falls back to the name.
+          { path: ".herta/attachments/s/b.png", name: "b.png" },
+        ]}
+      />,
+    );
+    const strip = container.querySelector(".message-images");
+    expect(strip).not.toBeNull();
+    // Above the bubble: the strip precedes it in the row.
+    const bubble = container.querySelector(".message-bubble");
+    expect(strip?.nextElementSibling).toBe(bubble);
+    const imgs = container.querySelectorAll(".message-images__thumb");
+    expect(imgs).toHaveLength(2);
+    // Dimensions reserve the box before the bytes load — a morph flight (or
+    // a session-open scroll) must not measure a slot that grows under it.
+    expect(imgs[0]?.getAttribute("width")).toBe("640");
+    expect(imgs[0]?.getAttribute("height")).toBe("480");
+    // The caption is what the picture IS; the filename is what it was called.
+    expect(imgs[0]?.getAttribute("alt")).toBe("一张三色横条图");
+    expect(imgs[1]?.getAttribute("alt")).toBe("b.png");
+    expect(imgs[1]?.hasAttribute("width")).toBe(false);
+  });
 });
 
 describe("HertaBubble", () => {

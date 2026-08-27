@@ -219,6 +219,9 @@ export const en = {
   // The staged strip (ADR 0048): pictures waiting to be sent WITH a message.
   "composer.staged": "Images to send",
   "composer.staged.remove": "Remove",
+  // Enter with staged pictures and no words (owner 2026-08-27): pictures
+  // ride a message; an empty user block is not a message.
+  "composer.attach.needText": "Pictures ride a message — say something first.",
   "connect.button": "Connect to Herta",
   "connect.failed": "Couldn't start a session — try again.",
   "workspace.rewind": "Rewind to here",

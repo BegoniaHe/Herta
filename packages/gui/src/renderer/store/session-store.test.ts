@@ -333,6 +333,77 @@ describe("SessionStore", () => {
     expect(store.getSnapshot().pendingUser).toBeNull();
   });
 
+  // ── Pictures ride their carrier (ADR 0048 §4) ─────────────────────────────
+  // The emit guard clears each image list the moment its carrier clears, no
+  // matter which of the many clearing sites fired — pinned per carrier here.
+  describe("picture-carrier emit guard", () => {
+    const img = { id: "i1", name: "shot.png", path: ".herta/a/shot.png" };
+
+    it("echo images clear WITH the echo when the user block lands", () => {
+      const mock = createMockHertaBridge();
+      const store = new SessionStore();
+      store.connect(mock.bridge);
+      store.markPendingUser("看看这个", [img]);
+      expect(store.getSnapshot().pendingUserImages).toEqual([img]);
+      mock.emitRecord({
+        kind: "block",
+        blockId: "u1",
+        block: { kind: "user", text: "看看这个" },
+      });
+      expect(store.getSnapshot().pendingUserImages).toBeNull();
+    });
+
+    it("echo images clear on turn failed (a site that never mentions them)", () => {
+      const mock = createMockHertaBridge();
+      const store = new SessionStore();
+      store.connect(mock.bridge);
+      store.markPendingUser("oops", [img]);
+      mock.emitTurn({
+        kind: "failed",
+        turnId: "t1",
+        error: { code: "x", message: "y" },
+      });
+      expect(store.getSnapshot().pendingUserImages).toBeNull();
+    });
+
+    it("withdrawPendingUser moves the pictures to the composer draft", () => {
+      const store = new SessionStore();
+      store.markPendingUser("failed send", [img]);
+      store.withdrawPendingUser("failed send", [img]);
+      const s = store.getSnapshot();
+      expect(s.pendingUser).toBeNull();
+      expect(s.pendingUserImages).toBeNull();
+      expect(s.composerDraft).toBe("failed send");
+      expect(s.composerDraftImages).toEqual([img]);
+    });
+
+    it("clearComposerDraft drops the draft images with the draft", () => {
+      const store = new SessionStore();
+      store.requestComposerDraft("text", null, [img]);
+      expect(store.getSnapshot().composerDraftImages).toEqual([img]);
+      store.clearComposerDraft();
+      expect(store.getSnapshot().composerDraftImages).toBeNull();
+    });
+
+    it("requestKeyPrompt moves the pictures from the echo to the hold; closing drops them", () => {
+      const store = new SessionStore();
+      store.markPendingUser("no key yet", [img]);
+      store.requestKeyPrompt("no key yet", [img]);
+      const held = store.getSnapshot();
+      expect(held.pendingUser).toBeNull();
+      expect(held.pendingUserImages).toBeNull();
+      expect(held.needsKeyImages).toEqual([img]);
+      store.clearKeyPrompt();
+      expect(store.getSnapshot().needsKeyImages).toBeNull();
+    });
+
+    it("a rewind draft carries NO images by default (its stored copies are GC'd)", () => {
+      const store = new SessionStore();
+      store.requestComposerDraft("rewound text", "warning");
+      expect(store.getSnapshot().composerDraftImages).toBeNull();
+    });
+  });
+
   it("ignores backend-layer deltas (they must not enter Herta's speech bubble)", () => {
     const mock = createMockHertaBridge();
     const store = new SessionStore();

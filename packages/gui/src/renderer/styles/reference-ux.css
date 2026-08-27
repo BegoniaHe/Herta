@@ -2591,8 +2591,17 @@ button.agent-preview:active {
 .composer {
   /* Anchor for the rewind file-edit spill (.composer-notice) that floats above. */
   position: relative;
+  /* Bottom-anchored lines (ADR 0048 §4): the composer grows UPWARD when the
+     staged-image strip is up, and the input row must not move while it does.
+     With wrap already on (the strip rule below), align-content applies even
+     to the single-line state — flex-end pins the line(s) to the bottom, and
+     the padding-bottom values reproduce what align-items:center gave at each
+     fixed height (78/104/60px), so the resting look is unchanged. */
+  align-content: flex-end;
+  padding-bottom: 15px;
   transition:
     height 0.44s var(--ease-signature),
+    padding 0.44s var(--ease-signature),
     opacity 0.18s ease,
     border-color 0.18s ease,
     box-shadow 0.18s ease,
@@ -2676,6 +2685,7 @@ button.agent-preview:active {
   visibility: hidden;
   transition:
     height 0.44s var(--ease-signature),
+    padding 0.44s var(--ease-signature),
     opacity 0.18s ease,
     border-color 0.18s ease,
     box-shadow 0.18s ease,
@@ -2698,6 +2708,8 @@ button.agent-preview:active {
    0.44s signature height transition both ways. */
 .composer.is-shrunk {
   height: 60px;
+  /* (58 − line)/2 — see the bottom-anchored note on .composer. */
+  padding-bottom: 6px;
 }
 
 /* Galaxy transfer entrance. Opacity is deliberately LATE-weighted (user
@@ -2765,6 +2777,9 @@ button.agent-preview:active {
   .status-row::before,
   .status-row::after {
     transition: none !important;
+  }
+  .composer-staged {
+    animation: none;
   }
   .activity-line-group.is-pending {
     animation: none;
@@ -5720,30 +5735,81 @@ button.session-item__badge--dismiss {
 
 /* ── Staged images (ADR 0048 §4) ─────────────────────────────────────────
    Pictures waiting in the composer for the message they belong to. The strip
-   sits ABOVE the input, inside the composer's own box, so the composer grows
-   to hold them — the picture and the sentence about it stay one object.
+   sits ABOVE the input, inside the composer's own box, and the composer GROWS
+   to hold it (.has-staged below) — the picture and the sentence about it stay
+   one object.
 
    The composer is a flex ROW (attach · input · send); this strip is a full-
-   width sibling, so the row is wrapped and the strip claims its own line. */
+   width sibling, so the row is wrapped and the strip claims its own line.
+   The lines are bottom-anchored (see .composer's align-content), so the
+   growth extends the top edge upward and the input row never moves. */
 .composer {
   flex-wrap: wrap;
+}
+/* 78px base + 56px thumbs + 10px strip gap. Owner report 2026-08-27: without
+   this the fixed 78px box kept its height and the strip painted OVER the
+   input. Rides the 0.44s signature height transition both ways; the strip
+   itself fades in under the grow (below). */
+.composer.has-staged {
+  height: 144px;
+}
+@media (max-width: 1200px) {
+  /* The 104px media height, same growth. And the bottom-anchor padding that
+     reproduces centering at 104px — (102 − line)/2. */
+  .composer {
+    padding-bottom: 28px;
+  }
+  .composer.has-staged {
+    height: 170px;
+  }
 }
 .composer-staged {
   order: -1; /* before the attach button, whatever the DOM order */
   flex-basis: 100%;
   display: flex;
-  flex-wrap: wrap;
+  /* ONE row, always: wrapping would make the composer's grown height depend
+     on the count, and the 0.44s height transition needs a fixed target.
+     Overflow pans horizontally, Codex-style. */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  max-width: 100%;
   gap: 8px;
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   padding: 0;
   list-style: none;
   /* Above .composer-wave, which is a positioned first child — non-positioned
      in-flow content slips beneath it (same reason .composer-attach is
      positioned). */
   position: relative;
+  /* The strip mounts at its final slot while the box is still growing over
+     it — fading in under the grow keeps the first frames from showing
+     thumbnails outside the glass. */
+  animation: staged-strip-in 0.28s ease 0.14s both;
+}
+@keyframes staged-strip-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* Same slim pill scrollbar as .composer-input, for the overflow pan. */
+.composer-staged::-webkit-scrollbar {
+  height: 8px;
+}
+.composer-staged::-webkit-scrollbar-track {
+  background: transparent;
+}
+.composer-staged::-webkit-scrollbar-thumb {
+  background: var(--ink-a13);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 .composer-staged__item {
   position: relative;
+  flex: 0 0 auto; /* nowrap strip: never squeezed by its siblings */
   width: 56px;
   height: 56px;
   border-radius: 10px;
@@ -5820,4 +5886,20 @@ button.session-item__badge--dismiss {
   display: block;
   object-fit: contain;
   user-select: none;
+}
+/* The send morph's copy of the strip (ADR 0048 §4): the pictures fly WITH
+   the bubble. Absolutely hung off the clone's top edge so the flight
+   geometry — which aims the BUBBLE at its measured slot — is untouched;
+   right-aligned to the bubble's right edge, which is exactly where the
+   landed row's strip sits (the row justifies its images flex-end against
+   the same edge). bottom:100% + the 6px margin reproduce the row strip's
+   6px gap, so the settle swap is seamless. */
+.morph-clone-images {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin: 0 0 6px;
+  /* Width comes inline, measured off the hidden pending row's strip, so the
+     clone wraps its pictures exactly like the row it swaps for. Wrapping and
+     flex-end justification are inherited from .message-images. */
 }

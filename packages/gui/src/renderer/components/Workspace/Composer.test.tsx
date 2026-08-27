@@ -901,9 +901,11 @@ describe("Composer — attachments (ADR 0033)", () => {
     );
   });
 
-  it("a picture alone is a message — no text required", async () => {
-    // "look at this" is often the whole point; requiring words would make the
-    // strip a trap the user cannot send from.
+  it("a picture alone does NOT send — pictures ride words (owner 2026-08-27)", async () => {
+    // Reverses the first cut: an empty user block is a degenerate moment in
+    // the record (（用户 说） with nothing said, which the narrative actor
+    // then completes against). The refusal is SHOWN, not silent, and the
+    // strip keeps the picture for the message it still awaits.
     const mock = createMockHertaBridge();
     const { container } = renderAttached(mock);
     const form = container.querySelector(".composer") as HTMLElement;
@@ -913,7 +915,50 @@ describe("Composer — attachments (ADR 0033)", () => {
     await act(async () => {
       fireEvent.submit(form);
     });
-    expect(mock.calls.submitTextStaged[0]).toEqual(["staged-0"]);
+    expect(mock.calls.submitText).toHaveLength(0);
+    expect(
+      screen.getByText(/Pictures ride a message — say something first/i),
+    ).toBeInTheDocument();
+    expect(container.querySelectorAll(".composer-staged__item")).toHaveLength(
+      1,
+    );
+  });
+
+  it("plain empty Enter stays a QUIET no-op — the notice is only for stranded pictures", async () => {
+    const mock = createMockHertaBridge();
+    const { container } = renderAttached(mock);
+    const form = container.querySelector(".composer") as HTMLElement;
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+    expect(mock.calls.submitText).toHaveLength(0);
+    expect(
+      screen.queryByText(/Pictures ride a message/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("staged pictures hold the composer expanded (has-staged; never is-shrunk)", async () => {
+    // The strip is the only sign the pictures are pending — resting shrunk
+    // would clip it, and the fixed 78px box painted it OVER the input
+    // (owner screenshots 2026-08-27).
+    const mock = createMockHertaBridge();
+    const { container } = renderAttached(mock);
+    const form = container.querySelector(".composer") as HTMLElement;
+    expect(form.className).toContain("is-shrunk"); // rests shrunk
+    await act(async () => {
+      fireEvent.drop(form, fileDrop([{ name: "shot.png" }]));
+    });
+    expect(form.className).toContain("has-staged");
+    // Even after focus LEAVES the form (which alone would re-shrink it),
+    // the pending pictures keep it open.
+    fireEvent.blur(form, { relatedTarget: null });
+    expect(form.className).not.toContain("is-shrunk");
+    // Removing the last picture lets it rest again.
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Remove shot.png"));
+    });
+    expect(form.className).not.toContain("has-staged");
+    expect(form.className).toContain("is-shrunk");
   });
 
   it("the × removes a staged picture and tells main to delete the copy", async () => {

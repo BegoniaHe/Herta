@@ -204,6 +204,9 @@ export const zh = {
   // The staged strip (ADR 0048): pictures waiting to be sent WITH a message.
   "composer.staged": "待发送的图片",
   "composer.staged.remove": "移除",
+  // Enter with staged pictures and no words (owner 2026-08-27): pictures
+  // ride a message; an empty user block is not a message.
+  "composer.attach.needText": "图片跟着话走——说点什么再发。",
   "connect.button": "接入黑塔空间站",
   "connect.failed": "会话没能建立——请重试。",
   "workspace.rewind": "回到此处",

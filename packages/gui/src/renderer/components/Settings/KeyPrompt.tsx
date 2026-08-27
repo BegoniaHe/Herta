@@ -15,6 +15,10 @@ export function KeyPrompt(): JSX.Element | null {
   const t = useT();
   const { bridge, sessionStore } = useHertaBridge();
   const needsKeyText = useSessionSelector((s) => s.needsKeyText);
+  // Pictures held with the message (ADR 0048 §4): the key check refused
+  // before their staged copies were consumed, so the re-send carries them
+  // and a cancel returns them to the composer strip.
+  const needsKeyImages = useSessionSelector((s) => s.needsKeyImages);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -71,15 +75,19 @@ export function KeyPrompt(): JSX.Element | null {
   if (!open) return null;
 
   function cancel(): void {
+    // Read BOTH before clearKeyPrompt: the emit guard drops the images the
+    // moment their carrier (needsKeyText) clears.
     const text = needsKeyText;
+    const staged = needsKeyImages ?? undefined;
     sessionStore.clearKeyPrompt();
-    if (text !== null) sessionStore.requestComposerDraft(text, null);
+    if (text !== null) sessionStore.requestComposerDraft(text, null, staged);
   }
 
   function save(): void {
     const key = draft.trim();
     if (key.length === 0 || saving) return;
     const text = needsKeyText;
+    const staged = needsKeyImages ?? undefined;
     setSaving(true);
     setFailed(false);
     setRejected(false);
@@ -100,7 +108,8 @@ export function KeyPrompt(): JSX.Element | null {
         if (sessionStore.getSnapshot().needsKeyText !== text) return;
         sessionStore.clearKeyPrompt();
         // Re-send the held message — the live key now lets the turn run.
-        if (text !== null) submitMessage(bridge, sessionStore, text);
+        // The pictures ride it again: their staged ids are still valid.
+        if (text !== null) submitMessage(bridge, sessionStore, text, staged);
       })
       .catch(() => {
         setFailed(true);

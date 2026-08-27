@@ -9,17 +9,34 @@ import { renderWithLocale } from "../../i18n/test-util.js";
 import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
 import { KeyPrompt } from "./KeyPrompt.js";
 
-/** Opens the no-key card with `text`, and surfaces the composer draft so a test
+/** Opens the no-key card with `text` (and optionally the pictures held with
+ *  it), and surfaces the composer draft (+ its restaged pictures) so a test
  *  can assert a cancel restored the held message. */
-function Harness({ text }: { readonly text: string }): JSX.Element {
+function Harness({
+  text,
+  images,
+}: {
+  readonly text: string;
+  readonly images?: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly path: string;
+  }[];
+}): JSX.Element {
   const { sessionStore } = useHertaBridge();
-  const { composerDraft } = useActiveSession();
+  const { composerDraft, composerDraftImages } = useActiveSession();
   return (
     <>
-      <button type="button" onClick={() => sessionStore.requestKeyPrompt(text)}>
+      <button
+        type="button"
+        onClick={() => sessionStore.requestKeyPrompt(text, images)}
+      >
         open
       </button>
       <span data-testid="draft">{composerDraft ?? ""}</span>
+      <span data-testid="draft-images">
+        {(composerDraftImages ?? []).map((i) => i.id).join(",")}
+      </span>
       <KeyPrompt />
     </>
   );
@@ -28,10 +45,15 @@ function Harness({ text }: { readonly text: string }): JSX.Element {
 function renderHarness(
   mock: ReturnType<typeof createMockHertaBridge>,
   text: string,
+  images?: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly path: string;
+  }[],
 ) {
   return renderWithLocale(
     <HertaBridgeProvider bridge={mock.bridge}>
-      <Harness text={text} />
+      <Harness text={text} {...(images !== undefined ? { images } : {})} />
     </HertaBridgeProvider>,
   );
 }
@@ -146,5 +168,41 @@ describe("KeyPrompt", () => {
     );
     expect(mock.calls.setDeepSeekKey).toEqual([]);
     expect(getByTestId("draft").textContent).toBe("draft to keep");
+  });
+
+  // ── Pictures held with the message (ADR 0048 §4) ──────────────────────────
+  // The key check refused BEFORE `commit` consumed the staged copies, so the
+  // ids stay valid on both exits from the card.
+
+  it("Save & send re-sends the held pictures with the message", async () => {
+    const mock = createMockHertaBridge();
+    const img = { id: "img-7", name: "shot.png", path: ".herta/a/shot.png" };
+    const { getByText, getByLabelText } = renderHarness(mock, "看看这个", [
+      img,
+    ]);
+    fireEvent.click(getByText("open"));
+    fireEvent.change(getByLabelText("DeepSeek API key"), {
+      target: { value: "sk-newkey99" },
+    });
+    fireEvent.click(getByText("Save & send"));
+    await waitFor(() => expect(mock.calls.submitText).toContain("看看这个"));
+    expect(mock.calls.submitTextStaged[0]).toEqual(["img-7"]);
+  });
+
+  it("Cancel returns the held pictures to the composer draft", async () => {
+    const mock = createMockHertaBridge();
+    const img = { id: "img-9", name: "shot.png", path: ".herta/a/shot.png" };
+    const { getByText, getByTestId, queryByText } = renderHarness(
+      mock,
+      "还没发出去",
+      [img],
+    );
+    fireEvent.click(getByText("open"));
+    fireEvent.click(getByText("Not now"));
+    await waitFor(() =>
+      expect(queryByText("Connect Herta to DeepSeek")).toBeNull(),
+    );
+    expect(getByTestId("draft").textContent).toBe("还没发出去");
+    expect(getByTestId("draft-images").textContent).toBe("img-9");
   });
 });

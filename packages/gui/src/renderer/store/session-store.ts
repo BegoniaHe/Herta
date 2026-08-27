@@ -17,6 +17,7 @@ import type {
   SessionNoSession,
   SessionSnapshot,
   SpeechControlEvent,
+  StagedImageInfo,
 } from "../ipc/bridge-types.js";
 
 export type SessionStatus = "idle" | "thinking" | "speaking";
@@ -50,6 +51,13 @@ export interface SessionSnapshotView {
    *  immediately (below the record, above the thinking/streaming row)
    *  until the turn's own user RecordEvent lands. */
   readonly pendingUser: string | null;
+  /** Pictures riding the optimistic echo (ADR 0048 §4) — the staged images
+   *  taken from the composer strip at send, so the echo (and the flying
+   *  clone) already shows them instead of popping them in when the record
+   *  lands. Never non-null while `pendingUser` is null: the emit guard
+   *  clears it with its carrier, whichever of the many clearing sites
+   *  fired. */
+  readonly pendingUserImages: readonly StagedImageInfo[] | null;
   /** True while the supervisor-veto retract morph is in flight:
    *  streamingText holds the vetoed candidate (the morph's shrink source)
    *  and retryText buffers the retry's deltas. Cleared when the finalized
@@ -129,6 +137,13 @@ export interface SessionSnapshotView {
    *  user message returns here for editing). The Composer adopts it then calls
    *  `clearComposerDraft`. Null when there's nothing to restore. */
   readonly composerDraft: string | null;
+  /** Pictures to RE-STAGE when the composer adopts the draft — set by a
+   *  failed submit or a cancelled no-key card, whose staged copies still
+   *  exist main-side (only `commit` consumes them; the key check runs
+   *  before it). NOT set by a rewind: a rewound turn's stored copies are
+   *  GC'd, so there is nothing left to restage. Rides `composerDraft`'s
+   *  lifecycle via the emit guard. */
+  readonly composerDraftImages: readonly StagedImageInfo[] | null;
   /** One-shot transient notice shown by the composer — e.g. the rewind warning
    *  that 板砖's file edits were NOT reverted. Cleared on the next keystroke. */
   readonly composerNotice: string | null;
@@ -136,6 +151,11 @@ export interface SessionSnapshotView {
    *  user just tried to send with no DeepSeek key set. Saving a key re-submits
    *  this text; cancelling restores it to the composer. Null = card closed. */
   readonly needsKeyText: string | null;
+  /** Pictures held WITH the no-key message: the key check refuses before
+   *  `commit` consumes the staged copies, so the re-send can still carry
+   *  them and a cancel can put them back in the strip. Rides
+   *  `needsKeyText`'s lifecycle via the emit guard. */
+  readonly needsKeyImages: readonly StagedImageInfo[] | null;
   /** True once the main process has resolved the initial state (opened a
    *  session, or signalled no-session). Gates the disconnected UI so it
    *  never flashes during the async launch bootstrap. */
@@ -177,6 +197,7 @@ const INITIAL: SessionSnapshotView = {
   status: "idle",
   error: null,
   pendingUser: null,
+  pendingUserImages: null,
   retracting: false,
   retryText: null,
   retractKeepLen: null,
@@ -195,8 +216,10 @@ const INITIAL: SessionSnapshotView = {
   backendWorkspace: null,
   backendWorkspaceIsDefault: false,
   composerDraft: null,
+  composerDraftImages: null,
   composerNotice: null,
   needsKeyText: null,
+  needsKeyImages: null,
   bootstrapped: false,
   turnFailed: false,
   turnFailedStatus: null,
@@ -324,9 +347,16 @@ export class SessionStore {
 
   /** Optimistically echo the message the user just sent, before the turn's
    *  user RecordEvent arrives. Cleared when that block lands (onRecord) or
-   *  when the turn ends / a reset replaces the session. */
-  markPendingUser(text: string): void {
-    this.emit({ ...this.snapshot, pendingUser: text });
+   *  when the turn ends / a reset replaces the session. `images` are the
+   *  staged pictures riding this message (ADR 0048 §4), so the echo and its
+   *  flying clone show them from the first frame. */
+  markPendingUser(text: string, images?: readonly StagedImageInfo[]): void {
+    this.emit({
+      ...this.snapshot,
+      pendingUser: text,
+      pendingUserImages:
+        images !== undefined && images.length > 0 ? images : null,
+    });
   }
 
   /** Withdraw a rejected submit's optimistic echo (audit 2026-07-10): when
@@ -334,9 +364,17 @@ export class SessionStore {
    *  invariant), no safety net will clear the echo. Matching text only — a
    *  stale rejection must never clear a NEWER submit's echo — and the text
    *  goes back to the composer draft so nothing typed is lost. */
-  withdrawPendingUser(text: string): void {
+  withdrawPendingUser(text: string, images?: readonly StagedImageInfo[]): void {
     if (this.snapshot.pendingUser !== text) return;
-    this.emit({ ...this.snapshot, pendingUser: null, composerDraft: text });
+    this.emit({
+      ...this.snapshot,
+      pendingUser: null,
+      composerDraft: text,
+      // The pictures go back too: their staged copies still exist main-side
+      // (the submit never reached `commit`), so the ids restage cleanly.
+      composerDraftImages:
+        images !== undefined && images.length > 0 ? images : null,
+    });
   }
 
   /** Stage the withdrawn user text (+ optional warning) for the composer to
@@ -344,15 +382,22 @@ export class SessionStore {
    *  `text` may be null to show a notice ALONE — a rewind that failed has no
    *  withdrawn text to restore but still owes the user an explanation
    *  (audit 2026-07-24, M3). */
-  requestComposerDraft(text: string | null, notice: string | null): void {
+  requestComposerDraft(
+    text: string | null,
+    notice: string | null,
+    images?: readonly StagedImageInfo[],
+  ): void {
     this.emit({
       ...this.snapshot,
       composerDraft: text,
+      composerDraftImages:
+        images !== undefined && images.length > 0 ? images : null,
       composerNotice: notice,
     });
   }
 
-  /** The composer consumed the staged draft — null it so it isn't re-applied. */
+  /** The composer consumed the staged draft — null it so it isn't re-applied.
+   *  (The emit guard drops `composerDraftImages` with it.) */
   clearComposerDraft(): void {
     if (this.snapshot.composerDraft === null) return;
     this.emit({ ...this.snapshot, composerDraft: null });
@@ -373,9 +418,17 @@ export class SessionStore {
   }
 
   /** Open the no-key onboarding card, holding the message that couldn't send
-   *  (no DeepSeek key). Also clears the optimistic echo it had shown. */
-  requestKeyPrompt(text: string): void {
-    this.emit({ ...this.snapshot, pendingUser: null, needsKeyText: text });
+   *  (no DeepSeek key). Also clears the optimistic echo it had shown. The
+   *  pictures move from the echo to the hold: the key check refused BEFORE
+   *  `commit` consumed their staged copies, so the re-send still carries
+   *  them and a cancel can restage them. */
+  requestKeyPrompt(text: string, images?: readonly StagedImageInfo[]): void {
+    this.emit({
+      ...this.snapshot,
+      pendingUser: null,
+      needsKeyText: text,
+      needsKeyImages: images !== undefined && images.length > 0 ? images : null,
+    });
   }
 
   /** Close the no-key onboarding card. */
@@ -474,6 +527,21 @@ export class SessionStore {
   }
 
   private emit(next: SessionSnapshotView): void {
+    // Shape guard at the commit boundary (the speech-commit-guard pattern):
+    // pictures ride a carrier — the echo, the draft, the no-key hold — and
+    // MUST clear with it. The carriers are cleared from many sites (turn
+    // finished/failed, the record's user block, resets, the safety nets);
+    // normalizing here means none of those sites can strand a picture list,
+    // now or after the next refactor.
+    if (next.pendingUser === null && next.pendingUserImages !== null) {
+      next = { ...next, pendingUserImages: null };
+    }
+    if (next.composerDraft === null && next.composerDraftImages !== null) {
+      next = { ...next, composerDraftImages: null };
+    }
+    if (next.needsKeyText === null && next.needsKeyImages !== null) {
+      next = { ...next, needsKeyImages: null };
+    }
     this.snapshot = next;
     for (const l of this.listeners) l();
   }
@@ -517,6 +585,7 @@ export class SessionStore {
       status: "idle",
       error: null,
       pendingUser: null,
+      pendingUserImages: null,
       retracting: false,
       retryText: null,
       retractKeepLen: null,
@@ -540,8 +609,10 @@ export class SessionStore {
       backendWorkspaceIsDefault: e.backendWorkspaceIsDefault ?? false,
       // A fresh activation starts the composer empty (no stale rewind draft).
       composerDraft: null,
+      composerDraftImages: null,
       composerNotice: null,
       needsKeyText: null,
+      needsKeyImages: null,
       bootstrapped: true,
       turnFailed: false,
       turnFailedStatus: null,

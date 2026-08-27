@@ -50,17 +50,24 @@ export function Composer(): JSX.Element {
   const { composerRef, sendButtonRef } = useWorkspaceRefs();
   // Selector-based: the composer needs a handful of cold fields; the whole-
   // snapshot subscription re-rendered it (and its highlight overlay) per delta.
-  const { status, overlay, sessionId, composerDraft, composerNotice } =
-    useSessionSelector(
-      (s) => ({
-        status: s.status,
-        overlay: s.overlay,
-        sessionId: s.sessionId,
-        composerDraft: s.composerDraft,
-        composerNotice: s.composerNotice,
-      }),
-      shallowEqualObjects,
-    );
+  const {
+    status,
+    overlay,
+    sessionId,
+    composerDraft,
+    composerDraftImages,
+    composerNotice,
+  } = useSessionSelector(
+    (s) => ({
+      status: s.status,
+      overlay: s.overlay,
+      sessionId: s.sessionId,
+      composerDraft: s.composerDraft,
+      composerDraftImages: s.composerDraftImages,
+      composerNotice: s.composerNotice,
+    }),
+    shallowEqualObjects,
+  );
   // The conversation's language drives the 板砖→Brick surface alias: in an EN
   // session the ghost/insert use "brick" and a typed "@brick" is translated to
   // the wire token "@板砖" before dispatch.
@@ -118,10 +125,20 @@ export function Composer(): JSX.Element {
 
   // Shared submit path for the ↑ button (form submit) and Enter-to-send.
   const doSubmit = (): void => {
+    if (busy) return;
     const trimmed = text.trim();
-    // A picture alone is a message: "look at this" is often the whole point,
-    // and requiring words to send one would make the strip a trap.
-    if ((trimmed.length === 0 && images.staged.length === 0) || busy) return;
+    if (trimmed.length === 0) {
+      // Pictures need words (owner 2026-08-27, reversing the first cut): an
+      // empty user block is a degenerate moment in the record — （用户 说）
+      // with nothing said, which the narrative actor then completes against.
+      // Enter with staged pictures says WHY nothing was sent instead of
+      // silently doing nothing; plain empty Enter stays a quiet no-op, as
+      // it always was.
+      if (images.staged.length > 0) {
+        sessionStore.setComposerNotice(t("composer.attach.needText"));
+      }
+      return;
+    }
     // EN surface alias: translate a typed "@brick" (any case) back to the wire
     // trigger "@板砖" BEFORE it enters the record/dispatch — code spans exempt
     // (a backticked `@brick` is quotation). See aliasBrickInput, kept in
@@ -129,14 +146,14 @@ export function Composer(): JSX.Element {
     const dispatched = aliasBrickInput(trimmed, lang);
     // Take the staged pictures BEFORE dispatching: they ride this message,
     // and the strip must empty on the same frame the text does (ADR 0048 §4).
-    const stagedIds = images.take();
+    const staged = images.take();
     // Optimistic echo + dispatch. With no DeepSeek key set, the backend
     // reports needsKey and submitMessage opens the no-key onboarding card.
     submitMessage(
       bridge,
       sessionStore,
       dispatched,
-      stagedIds.length > 0 ? stagedIds : undefined,
+      staged.length > 0 ? staged : undefined,
     );
     setText("");
     // The rewind file-edit notice persists through editing; clear it once the
@@ -199,13 +216,17 @@ export function Composer(): JSX.Element {
     }
   });
 
-  // Adopt a rewind-restored draft: a rewound turn returns its user text here for
-  // editing. Load it into the input, focus + place the caret at the end, then
-  // clear the one-shot so it isn't re-applied on the next render.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the draft signal; setters/store/ref are stable
+  // Adopt a restored draft: a rewound turn — or a submit that failed before
+  // any turn lifecycle, or a cancelled no-key card — returns its user text
+  // here for editing. Load it into the input, focus + place the caret at the
+  // end, then clear the one-shot so it isn't re-applied on the next render.
+  // A failed submit's pictures come back too (their staged copies survived —
+  // only a successful submit consumes them); a rewind never carries any.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the draft signal; setters/store/ref/restore are stable
   useEffect(() => {
     if (composerDraft === null) return;
     setText(composerDraft);
+    if (composerDraftImages !== null) images.restore(composerDraftImages);
     setHintActive(false);
     pendingCaret.current = composerDraft.length;
     taRef.current?.focus();
@@ -253,8 +274,11 @@ export function Composer(): JSX.Element {
   const [dragOver, setDragOver] = useState(false);
 
   // A file drag over the composer also expands it — a drop target should
-  // not be at its smallest exactly while the user is aiming at it.
-  const shrunk = !focusWithin && !dragOver;
+  // not be at its smallest exactly while the user is aiming at it. Staged
+  // pictures also hold it open: the strip is the only sign the pictures are
+  // pending, and shrinking would clip it (ADR 0048 §4).
+  const hasStaged = images.staged.length > 0;
+  const shrunk = !focusWithin && !dragOver && !hasStaged;
 
   /**
    * A picked or dropped batch splits by KIND (ADR 0048 §4): pictures stage in
@@ -327,7 +351,7 @@ export function Composer(): JSX.Element {
   return (
     <form
       ref={composerRef}
-      className={`composer${shrunk ? " is-shrunk" : ""}${suppressed ? " is-suppressed" : ""}${dragOver ? " is-dragover" : ""}`}
+      className={`composer${shrunk ? " is-shrunk" : ""}${hasStaged ? " has-staged" : ""}${suppressed ? " is-suppressed" : ""}${dragOver ? " is-dragover" : ""}`}
       onSubmit={(e) => {
         e.preventDefault();
         doSubmit();

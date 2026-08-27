@@ -44,7 +44,11 @@ import {
   preGlideScrollTop,
   targetExtentFor,
 } from "./turn-headroom.js";
-import { UserBubble } from "./UserBubble.js";
+import {
+  imageViewsFromBlocks,
+  UserBubble,
+  type UserImageView,
+} from "./UserBubble.js";
 import { useConversationScroll } from "./useConversationScroll.js";
 import {
   E_OUT_CUBIC,
@@ -145,6 +149,10 @@ function renderBlock(
   // Pictures sent WITH this message (ADR 0048 §4), lifted onto the bubble.
   images?: readonly SystemBlock[],
 ): JSX.Element | null {
+  // Blocks → bubble views here rather than in UserBubble, so the optimistic
+  // echo (whose pictures come from the composer strip, not the record) can
+  // feed the same prop.
+  const imageViews = images !== undefined ? imageViewsFromBlocks(images) : [];
   // Per-block timestamp (Slice 4): `at` is stamped at the output boundaries
   // (live sink emit + JSONL persist), so each bubble shows its own time.
   // Pre-timestamp blocks lack `at` → the bubble hides its timestamp line
@@ -163,7 +171,7 @@ function renderBlock(
           at={block.at}
           lang={lang}
           {...(onRewind !== undefined ? { onRewind } : {})}
-          {...(images !== undefined && images.length > 0 ? { images } : {})}
+          {...(imageViews.length > 0 ? { images: imageViews } : {})}
         />
       );
     case "herta":
@@ -189,6 +197,7 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     streamingText,
     retryText,
     pendingUser,
+    pendingUserImages,
     retracting,
     retractKeepLen,
     turnStartedAt,
@@ -218,6 +227,21 @@ export const Conversation = memo(function Conversation(): JSX.Element {
   // conversation (every historical bubble) 60×/s. Conversation re-renders per
   // DELTA (streamingText identity), which the memoized rows absorb.
 
+  // The optimistic echo's pictures as bubble views (ADR 0048 §4). No caption
+  // yet — it is being computed main-side; the record row carries it. The
+  // sniffed dimensions ride along so the echo reserves the real box before
+  // the thumbnails load (the morph measures this slot).
+  const pendingEchoImages = useMemo<readonly UserImageView[]>(
+    () =>
+      (pendingUserImages ?? []).map((s) => ({
+        path: s.path,
+        name: s.name,
+        ...(s.width !== undefined ? { width: s.width } : {}),
+        ...(s.height !== undefined ? { height: s.height } : {}),
+      })),
+    [pendingUserImages],
+  );
+
   // Outgoing send morph: on the pendingUser null→value edge, mount a flying
   // clone in the workspace overlay and rise it from the composer to its
   // resting slot (crisp left/top). The flow bubble stays hidden until settle.
@@ -232,6 +256,12 @@ export const Conversation = memo(function Conversation(): JSX.Element {
   const pendingUserBubbleRef = useRef<HTMLDivElement>(null);
   const [outgoingClone, setOutgoingClone] = useState<{
     text: string;
+    images: readonly UserImageView[];
+    /** The hidden pending row's strip width, so the clone's strip wraps
+     *  EXACTLY like the one it will swap for — a max-content clone laid
+     *  three pictures in one oversized line while the landed row wrapped
+     *  them into two (seen live 2026-08-27). */
+    imagesWidthPx?: number;
   } | null>(null);
   const [hidePendingUser, setHidePendingUser] = useState(false);
   const prevPendingUser = useRef<string | null>(null);
@@ -287,7 +317,23 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     }
     outgoingFlightArmedRef.current = true;
     setHidePendingUser(true);
-    setOutgoingClone({ text: pendingUser });
+    // The clone carries the message's pictures too (set in the same store
+    // emit as pendingUser, so this commit sees them): the strip's images
+    // lift off with the bubble instead of popping in at the landing. The
+    // hidden pending row is already in the DOM (this is a layout effect),
+    // so its strip's width can be measured for the clone to reproduce.
+    const rowStrip =
+      pendingUserBubbleRef.current?.parentElement?.querySelector(
+        ".message-images",
+      );
+    const imagesWidth = rowStrip?.getBoundingClientRect().width;
+    setOutgoingClone({
+      text: pendingUser,
+      images: pendingEchoImages,
+      ...(imagesWidth !== undefined && imagesWidth > 0
+        ? { imagesWidthPx: imagesWidth }
+        : {}),
+    });
   }, [pendingUser, reduced]);
 
   // Animate once the clone has mounted (cloneRef attaches only after the portal
@@ -1704,6 +1750,9 @@ export const Conversation = memo(function Conversation(): JSX.Element {
                 at={pendingUserAt}
                 hidden={hidePendingUser}
                 bubbleRef={pendingUserBubbleRef}
+                {...(pendingEchoImages.length > 0
+                  ? { images: pendingEchoImages }
+                  : {})}
               />
             )}
             {outgoingClone !== null && pendingUser !== null && (
@@ -1713,6 +1762,12 @@ export const Conversation = memo(function Conversation(): JSX.Element {
                 variant="user"
                 text={outgoingClone.text}
                 lang={lang}
+                {...(outgoingClone.images.length > 0
+                  ? { images: outgoingClone.images }
+                  : {})}
+                {...(outgoingClone.imagesWidthPx !== undefined
+                  ? { imagesWidthPx: outgoingClone.imagesWidthPx }
+                  : {})}
               />
             )}
             <StreamingReply

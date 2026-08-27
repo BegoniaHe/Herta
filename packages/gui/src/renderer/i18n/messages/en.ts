@@ -285,6 +285,11 @@ export const en = {
   "activity.attachment.unreadable.textTooLong": "text too long, no head taken",
   "activity.attachment.format.pdf": "PDF",
   "activity.attachment.format.docx": "Word document",
+  // Images (ADR 0048). `{f}` is the format token (PNG/JPEG) — data, not
+  // chrome, so it is substituted rather than translated.
+  "activity.attachment.image": "image {f}",
+  "activity.attachment.unreadable.imageTooLarge": "too large to read",
+  "activity.attachment.unreadable.noCaption": "stored, not read",
   "activity.attachment.pages": "pages",
   "activity.attachment.extracted": "text extracted",
   "activity.attachment.outline": "outline · {n} entries",

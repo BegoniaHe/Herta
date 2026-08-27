@@ -49,6 +49,7 @@ export const COMPACTION_TEXT = {
       removed: "开拓者已移除",
       encrypted: "文档已加密，未取正文",
       unsupported: "暂不支持的文档格式，未取正文",
+      no_caption: "图片已存，未读图",
     },
     /** Second line under a freshly folded attachment citation (ADR 0033
      *  §6g): the user's follow-up may not name the file, so for a few turns
@@ -90,6 +91,7 @@ export const COMPACTION_TEXT = {
       removed: "withdrawn by the Trailblazer",
       encrypted: "password-protected, no body taken",
       unsupported: "unsupported document format, no body taken",
+      no_caption: "image stored, not read",
     },
     attachmentRereadHint:
       "(the full text is still on disk — send 板砖 to re-read it if needed)",

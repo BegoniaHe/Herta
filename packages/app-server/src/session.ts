@@ -39,10 +39,15 @@ import {
   spanMatchedBaseMs,
   V2ActorDriver,
 } from "@herta/herta";
-import { type ApiKey, deepseekProvider } from "@herta/providers";
+import {
+  type ApiKey,
+  deepseekProvider,
+  deepseekVisionCaptioner,
+} from "@herta/providers";
 import { digestSidecarFor } from "@herta/tools";
 import {
   attachmentDirFor,
+  type ImageCaptioner,
   ingestAttachment,
   MAX_ATTACHMENTS_PER_ACTION,
   migrateAttachments,
@@ -403,6 +408,9 @@ export class SessionImpl implements Session {
   public readonly lang: PromptLang;
 
   private readonly transcriptDir: string;
+  /** The image-captioning instrument (ADR 0048); null = images are stored but
+   *  not read (no key, tests, a failed call). */
+  private readonly captionImage: ImageCaptioner | null;
   private readonly titleProvider: ProviderAdapter;
   private readonly titleAbort = new AbortController();
   private titlePromise: Promise<void> | null = null;
@@ -433,6 +441,7 @@ export class SessionImpl implements Session {
     lang: PromptLang;
     lastTurnEnd?: LastTurnEnd;
     pendingContractNote: string | null;
+    captionImage: ImageCaptioner | null;
   }) {
     this.lastTurnEnd = opts.lastTurnEnd;
     this.sessionId = opts.sessionId;
@@ -465,6 +474,7 @@ export class SessionImpl implements Session {
     this.easterEggNow = opts.easterEggNow;
     this.lang = opts.lang;
     this.pendingContractNote = opts.pendingContractNote;
+    this.captionImage = opts.captionImage;
   }
 
   /**
@@ -1130,6 +1140,7 @@ export class SessionImpl implements Session {
           workspaceRoot: this.wsHolder.current,
           sessionId: this.sessionId,
           lang: this.lang,
+          captionImage: this.captionImage,
         }),
       });
     }
@@ -1962,6 +1973,14 @@ export class SessionImpl implements Session {
       pendingContractNote:
         contractFellBack && initialRecord.length === 0
           ? contractFallbackNote(lang)
+          : null,
+      // The captioning instrument (ADR 0048 §3). Same shape as the digest
+      // model above: absent under provider overrides, so a test never reaches
+      // the network — images are then stored and marked `no_caption`, which
+      // is a real production state too (no key, instrument down).
+      captionImage:
+        deps.providerOverrides === undefined
+          ? deepseekVisionCaptioner({ apiKey, ...baseUrl })
           : null,
     });
     sessionHolder.session = session;

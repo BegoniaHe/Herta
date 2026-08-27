@@ -194,10 +194,21 @@ function renderStructuredDigest(
       // digest line here that stays actionable after compaction — she can
       // send 板砖 back to it. A bare name would leave her knowing a document
       // existed and unable to reach it.
+      // An IMAGE keeps its CAPTION through the fold, where a document keeps
+      // only its citation (ADR 0048 §1). The two look alike and are not: a
+      // document's head was an excerpt of text that is still on disk and
+      // still re-readable, so eliding it loses nothing permanently. A
+      // caption is the ONLY textual form the picture ever had — the actor
+      // cannot re-read pixels — so dropping it here would erase the moment
+      // from precisely the timescales this design exists to reach: the
+      // recap, the 废案 distillation, and the next session's few-shots.
+      // This is why the caption rides the body rather than evidenceDetail.
       const tail =
-        d.unreadable === undefined
-          ? COMPACTION_TEXT[lang].excerptElided
-          : COMPACTION_TEXT[lang].attachmentUnreadable[d.unreadable];
+        d.caption !== undefined
+          ? d.caption
+          : d.unreadable === undefined
+            ? COMPACTION_TEXT[lang].excerptElided
+            : COMPACTION_TEXT[lang].attachmentUnreadable[d.unreadable];
       // The outline sidecar survives the fold by citation (2026-08-23) —
       // path included, for the same reason the document's path is kept.
       const outline =

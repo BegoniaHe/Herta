@@ -305,6 +305,33 @@ export type SystemBlockDigest =
        *  present on the ordinary path and on `too_large` (page cap) /
        *  `empty` (scanned) outcomes. */
       readonly pages?: number;
+      /** An IMAGE attachment (ADR 0048): the stored file is the picture
+       *  itself, and `caption` below — not an excerpt — is what the record
+       *  says about it. Absent for every text/document attachment. */
+      readonly image?: {
+        readonly format: "png" | "jpeg" | "gif" | "webp" | "bmp";
+        /** Pixel dimensions when the header format makes them cheap to read
+         *  (PNG/GIF/JPEG); absent otherwise — never estimated. */
+        readonly width?: number;
+        readonly height?: number;
+      };
+      /**
+       * What the captioning instrument saw (ADR 0048 §1).
+       *
+       * Unlike a head excerpt this is NOT a preview of something still
+       * readable: it is the image's only textual form, which is why it rides
+       * the block BODY rather than `evidenceDetail`. The detail is dropped
+       * when the block folds; the caption must survive into recaps, dreams
+       * and later sessions, because after the fold it is all that remains of
+       * a moment the 开拓者 actually shared.
+       *
+       * Authored by a vision sidecar, never by Herta — the record keeps it in
+       * the `→ 系统` register for exactly that reason. Same trust class as an
+       * attachment's text: model output about user-supplied bytes, redacted
+       * and sanitized at construction. Absent when captioning was unavailable
+       * or failed (`unreadable: "no_caption"`).
+       */
+      readonly caption?: string;
       /** Why no excerpt was taken, when none was. Absent on the ordinary path.
        *  Present means the block's body SAYS the file could not be read as
        *  text — never silence, because Herta speaking about a document she was
@@ -329,7 +356,14 @@ export type SystemBlockDigest =
        *  not decode (legacy .doc/.xls/.ppt, .xlsx/.pptx, an OLE package named
        *  .docx). Both are actionable by the user in a way `read_error` /
        *  `binary` are not, which is why they are named. Nothing is stored for
-       *  either. */
+       *  either.
+       *
+       *  `no_caption` is an IMAGE that was stored but not read (ADR 0048):
+       *  no key, the instrument errored or timed out, or the picture is over
+       *  the caption ceiling. Named rather than folded into `read_error`
+       *  because the file IS on disk and IS citable — a vision-capable 板砖
+       *  can still be sent to look at it, which is the remedy the row exists
+       *  to leave open. */
       readonly unreadable?:
         | "binary"
         | "too_large"
@@ -338,7 +372,8 @@ export type SystemBlockDigest =
         | "denied"
         | "removed"
         | "encrypted"
-        | "unsupported";
+        | "unsupported"
+        | "no_caption";
       /** The exact page-marker line shape the stored text carries, with `N`
        *  for the number (`── 第 N 页 ──` / `── page N ──`; `pageMarkerShape`
        *  in core). PDF only, 2026-08-23: the ingest opens every page with

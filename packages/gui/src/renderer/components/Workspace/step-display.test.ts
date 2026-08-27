@@ -392,6 +392,9 @@ describe("stepDisplayBody — attachment rows, incl. PDF / Word (ADR 0038)", () 
     "activity.attachment.unreadable.unsupported": "暂不支持的文档格式",
     "activity.attachment.unreadable.readError": "读取失败",
     "activity.attachment.outline": "目录 {n} 条",
+    "activity.attachment.image": "图片 {f}",
+    "activity.attachment.unreadable.imageTooLarge": "图片过大，未读图",
+    "activity.attachment.unreadable.noCaption": "已存图片，未能读图",
   };
   const ta = (key: MessageKey): string => A[key] ?? `MISSING:${key}`;
   const att = (digest: Record<string, unknown>): SystemBlock =>
@@ -547,6 +550,66 @@ describe("stepDisplayBody — attachment rows, incl. PDF / Word (ADR 0038)", () 
         ta,
       ),
     ).toBe("附件 old.doc · 暂不支持的文档格式");
+  });
+
+  // ── Images (ADR 0048) ────────────────────────────────────────────────────
+
+  it("an image row is format, size, then the CAPTION — never 0 行 0 字", () => {
+    // The pre-ADR-0048 branch would have rendered an image's empty line/char
+    // counts, stating two numbers about a file that has neither.
+    expect(
+      stepDisplayBody(
+        att({
+          name: "shot.png",
+          image: { format: "png", width: 1920, height: 1080 },
+          caption: "一张终端截图，测试全部通过。",
+        }),
+        ta,
+      ),
+    ).toBe(
+      "附件 shot.png · 图片 PNG · 1920×1080 · 一张终端截图，测试全部通过。",
+    );
+  });
+
+  it("omits dimensions the sniff could not read, rather than guessing", () => {
+    expect(
+      stepDisplayBody(
+        att({
+          name: "pic.webp",
+          image: { format: "webp" },
+          caption: "一只猫。",
+        }),
+        ta,
+      ),
+    ).toBe("附件 pic.webp · 图片 WEBP · 一只猫。");
+  });
+
+  it("an uncaptioned image says stored-not-read, and still shows what it is", () => {
+    expect(
+      stepDisplayBody(
+        att({
+          name: "shot.png",
+          image: { format: "png", width: 800, height: 600 },
+          unreadable: "no_caption",
+        }),
+        ta,
+      ),
+    ).toBe("附件 shot.png · 图片 PNG · 800×600 · 已存图片，未能读图");
+  });
+
+  it("too_large on an IMAGE reads as its own reason, not the document ones", () => {
+    // Four meanings share `too_large`; the image one must not borrow a
+    // document's phrasing (mirrors app-server's reasonFor).
+    expect(
+      stepDisplayBody(
+        att({
+          name: "huge.png",
+          image: { format: "png", width: 9000, height: 9000 },
+          unreadable: "too_large",
+        }),
+        ta,
+      ),
+    ).toBe("附件 huge.png · 图片 PNG · 9000×9000 · 图片过大，未读图");
   });
 });
 

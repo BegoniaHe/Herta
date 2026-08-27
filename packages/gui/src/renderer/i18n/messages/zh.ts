@@ -271,6 +271,11 @@ export const zh = {
   "activity.attachment.unreadable.textTooLong": "正文过长，未取正文",
   "activity.attachment.format.pdf": "PDF",
   "activity.attachment.format.docx": "Word 文档",
+  // Images (ADR 0048). `{f}` is the format token (PNG/JPEG) — data, not
+  // chrome, so it is substituted rather than translated.
+  "activity.attachment.image": "图片 {f}",
+  "activity.attachment.unreadable.imageTooLarge": "图片过大，未读图",
+  "activity.attachment.unreadable.noCaption": "已存图片，未能读图",
   "activity.attachment.pages": "页",
   "activity.attachment.extracted": "已提取文本",
   /** The document's own outline, stored beside the text (2026-08-23). */

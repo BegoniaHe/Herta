@@ -151,6 +151,19 @@ export function stepDisplayBody(
           );
         }
       }
+      // An image (ADR 0048) names its format and pixel size where a document
+      // names its pages — the facts the row states without reading anything.
+      if (d.image !== undefined) {
+        doc.push(
+          t("activity.attachment.image").replace(
+            "{f}",
+            d.image.format.toUpperCase(),
+          ),
+        );
+        if (d.image.width !== undefined && d.image.height !== undefined) {
+          doc.push(`${d.image.width}×${d.image.height}`);
+        }
+      }
       const head = [`${label} ${name}`, ...doc].join(" · ");
       // The outline count (2026-08-23) shows in both states, as in the
       // canonical body: for an over-cap document it is the one thing the
@@ -166,34 +179,47 @@ export function stepDisplayBody(
           : [];
       if (d.unreadable !== undefined) {
         const isDoc = d.format !== undefined;
+        const isImage = d.image !== undefined;
         const stored = d.path.length > 0;
         const why =
           d.unreadable === "binary"
             ? t("activity.attachment.unreadable.binary")
-            : d.unreadable === "too_large"
-              ? // Three meanings by context (mirrors app-server's reasonFor):
-                // a stored text file over the excerpt cap; a PDF over the
-                // page cap, refused whole; an extracted document whose text
-                // is over the char cap, stored in full.
-                !isDoc
-                ? t("activity.attachment.unreadable.tooLarge")
-                : stored
-                  ? t("activity.attachment.unreadable.textTooLong")
-                  : t("activity.attachment.unreadable.tooManyPages")
-              : d.unreadable === "empty"
-                ? d.format === "pdf"
-                  ? t("activity.attachment.unreadable.scanned")
-                  : t("activity.attachment.unreadable.empty")
-                : d.unreadable === "denied"
-                  ? t("activity.attachment.unreadable.denied")
-                  : d.unreadable === "removed"
-                    ? t("activity.attachment.unreadable.removed")
-                    : d.unreadable === "encrypted"
-                      ? t("activity.attachment.unreadable.encrypted")
-                      : d.unreadable === "unsupported"
-                        ? t("activity.attachment.unreadable.unsupported")
-                        : t("activity.attachment.unreadable.readError");
+            : d.unreadable === "no_caption"
+              ? t("activity.attachment.unreadable.noCaption")
+              : d.unreadable === "too_large"
+                ? // Four meanings by context (mirrors app-server's reasonFor):
+                  // an image over the caption ceiling, stored but unread; a
+                  // stored text file over the excerpt cap; a PDF over the page
+                  // cap, refused whole; an extracted document whose text is
+                  // over the char cap, stored in full.
+                  isImage
+                  ? t("activity.attachment.unreadable.imageTooLarge")
+                  : !isDoc
+                    ? t("activity.attachment.unreadable.tooLarge")
+                    : stored
+                      ? t("activity.attachment.unreadable.textTooLong")
+                      : t("activity.attachment.unreadable.tooManyPages")
+                : d.unreadable === "empty"
+                  ? d.format === "pdf"
+                    ? t("activity.attachment.unreadable.scanned")
+                    : t("activity.attachment.unreadable.empty")
+                  : d.unreadable === "denied"
+                    ? t("activity.attachment.unreadable.denied")
+                    : d.unreadable === "removed"
+                      ? t("activity.attachment.unreadable.removed")
+                      : d.unreadable === "encrypted"
+                        ? t("activity.attachment.unreadable.encrypted")
+                        : d.unreadable === "unsupported"
+                          ? t("activity.attachment.unreadable.unsupported")
+                          : t("activity.attachment.unreadable.readError");
         return [head, why, ...outline].join(" · ");
+      }
+      // An image's content line is its CAPTION, not a line/char count it has
+      // neither of (ADR 0048 §1). The caption is instrument-authored text
+      // about the user's picture — data, shown verbatim like a finding's
+      // claim, never translated.
+      if (d.image !== undefined) {
+        return d.caption !== undefined ? `${head} · ${d.caption}` : head;
       }
       const lines = `${d.lines.toLocaleString()} ${t("activity.result.lines")}`;
       const chars = `${d.chars.toLocaleString()} ${t("activity.attachment.chars")}`;

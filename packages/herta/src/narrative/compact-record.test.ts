@@ -1590,6 +1590,91 @@ describe("attachment blocks — per-block two-state fold (ADR 0033)", () => {
     expect(sys(out)[0]?.body).toBe(unreadable.body);
   });
 
+  // ── Images (ADR 0048) ────────────────────────────────────────────────────
+
+  const image: SystemBlock = {
+    kind: "system",
+    label: "系统",
+    body: "附件 shot.png · 图片 PNG · 1920×1080 · 一张终端截图，测试全部通过。 · .herta/attachments/s1/shot.png",
+    digest: {
+      kind: "attachment",
+      name: "shot.png",
+      path: ".herta/attachments/s1/shot.png",
+      lines: 0,
+      chars: 0,
+      image: { format: "png", width: 1920, height: 1080 },
+      caption: "一张终端截图，测试全部通过。",
+    },
+  };
+
+  it("a folded image keeps its CAPTION, not an elision note", () => {
+    // The load-bearing case for ADR 0048 §1. A document's head is an excerpt
+    // of text still on disk, so eliding it loses nothing permanently. A
+    // caption is the ONLY textual form the picture ever had — the actor
+    // cannot re-read pixels — so if the fold dropped it, the moment would
+    // vanish from the recap, the 废案 distillation, and every later session.
+    const out = compactRecordForPrompt([
+      image,
+      { kind: "user", text: "看看这个" },
+      { kind: "herta", surface: "speech", text: "看到了。" },
+      { kind: "user", text: "哦" },
+      { kind: "herta", surface: "speech", text: "。" },
+      { kind: "user", text: "换个话题" },
+    ]);
+    const folded = sys(out)[0];
+    expect(folded?.body).toContain("一张终端截图，测试全部通过。");
+    // Never the document elision note: nothing was elided.
+    expect(folded?.body).not.toContain("正文已略去");
+    // The citation still survives whole, so a vision-capable 板砖 can be sent
+    // back to the picture itself (ADR 0048 §5).
+    expect(folded?.body).toContain("shot.png");
+    expect(folded?.body).toContain(".herta/attachments/s1/shot.png");
+  });
+
+  it("an uncaptioned image says so and claims no reading", () => {
+    const uncaptioned: SystemBlock = {
+      kind: "system",
+      label: "系统",
+      body: "附件 shot.png · 图片 PNG · 已存图片，未能读图 · .herta/attachments/s1/shot.png",
+      digest: {
+        kind: "attachment",
+        name: "shot.png",
+        path: ".herta/attachments/s1/shot.png",
+        lines: 0,
+        chars: 0,
+        image: { format: "png" },
+        unreadable: "no_caption",
+      },
+    };
+    const out = compactRecordForPrompt([
+      uncaptioned,
+      { kind: "user", text: "这个呢" },
+      { kind: "herta", surface: "speech", text: "没读上。" },
+      { kind: "user", text: "哦" },
+      { kind: "herta", surface: "speech", text: "。" },
+      { kind: "user", text: "行吧" },
+    ]);
+    expect(sys(out)[0]?.body).toBe(uncaptioned.body);
+  });
+
+  it("the caption survives into an EN session's summary verbatim", () => {
+    // The caption is written in the session language and is content, not
+    // chrome — the compaction template localizes around it, never it.
+    const out = compactRecordForPrompt(
+      [
+        image,
+        { kind: "user", text: "look" },
+        { kind: "herta", surface: "speech", text: "seen." },
+        { kind: "user", text: "ok" },
+        { kind: "herta", surface: "speech", text: "." },
+        { kind: "user", text: "moving on" },
+      ],
+      { lang: "en" },
+    );
+    expect(sys(out)[0]?.body).toContain("一张终端截图，测试全部通过。");
+    expect(sys(out)[0]?.body).not.toContain("body elided");
+  });
+
   it("adjacent attachments never fold into a 板砖-headed summary", () => {
     // A multi-file attach is ≥2 contiguous system blocks — big enough for the
     // run-compaction, whose header names 板砖. Filing the user's own documents

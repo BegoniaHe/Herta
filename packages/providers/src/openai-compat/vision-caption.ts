@@ -32,13 +32,19 @@ export type VisionCaptioner = (
   signal: AbortSignal,
 ) => Promise<string>;
 
+/** See `VisionCaptionerOpts.maxTokens` — measured, not guessed. */
+export const DEFAULT_CAPTION_MAX_TOKENS = 4096;
+
 export interface VisionCaptionerOpts extends HttpOpts {
   /**
-   * Completion budget. Default 1024, and the default is load-bearing: the
-   * vision model REASONS before answering (probe 2026-08-27), so a small
-   * budget is consumed entirely by the reasoning chain and returns
-   * `content: ""` with `finish_reason: "length"` — a silent empty caption
-   * rather than an error. Three probe tests were starved this way at 60-300.
+   * Completion budget. The default is load-bearing and was MEASURED, not
+   * guessed: the vision model reasons before answering, and the chain's
+   * length varies wildly for the same image and prompt — 109 to 1212 tokens
+   * across ten live calls on one 1024×1024 PNG (2026-08-27). At 1024, two of
+   * five Chinese runs hit `finish_reason: "length"`: one returned empty, one
+   * returned a caption cut mid-sentence. The default therefore sits far above
+   * the observed ceiling. It costs nothing when unused — a cap truncates
+   * generation, it does not provoke it.
    */
   maxTokens?: number;
   temperature?: number;
@@ -67,7 +73,7 @@ export function visionCaptioner(opts: VisionCaptionerOpts): VisionCaptioner {
             ],
           },
         ],
-        max_tokens: opts.maxTokens ?? 1024,
+        max_tokens: opts.maxTokens ?? DEFAULT_CAPTION_MAX_TOKENS,
         ...(opts.temperature !== undefined
           ? { temperature: opts.temperature }
           : {}),
@@ -101,6 +107,17 @@ export function visionCaptioner(opts: VisionCaptionerOpts): VisionCaptioner {
           choice?.finish_reason === "length"
             ? "caption was empty (budget consumed by reasoning)"
             : "caption was empty",
+      });
+    }
+    // A TRUNCATED caption is the same class as an empty one, and easier to
+    // miss: at a tight budget the model returned a sentence cut mid-word
+    // (live, 2026-08-27), which reads as a complete description and would sit
+    // in the record permanently. An incomplete reading is not a reading.
+    if (choice?.finish_reason === "length") {
+      throw new ProviderError({
+        code: "sse",
+        retryable: false,
+        message: "caption was truncated (hit the token budget)",
       });
     }
     return content.trim();

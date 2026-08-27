@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { ProviderError } from "../errors.js";
-import { visionCaptioner } from "./vision-caption.js";
+import {
+  DEFAULT_CAPTION_MAX_TOKENS,
+  visionCaptioner,
+} from "./vision-caption.js";
 
 const DATA_URI = "data:image/png;base64,iVBORw0KGgo=";
 
@@ -70,14 +73,27 @@ describe("visionCaptioner", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("defaults to a budget large enough to survive the reasoning chain", async () => {
-    // The vision model reasons before answering (probe 2026-08-27): a small
-    // budget is consumed entirely by reasoning and comes back with EMPTY
-    // content and finish_reason "length" — a silent empty caption. The
-    // default exists to keep that from being the normal case.
+  it("defaults to a budget measured above the observed reasoning ceiling", async () => {
+    // Live, one image, one prompt, ten calls: the reasoning chain ran 109 to
+    // 1212 tokens (2026-08-27). At 1024 two of five Chinese runs hit the cap
+    // — one empty, one truncated. The default has to clear the CEILING, not
+    // the average.
     const { fetchImpl, calls } = stubFetch(ok("x"));
     await captioner(fetchImpl)(req, AbortSignal.timeout(5000));
-    expect(calls[0]?.body.max_tokens).toBe(1024);
+    expect(calls[0]?.body.max_tokens).toBe(DEFAULT_CAPTION_MAX_TOKENS);
+    expect(DEFAULT_CAPTION_MAX_TOKENS).toBeGreaterThan(1212);
+  });
+
+  it("rejects a TRUNCATED caption, not just an empty one", async () => {
+    // Live-caught (2026-08-27): at a tight budget the model returned a
+    // sentence cut mid-word with finish_reason "length". It reads like a
+    // complete description, and would have entered the record permanently.
+    const { fetchImpl } = stubFetch(
+      ok("这是一张动漫风格的侧脸线稿，人物戴着一顶", "length"),
+    );
+    await expect(
+      captioner(fetchImpl)(req, AbortSignal.timeout(5000)),
+    ).rejects.toThrow(/truncated/);
   });
 
   it("treats an empty completion as a failure, never as a caption", async () => {

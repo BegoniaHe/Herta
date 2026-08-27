@@ -1,5 +1,6 @@
 import type { ApiKey } from "../openai-compat/api-key.js";
 import {
+  DEFAULT_CAPTION_MAX_TOKENS,
   type VisionCaptioner,
   visionCaptioner,
 } from "../openai-compat/vision-caption.js";
@@ -27,9 +28,8 @@ export function deepseekVisionCaptioner(
     model: opts.model ?? "deepseek-v4-flash-vision-exp",
     // A caption is description, not deliberation — but the model reasons
     // anyway, and the budget must cover that chain before any visible text
-    // (see VisionCaptionerOpts.maxTokens). A real screenshot spent ~470
-    // completion tokens of which ~430 were reasoning.
-    maxTokens: opts.maxTokens ?? 1024,
+    // (see VisionCaptionerOpts.maxTokens for the measurements).
+    maxTokens: opts.maxTokens ?? DEFAULT_CAPTION_MAX_TOKENS,
     // Low, like the digest sidecar: the same image handed over twice should
     // not describe itself two different ways in the record.
     temperature: 0.2,

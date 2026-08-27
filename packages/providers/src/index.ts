@@ -27,7 +27,10 @@ export type {
   VisionCaptionerOpts,
   VisionCaptionRequest,
 } from "./openai-compat/vision-caption.js";
-export { visionCaptioner } from "./openai-compat/vision-caption.js";
+export {
+  DEFAULT_CAPTION_MAX_TOKENS,
+  visionCaptioner,
+} from "./openai-compat/vision-caption.js";
 export {
   isTlsOrProxyFailure,
   providerFetch,

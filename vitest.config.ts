@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { DOM_FREE_TESTS } from "./packages/gui/vitest.dom-free.js";
 
 // Workspace vitest config — uses Vitest 3's `projects` feature so each
 // package can opt into its own environment / setup files. Without
@@ -21,8 +22,24 @@ export default defineConfig({
       },
       // GUI project: defers to packages/gui/vitest.config.ts which
       // sets environment: "jsdom" + setupFiles for jest-dom matchers.
-      // Picks up .test.ts and .test.tsx.
+      // Picks up .test.ts and .test.tsx, MINUS the dom-free list below
+      // (that config excludes exactly what this one includes).
       "packages/gui",
+      // GUI tests that need no DOM (2026-08-27): node environment, no setup
+      // file. Two thirds of the suite's work was building a jsdom per file,
+      // much of it for files that never read one — see vitest.dom-free.ts for
+      // the measurements and why the list is opt-IN.
+      {
+        test: {
+          name: "gui-node",
+          include: [
+            ...DOM_FREE_TESTS.map((p) => `packages/gui/${p}`),
+            // The guard for the split itself. Lives at src/ so the jsdom
+            // project's include patterns miss it; named here so it runs.
+            "packages/gui/src/vitest-dom-free.test.ts",
+          ],
+        },
+      },
       // Website project (audit T3.7): the demo lives OUTSIDE packages/, so
       // it was invisible to the runner and any test written there silently
       // never ran (masked by passWithNoTests). No tests exist yet; this

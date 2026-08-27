@@ -255,6 +255,84 @@ describe("StagedImageStore", () => {
     expect(truth.ok).toBe(true);
   });
 
+  it("restage adopts a withdrawn block: caption kept, `at` stripped, file owned (rewind, 2026-08-27)", async () => {
+    const store = makeStore(captioner("一张已配好文字的图。"));
+    const first = await store.stage({
+      bytes: makePng(7, 7),
+      displayName: "shot.png",
+    });
+    if (!first.ok) return;
+    const [committed] = await store.commit([first.image.id]);
+    expect(committed).toBeDefined();
+    if (committed === undefined) return;
+
+    // The record stamped it on append; the restaged copy must NOT carry the
+    // old time into a future send — the output boundary re-stamps.
+    const withdrawn = { ...committed, at: "2026-08-27T00:00:00.000Z" };
+    const img = store.restage(withdrawn);
+    expect(img).not.toBeNull();
+    if (img === null) return;
+    expect(img.path).toBe(first.image.path);
+    expect(img).toMatchObject({ name: "shot.png", width: 7, height: 7 });
+    expect(store.size).toBe(1);
+
+    // Re-sending returns the SAME block — caption already paid for — minus at.
+    const [again] = await store.commit([img.id]);
+    expect(again).toEqual(committed);
+    expect(again !== undefined && "at" in again).toBe(false);
+  });
+
+  it("restage refuses a non-image or ✕-removed block — the GC keeps those", () => {
+    const store = makeStore();
+    expect(
+      store.restage({
+        kind: "system",
+        label: "系统",
+        body: "文档",
+        digest: {
+          kind: "attachment",
+          name: "spec.md",
+          path: ".herta/attachments/s1/spec-1.md",
+          lines: 3,
+          chars: 30,
+        },
+      }),
+    ).toBeNull();
+    expect(
+      store.restage({
+        kind: "system",
+        label: "系统",
+        body: "已移除",
+        digest: {
+          kind: "attachment",
+          name: "gone.png",
+          path: ".herta/attachments/s1/gone-1.png",
+          lines: 0,
+          chars: 0,
+          image: { format: "png" },
+          unreadable: "removed",
+        },
+      }),
+    ).toBeNull();
+    expect(store.size).toBe(0);
+  });
+
+  it("a restaged picture is unstageable like any other — the × deletes ITS file", async () => {
+    const store = makeStore();
+    const first = await store.stage({
+      bytes: makePng(4, 4),
+      displayName: "shot.png",
+    });
+    if (!first.ok) return;
+    const [committed] = await store.commit([first.image.id]);
+    if (committed === undefined) return;
+    const img = store.restage(committed);
+    if (img === null) return;
+    expect(onDisk(img.path)).toBe(true);
+    expect(await store.unstage(img.id)).toBe(true);
+    expect(onDisk(img.path)).toBe(false);
+  });
+
   it("list reflects what is waiting, for a renderer that reconnects", async () => {
     const store = makeStore();
     const a = await store.stage({ bytes: makePng(2, 2), displayName: "a.png" });

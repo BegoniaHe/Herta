@@ -210,6 +210,12 @@ export const zh = {
   // The per-message picture cap (owner 2026-08-27): a message is a moment,
   // not an album.
   "composer.attach.imageLimit": "一条消息最多五张图。",
+  // Click-to-enlarge lightbox (ADR 0048 §4a). `lightbox.open` prefixes the
+  // thumb button's aria-label, followed by the filename.
+  "lightbox.open": "查看图片",
+  "lightbox.close": "关闭",
+  "lightbox.zoomIn": "放大",
+  "lightbox.zoomOut": "缩小",
   "connect.button": "接入黑塔空间站",
   "connect.failed": "会话没能建立——请重试。",
   "workspace.rewind": "回到此处",

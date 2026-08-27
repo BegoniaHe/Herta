@@ -8,6 +8,7 @@ import { ApprovalPanel } from "../Approval/ApprovalPanel.js";
 import { Composer } from "./Composer.js";
 import { ConnectStation } from "./ConnectStation.js";
 import { Conversation } from "./Conversation.js";
+import { LightboxProvider } from "./ImageLightbox.js";
 import { SendArrowIcon } from "./SendArrowIcon.js";
 import { useConnectMorph } from "./useConnectMorph.js";
 import { useReconnectMorph } from "./useReconnectMorph.js";
@@ -118,7 +119,11 @@ function WorkspaceInner(): JSX.Element {
 export function Workspace(): JSX.Element {
   return (
     <WorkspaceRefsProvider>
-      <WorkspaceInner />
+      {/* Click-to-enlarge for attached pictures (ADR 0048 §4a): both the
+          conversation thumbs and the composer strip open the same viewer. */}
+      <LightboxProvider>
+        <WorkspaceInner />
+      </LightboxProvider>
     </WorkspaceRefsProvider>
   );
 }

@@ -5817,6 +5817,21 @@ button.session-item__badge--dismiss {
   border: 1px solid var(--ink-a10);
   background: var(--ink-a05);
 }
+/* The thumb's click surface (click-to-enlarge, ADR 0048 §4a): a reset
+   button filling the item; the × floats above it. */
+.composer-staged__open {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+.composer-staged__open:focus-visible {
+  outline: 2px solid var(--accent, #4d86ff);
+  outline-offset: -2px;
+}
 .composer-staged__thumb {
   width: 100%;
   height: 100%;
@@ -5909,4 +5924,130 @@ button.session-item__badge--dismiss {
   /* Width comes inline, measured off the hidden pending row's strip, so the
      clone wraps its pictures exactly like the row it swaps for. Wrapping and
      flex-end justification are inherited from .message-images. */
+}
+/* The sent thumb's click surface (click-to-enlarge, ADR 0048 §4a). */
+.message-images__open {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: 10px;
+  cursor: zoom-in;
+}
+.message-images__open:focus-visible {
+  outline: 2px solid var(--accent, #4d86ff);
+  outline-offset: 1px;
+}
+
+/* ── Image lightbox (ADR 0048 §4a, the Codex reference) ──────────────────
+   A thumbnail opens the whole picture in an in-app overlay: dark ground,
+   the image centered (scrolling when zoomed past the pane), a −/percent/+
+   pill at the bottom, ✕ top-right. Sits ABOVE the settings/key-prompt
+   backdrops (an intentional viewer the user just opened) and below the
+   floating menus — keep in sync with OVERLAY_Z.lightbox. */
+.lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 64;
+  background: rgba(10, 14, 20, 0.82);
+  animation: lightbox-in 0.18s ease both;
+}
+@keyframes lightbox-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.lightbox-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  display: flex;
+  padding: 44px;
+}
+.lightbox-img {
+  /* margin:auto in a flex container BOTH centers a small image and keeps a
+     zoomed-past-the-pane one scrollable from its true top-left (plain
+     centering clips the far edges of overflowing flex content). */
+  margin: auto;
+  display: block;
+  border-radius: 6px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+  user-select: none;
+}
+.lightbox-close {
+  position: absolute;
+  /* Below the window titlebar controls — top:16 sat the ✕ directly on the
+     app's own close button (seen live 2026-08-27). */
+  top: 52px;
+  right: 18px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  /* The mount focuses this button (keyboard users land in the dialog); the
+     UA default ring read as a highlighted control. Keep a ring for the
+     keyboard, styled, and none for pointer opens. */
+  outline: none;
+}
+.lightbox-close:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.55);
+  outline-offset: 2px;
+}
+.lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+.lightbox-close svg {
+  width: 12px;
+  height: 12px;
+}
+.lightbox-zoom {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border-radius: 999px;
+  background: rgba(20, 26, 34, 0.72);
+  backdrop-filter: blur(14px);
+}
+.lightbox-zoom__btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.lightbox-zoom__btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+.lightbox-zoom__label {
+  min-width: 46px;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lightbox-backdrop {
+    animation: none;
+  }
 }

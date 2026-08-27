@@ -174,6 +174,11 @@ export type RewindResult =
        *  GUI warns that those filesystem changes are NOT reverted (record-only
        *  rewind, per the 2026-06-21-rewind-last-turn spec). */
       readonly editedFiles: boolean;
+      /** The withdrawn message's pictures, RESTAGED into the composer strip
+       *  (owner 2026-08-27) — the renderer puts them back beside the restored
+       *  draft. Absent when the turn carried none (or the strip was full and
+       *  the GC took them). */
+      readonly images?: readonly StagedImageInfo[];
     }
   | {
       readonly ok: false;

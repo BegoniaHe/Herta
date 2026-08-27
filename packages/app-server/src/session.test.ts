@@ -1650,6 +1650,72 @@ describe("Session — attachFiles (ADR 0033)", () => {
     await cleanup();
   });
 
+  it("rewind RESTAGES the message's pictures instead of deleting them (owner 2026-08-27)", async () => {
+    const { session, backendWs, cleanup } = await mkAttachSession();
+    const staged = await session.stageImages([
+      { bytes: makePng(5, 5), name: "shot.png" },
+    ]);
+    expect(staged.ok).toBe(true);
+    if (!staged.ok) return;
+    const rel = staged.staged[0]?.path ?? "";
+    await session.submitText("看看这张图", {
+      stagedImageIds: staged.staged.map((s) => s.id),
+    });
+    expect(
+      session.record.some(
+        (b) => b.kind === "system" && b.digest?.kind === "attachment",
+      ),
+    ).toBe(true);
+
+    const r = await session.rewindLastTurn();
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // The block left the record with the turn…
+    expect(
+      session.record.some(
+        (b) => b.kind === "system" && b.digest?.kind === "attachment",
+      ),
+    ).toBe(false);
+    // …but the picture went back to the strip, its file intact: the copy is
+    // on disk, the caption is paid for, and the rewound message's pictures
+    // belong with its restored draft.
+    expect(r.images).toHaveLength(1);
+    expect(r.images?.[0]?.path).toBe(rel);
+    expect(existsSync(join(backendWs, ...rel.split("/")))).toBe(true);
+    expect(session.stagedImageList.map((s) => s.path)).toEqual([rel]);
+    await cleanup();
+  });
+
+  it("rewind falls back to the GC when the strip is already full (the five-picture cap holds)", async () => {
+    const { session, backendWs, cleanup } = await mkAttachSession();
+    const one = await session.stageImages([
+      { bytes: makePng(5, 5), name: "sent.png" },
+    ]);
+    if (!one.ok) return;
+    const rel = one.staged[0]?.path ?? "";
+    await session.submitText("发图", {
+      stagedImageIds: one.staged.map((s) => s.id),
+    });
+    // Fill the strip AFTER the send.
+    const five = await session.stageImages(
+      Array.from({ length: 5 }, (_, i) => ({
+        bytes: makePng(5, 5),
+        name: `later${i}.png`,
+      })),
+    );
+    expect(five.ok).toBe(true);
+
+    const r = await session.rewindLastTurn();
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // No room: the withdrawn picture is GC'd like a document, not restaged
+    // past the cap.
+    expect(r.images).toBeUndefined();
+    expect(session.stagedImageList).toHaveLength(5);
+    expect(existsSync(join(backendWs, ...rel.split("/")))).toBe(false);
+    await cleanup();
+  });
+
   it("rewind keeps a stored file a SURVIVING block still cites (idempotent re-attach shares the path)", async () => {
     // Content-hashed names make re-attaching the identical document a write
     // to the SAME stored path — two blocks, one file. Withdrawing the later

@@ -143,6 +143,40 @@ export class StagedImageStore {
   }
 
   /**
+   * Adopt a WITHDRAWN image block back into the strip (rewind, owner
+   * 2026-08-27): the stored copy is already on disk and the caption is
+   * already paid for, so the entry's block promise resolves immediately —
+   * minus the old `at` stamp, which the output boundary re-stamps if the
+   * picture is sent again. Ownership transfers cleanly: the record no
+   * longer cites the path, and this entry now owns the file exactly like
+   * any staged copy (unstage/clear delete it).
+   *
+   * Returns null for a block that is not a restageable image (no image
+   * digest, no stored path, or the ✕ already took the file) — the caller
+   * falls back to the GC.
+   */
+  restage(block: SystemBlock): StagedImage | null {
+    const d = block.digest;
+    if (d?.kind !== "attachment" || d.image === undefined) return null;
+    if (d.path.length === 0 || d.unreadable === "removed") return null;
+    const id = randomUUID();
+    const image: StagedImage = {
+      id,
+      name: d.name,
+      path: d.path,
+      ...(d.image.width !== undefined ? { width: d.image.width } : {}),
+      ...(d.image.height !== undefined ? { height: d.image.height } : {}),
+    };
+    const { at: _at, ...withoutAt } = block;
+    this.entries.set(id, {
+      staged: image,
+      relPath: d.path,
+      block: Promise.resolve(withoutAt),
+    });
+    return image;
+  }
+
+  /**
    * Drop a staged image and delete its stored copy. Nothing about it ever
    * reached the record, so nothing is left behind to explain — which is the
    * difference between this and `removeAttachment`, where the block stays and

@@ -543,10 +543,13 @@ export const Conversation = memo(function Conversation(): JSX.Element {
       if (result.ok) {
         // The record stores the wire token @板砖; an EN user typed/saw @Brick —
         // restore the draft in the form they sent (round-trip via the
-        // composer's input alias, ADR 0015 §3).
+        // composer's input alias, ADR 0015 §3). The withdrawn message's
+        // pictures ride along: main restaged them (captions already paid
+        // for), and the draft-adoption effect puts them back in the strip.
         sessionStore.requestComposerDraft(
           dealiasBrickDraft(result.userText, lang),
           result.editedFiles ? t("workspace.editsNotReverted") : null,
+          result.images,
         );
       } else {
         // Truncation didn't happen (e.g. a turn started in the gap) — un-fade the

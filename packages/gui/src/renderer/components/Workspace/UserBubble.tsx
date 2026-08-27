@@ -5,6 +5,7 @@ import { renderBanzhuanText } from "../../lib/banzhuan-text.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import { BubbleTime } from "./BubbleTime.js";
 import type { SystemBlock } from "./group-record.js";
+import { useLightbox } from "./ImageLightbox.js";
 
 /**
  * Rewind / undo glyph — Heroicons arrow-uturn-down (from
@@ -102,6 +103,8 @@ export const UserBubble = memo(function UserBubble(
   props: UserBubbleProps,
 ): JSX.Element {
   const t = useT();
+  // Stable opener — a context read cannot invalidate this memo.
+  const openLightbox = useLightbox();
   const lang = props.lang ?? "zh";
   const hasActions = props.onRewind !== undefined || props.at !== undefined;
   const images = props.images ?? [];
@@ -114,20 +117,30 @@ export const UserBubble = memo(function UserBubble(
       {images.length > 0 && (
         <div className="message-images">
           {images.map((img) => (
-            <img
+            // Click-to-enlarge (ADR 0048 §4a): the 56px thumb is an index
+            // card, the lightbox is the picture. A BUTTON, so the keyboard
+            // reaches it too.
+            <button
               key={img.path}
-              className="message-images__thumb"
-              src={attachmentImageUrl(img.path)}
-              // The caption is what the picture IS; the filename is what it
-              // was called. A screen reader wants the former.
-              alt={img.caption ?? img.name}
-              title={img.name}
-              // True pixel dimensions (see UserImageView on why they stay
-              // under the fixed-size thumb CSS).
-              {...(img.width !== undefined ? { width: img.width } : {})}
-              {...(img.height !== undefined ? { height: img.height } : {})}
-              draggable={false}
-            />
+              type="button"
+              className="message-images__open"
+              aria-label={`${t("lightbox.open")} ${img.name}`}
+              onClick={() => openLightbox(img)}
+            >
+              <img
+                className="message-images__thumb"
+                src={attachmentImageUrl(img.path)}
+                // The caption is what the picture IS; the filename is what it
+                // was called. A screen reader wants the former.
+                alt={img.caption ?? img.name}
+                title={img.name}
+                // True pixel dimensions (see UserImageView on why they stay
+                // under the fixed-size thumb CSS).
+                {...(img.width !== undefined ? { width: img.width } : {})}
+                {...(img.height !== undefined ? { height: img.height } : {})}
+                draggable={false}
+              />
+            </button>
           ))}
         </div>
       )}

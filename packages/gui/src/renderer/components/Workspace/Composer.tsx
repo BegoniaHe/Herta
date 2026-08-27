@@ -13,6 +13,7 @@ import { submitMessage } from "../../lib/submit-message.js";
 import { stopAllVoice } from "../../voice/play-voice.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import { AuraVisual } from "../UtilityRail/AuraVisual.js";
+import { useLightbox } from "./ImageLightbox.js";
 import { SendArrowIcon } from "./SendArrowIcon.js";
 import { useStagedImages } from "./useStagedImages.js";
 import { useWorkspaceRefs } from "./WorkspaceRefs.js";
@@ -124,6 +125,7 @@ export function Composer(): JSX.Element {
     [sessionStore, t],
   );
   const images = useStagedImages(sessionId, onStageRefusal);
+  const openLightbox = useLightbox();
 
   // Shared submit path for the ↑ button (form submit) and Enter-to-send.
   const doSubmit = (): void => {
@@ -450,13 +452,23 @@ export function Composer(): JSX.Element {
         <ul className="composer-staged" aria-label={t("composer.staged")}>
           {images.staged.map((img) => (
             <li className="composer-staged__item" key={img.id}>
-              <img
-                className="composer-staged__thumb"
-                src={attachmentImageUrl(img.path)}
-                alt={img.name}
-                title={img.name}
-                draggable={false}
-              />
+              {/* Click-to-enlarge (ADR 0048 §4a): checking WHICH screenshot
+                  this is before sending is exactly when it matters — the ×
+                  is the take-back, this is the look. */}
+              <button
+                type="button"
+                className="composer-staged__open"
+                aria-label={`${t("lightbox.open")} ${img.name}`}
+                onClick={() => openLightbox(img)}
+              >
+                <img
+                  className="composer-staged__thumb"
+                  src={attachmentImageUrl(img.path)}
+                  alt={img.name}
+                  title={img.name}
+                  draggable={false}
+                />
+              </button>
               <button
                 type="button"
                 className="composer-staged__remove"

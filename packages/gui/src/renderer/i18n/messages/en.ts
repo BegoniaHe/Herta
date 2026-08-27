@@ -225,6 +225,12 @@ export const en = {
   // The per-message picture cap (owner 2026-08-27): a message is a moment,
   // not an album.
   "composer.attach.imageLimit": "Five pictures per message, at most.",
+  // Click-to-enlarge lightbox (ADR 0048 §4a). `lightbox.open` prefixes the
+  // thumb button's aria-label, followed by the filename.
+  "lightbox.open": "View picture",
+  "lightbox.close": "Close",
+  "lightbox.zoomIn": "Zoom in",
+  "lightbox.zoomOut": "Zoom out",
   "connect.button": "Connect to Herta",
   "connect.failed": "Couldn't start a session — try again.",
   "workspace.rewind": "Rewind to here",

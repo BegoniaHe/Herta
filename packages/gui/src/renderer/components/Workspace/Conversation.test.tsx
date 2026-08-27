@@ -1774,6 +1774,65 @@ describe("Conversation", () => {
     vi.useRealTimers();
   });
 
+  it("rewind returns the message's PICTURES to the composer strip with the text (owner 2026-08-27)", async () => {
+    vi.useFakeTimers();
+    // Main restaged the withdrawn images (their copies are on disk, captions
+    // paid for) and the result carries them; the draft-adoption effect puts
+    // them back in the strip beside the restored text.
+    const img = {
+      id: "restaged-1",
+      name: "shot.png",
+      path: ".herta/attachments/s/shot-abc-def.png",
+      width: 640,
+      height: 480,
+    };
+    const mock = createMockHertaBridge({
+      rewindLastTurnResult: {
+        ok: true,
+        userText: "看看这张图",
+        editedFiles: false,
+        images: [img],
+      },
+    });
+    const { container } = renderWithLocale(
+      <WorkspaceRefsProvider>
+        <HertaBridgeProvider bridge={mock.bridge}>
+          <Conversation />
+          <Composer />
+        </HertaBridgeProvider>
+      </WorkspaceRefsProvider>,
+    );
+    act(() => {
+      mock.emitReset({
+        sessionId: "s",
+        workspaceRoot: "/r",
+        record: [
+          { kind: "user", text: "看看这张图" },
+          { kind: "herta", surface: "speech", text: "answer" },
+        ],
+        overlay: null,
+        backendWorkspace: "/r",
+        backendWorkspaceIsDefault: true,
+      });
+    });
+    fireEvent.click(
+      container.querySelector(".message-rewind") as HTMLButtonElement,
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(240);
+      await Promise.resolve();
+    });
+    // Text AND picture back in the composer.
+    const input = screen.getByPlaceholderText(
+      "Message Herta…",
+    ) as HTMLTextAreaElement;
+    expect(input.value).toBe("看看这张图");
+    const thumbs = container.querySelectorAll(".composer-staged__thumb");
+    expect(thumbs).toHaveLength(1);
+    expect(thumbs[0]?.getAttribute("title")).toBe("shot.png");
+    vi.useRealTimers();
+  });
+
   it("does not render a herta block's selfCorrection (veto reason is prompt-only)", () => {
     const mock = createMockHertaBridge();
     renderWithLocale(

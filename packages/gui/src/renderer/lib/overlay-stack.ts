@@ -23,11 +23,13 @@ import { useEffect, useSyncExternalStore } from "react";
  */
 
 /** Mirror of the CSS stacking order (reference-ux.css): the approval panel
- *  sits under the settings/key-prompt backdrops; menus float above all. */
+ *  sits under the settings/key-prompt backdrops; the image lightbox floats
+ *  over those (an intentional viewer the user just opened); menus above all. */
 export const OVERLAY_Z = {
   approval: 40,
   settings: 60,
   keyPrompt: 60,
+  lightbox: 64,
   cardMenu: 70,
 } as const;
 

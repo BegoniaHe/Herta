@@ -991,12 +991,15 @@ export class SessionImpl implements Session {
     });
     // Stored-attachment GC last: the record is already truncated and
     // broadcast, and a failed unlink must not fail the rewind (best-effort,
-    // like the ✕). See the method for the D-Record-only amendment.
-    await this.cleanUpWithdrawnAttachments(result.withdrawn);
+    // like the ✕). See the method for the D-Record-only amendment. The
+    // withdrawn PICTURES come back as staged entries instead of being
+    // deleted (owner 2026-08-27) — they ride the restored draft.
+    const images = await this.cleanUpWithdrawnAttachments(result.withdrawn);
     return {
       ok: true,
       userText: result.userText,
       editedFiles: spanEditedFiles(result.withdrawn),
+      ...(images.length > 0 ? { images } : {}),
     };
   }
 
@@ -1016,10 +1019,19 @@ export class SessionImpl implements Session {
    * re-attaching the same document idempotent, so two blocks can share one
    * stored file. Sidecars (outline, ADR 0043 digest) go with their text,
    * exactly as the ✕ takes them.
+   *
+   * PICTURES are the exception (owner 2026-08-27): a withdrawn image block
+   * RESTAGES into the composer strip instead of being deleted — the copy is
+   * on disk, the caption is paid for, and the rewound message's pictures
+   * belong with its restored draft. Returns what was restaged so the rewind
+   * result can hand them to the renderer. Capped at the strip's own
+   * five-picture ceiling (counting what is already staged); overflow — and
+   * a path already restaged once, so two withdrawn blocks citing one legacy
+   * shared file cannot mint two owners — falls back to the GC.
    */
   private async cleanUpWithdrawnAttachments(
     withdrawn: TerminalRecord,
-  ): Promise<void> {
+  ): Promise<readonly StagedImage[]> {
     const prefix = `${attachmentDirFor(this.sessionId)}/`;
     const surviving = new Set<string>();
     for (const b of this._record) {
@@ -1027,12 +1039,26 @@ export class SessionImpl implements Session {
       if (b.digest.path.length > 0) surviving.add(b.digest.path);
     }
     const toRemove: string[] = [];
+    const restaged: StagedImage[] = [];
+    const restagedPaths = new Set<string>();
     for (const b of withdrawn) {
       if (b.kind !== "system" || b.digest?.kind !== "attachment") continue;
       const d = b.digest;
       if (d.unreadable === "removed") continue; // the ✕ already took the files
       if (!d.path.startsWith(prefix)) continue; // harness-written, or nothing stored
       if (surviving.has(d.path)) continue;
+      if (d.image !== undefined) {
+        if (restagedPaths.has(d.path)) continue; // one owner per file
+        if (this.stagedImages.size < MAX_STAGED_IMAGES) {
+          const img = this.stagedImages.restage(b);
+          if (img !== null) {
+            restaged.push(img);
+            restagedPaths.add(d.path);
+            continue;
+          }
+        }
+        // Strip full, or not restageable after all — the GC takes it.
+      }
       toRemove.push(d.path, digestSidecarFor(d.path));
       const outline = d.outline?.path;
       if (outline?.startsWith(prefix) === true) {
@@ -1050,6 +1076,7 @@ export class SessionImpl implements Session {
         // whose record truncation has already landed.
       }
     }
+    return restaged;
   }
 
   /**

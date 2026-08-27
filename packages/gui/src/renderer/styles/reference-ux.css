@@ -5875,16 +5875,23 @@ button.session-item__badge--dismiss {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end; /* user side of the thread */
-  gap: 6px;
+  gap: 8px;
   margin-bottom: 6px;
 }
+/* THUMBNAILS, the composer strip's own design (owner 2026-08-27): the first
+   cut rendered natural-size images up to 320×240, and a few of them ate the
+   whole pane. The sent row now reads like the strip it lifted off from —
+   fixed cover-cropped squares — and with the five-picture cap it is always
+   one quiet line over the bubble. The pixels stay one click away in the
+   store; the caption (alt/title below) is the record's textual truth. */
 .message-images__thumb {
-  max-width: min(320px, 100%);
-  max-height: 240px;
-  border-radius: 12px;
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
   border: 1px solid var(--ink-a10);
+  background: var(--ink-a05);
   display: block;
-  object-fit: contain;
+  object-fit: cover;
   user-select: none;
 }
 /* The send morph's copy of the strip (ADR 0048 §4): the pictures fly WITH

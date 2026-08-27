@@ -733,8 +733,8 @@ export function createSessionService(
           message:
             r.reason === "turn_in_progress"
               ? "a turn is in progress"
-              : r.reason === "too_many"
-                ? "too many files at once"
+              : r.reason === "too_many_images"
+                ? "five images per message"
                 : "no files",
         };
       },

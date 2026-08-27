@@ -114,9 +114,11 @@ export function Composer(): JSX.Element {
           ? t("composer.attach.busy")
           : reason === "too many files at once"
             ? t("composer.attach.tooMany")
-            : reason === "denied"
-              ? t("composer.attach.denied")
-              : t("composer.attach.failed"),
+            : reason === "five images per message"
+              ? t("composer.attach.imageLimit")
+              : reason === "denied"
+                ? t("composer.attach.denied")
+                : t("composer.attach.failed"),
       );
     },
     [sessionStore, t],

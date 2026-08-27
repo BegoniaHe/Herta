@@ -260,8 +260,21 @@ function isCredentialShapedSource(sourcePath: string): boolean {
  * The DISPLAY name keeps the original spelling; only the on-disk name is
  * flattened. A user who attaches `报告 (最终).md` should see that in the
  * record, not `___________.md`.
+ *
+ * `disambiguator` makes the stored name unique PER COPY instead of per
+ * content. Documents want the content-hash idempotency (re-attaching the
+ * same file must not accumulate copies); a STAGED image must not — its copy
+ * is deletable (unstage, session close), so two staged entries sharing one
+ * file means deleting either breaks the other, and the fatal case is the
+ * file a COMMITTED record block cites: stage → send → stage the same bytes
+ * again → the new entry aliases the sent copy's path, and its deletion
+ * breaks the record's picture forever (seen live 2026-08-27).
  */
-export function safeStoredName(originalName: string, bytes: Buffer): string {
+export function safeStoredName(
+  originalName: string,
+  bytes: Buffer,
+  disambiguator?: string,
+): string {
   const base = basename(originalName);
   const ext = extname(base)
     .slice(0, 16)
@@ -275,7 +288,11 @@ export function safeStoredName(originalName: string, bytes: Buffer): string {
   // identical document idempotent rather than accumulating copies.
   const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 8);
   const safeStem = stem.length > 0 ? stem : "file";
-  return `${safeStem}-${hash}${ext}`;
+  const unique =
+    disambiguator !== undefined && disambiguator.length > 0
+      ? `-${disambiguator.replace(/[^A-Za-z0-9]/g, "").slice(0, 12)}`
+      : "";
+  return `${safeStem}-${hash}${unique}${ext}`;
 }
 
 /**
@@ -568,11 +585,17 @@ export async function storeImage(opts: {
   readonly bytes: Buffer;
   readonly workspaceRoot: string;
   readonly sessionId: string;
+  /** Per-copy uniqueness for the STAGED path — see safeStoredName. */
+  readonly disambiguator?: string;
 }): Promise<StoreImageResult> {
   const relPath = await storeBytes({
     workspaceRoot: opts.workspaceRoot,
     sessionId: opts.sessionId,
-    storedName: safeStoredName(opts.displayName, opts.bytes),
+    storedName: safeStoredName(
+      opts.displayName,
+      opts.bytes,
+      opts.disambiguator,
+    ),
     bytes: opts.bytes,
   });
   if (relPath === null) {
@@ -666,6 +689,9 @@ export async function stageImageSource(opts: {
   readonly displayName: string;
   readonly workspaceRoot: string;
   readonly sessionId: string;
+  /** Per-copy uniqueness — the staged id, so unstage/clear can only ever
+   *  delete the one file this copy owns (see safeStoredName). */
+  readonly disambiguator?: string;
 }): Promise<StageImageResult> {
   // Same guard, same place, same reason as the ordinary attach: the display
   // name is renderer-supplied and the path is arbitrary, so both are checked
@@ -707,6 +733,9 @@ export async function stageImageSource(opts: {
     bytes,
     workspaceRoot: opts.workspaceRoot,
     sessionId: opts.sessionId,
+    ...(opts.disambiguator !== undefined
+      ? { disambiguator: opts.disambiguator }
+      : {}),
   });
   return result.ok ? result : { ok: false, reason: "read_error" };
 }

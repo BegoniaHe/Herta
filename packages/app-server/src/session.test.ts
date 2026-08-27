@@ -16,6 +16,7 @@ import type { OpeningChoice } from "@herta/herta";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionImpl, spanEditedFiles } from "./session.js";
 import { createSessionHost } from "./session-host.js";
+import { makePng } from "./testing/image-fixtures.js";
 import {
   stubChatProvider,
   stubCompletionProvider,
@@ -1472,6 +1473,34 @@ describe("Session — attachFiles (ADR 0033)", () => {
         (b) => b.kind === "system" && b.digest?.kind === "attachment",
       ),
     ).toBe(false);
+    await cleanup();
+  });
+
+  it("caps a MESSAGE at five pictures, counting what is already staged (owner 2026-08-27)", async () => {
+    const { session, cleanup } = await mkAttachSession();
+    const png = (n: string) => ({ bytes: makePng(4, 4), name: n });
+    // Six in one batch: whole-batch refusal, nothing staged (the same
+    // no-silent-prefix rule as the attachFiles cap above).
+    const six = await session.stageImages(
+      Array.from({ length: 6 }, (_, i) => png(`p${i}.png`)),
+    );
+    expect(six).toEqual({ ok: false, reason: "too_many_images" });
+    // Five is fine…
+    const five = await session.stageImages(
+      Array.from({ length: 5 }, (_, i) => png(`q${i}.png`)),
+    );
+    expect(five.ok).toBe(true);
+    if (five.ok) expect(five.staged).toHaveLength(5);
+    // …and the cap counts the strip, not the batch: one more is refused.
+    const more = await session.stageImages([png("r.png")]);
+    expect(more).toEqual({ ok: false, reason: "too_many_images" });
+    // Unstaging frees a slot again.
+    if (five.ok) {
+      const freed = five.staged[0]?.id ?? "";
+      expect(await session.unstageImage(freed)).toBe(true);
+      const retry = await session.stageImages([png("r.png")]);
+      expect(retry.ok).toBe(true);
+    }
     await cleanup();
   });
 

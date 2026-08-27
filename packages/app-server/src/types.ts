@@ -220,7 +220,10 @@ export interface StagedImageInfo {
  *  `too_large`, `read_error`) or that is not an image at all (`not_image` —
  *  documents ingest immediately instead, ADR 0048 §4) comes back in
  *  `rejected` while its siblings still stage; only whole-action failures use
- *  the `ok: false` shape. */
+ *  the `ok: false` shape. `too_many_images` is the per-MESSAGE picture cap
+ *  (`MAX_STAGED_IMAGES`, counting what is already staged) — whole-batch,
+ *  like the attachFiles cap, so the refusal can say the rule instead of
+ *  silently staging a prefix. */
 export type StageImagesResult =
   | {
       readonly ok: true;
@@ -232,7 +235,7 @@ export type StageImagesResult =
     }
   | {
       readonly ok: false;
-      readonly reason: "turn_in_progress" | "too_many" | "no_files";
+      readonly reason: "turn_in_progress" | "too_many_images" | "no_files";
     };
 
 /** Result of `removeAttachment`. `removed` counts the blocks marked, which is

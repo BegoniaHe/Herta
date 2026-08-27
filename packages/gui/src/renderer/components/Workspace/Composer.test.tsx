@@ -1057,4 +1057,24 @@ describe("Composer — attachments (ADR 0033)", () => {
       0,
     );
   });
+
+  it("a message carries at most five pictures — the refusal names the cap (owner 2026-08-27)", async () => {
+    const mock = createMockHertaBridge();
+    const { container } = renderAttached(mock);
+    const form = container.querySelector(".composer") as HTMLElement;
+    await act(async () => {
+      fireEvent.drop(
+        form,
+        fileDrop(Array.from({ length: 6 }, (_, i) => ({ name: `p${i}.png` }))),
+      );
+    });
+    // Whole-batch refusal, like the attachFiles cap: nothing staged, and the
+    // notice says the RULE rather than silently staging a prefix.
+    expect(
+      screen.getByText(/Five pictures per message, at most/i),
+    ).toBeInTheDocument();
+    expect(container.querySelectorAll(".composer-staged__item")).toHaveLength(
+      0,
+    );
+  });
 });

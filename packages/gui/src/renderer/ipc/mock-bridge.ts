@@ -393,6 +393,13 @@ export function createMockHertaBridge(
     stageImages: async (sid, inputs) => {
       calls.stageImages.push([sid, inputs]);
       if (opts.stageImagesResult !== undefined) return opts.stageImagesResult;
+      // The per-message picture cap, whole-batch like the real handler. The
+      // real one also counts what is ALREADY staged; this mock is stateless
+      // across calls, so a cross-call accumulation test seeds
+      // `stageImagesResult` instead.
+      if (inputs.length > 5) {
+        return { ok: false, message: "five images per message" };
+      }
       // Default: split by EXTENSION. The real main process decides by magic
       // bytes — a mock cannot, and must not pretend to — but it does have to
       // route documents to `not_image` the way the real one does, or every

@@ -71,7 +71,11 @@ import {
   digestModelFrom,
   makeDigestProvider,
 } from "./session-wiring.js";
-import { type StagedImage, StagedImageStore } from "./staged-images.js";
+import {
+  MAX_STAGED_IMAGES,
+  type StagedImage,
+  StagedImageStore,
+} from "./staged-images.js";
 import type {
   ApprovalResult,
   AppServerConfig,
@@ -600,8 +604,11 @@ export class SessionImpl implements Session {
       return { ok: false, reason: "turn_in_progress" };
     }
     if (inputs.length === 0) return { ok: false, reason: "no_files" };
-    if (inputs.length + this.stagedImages.size > MAX_ATTACHMENTS_PER_ACTION) {
-      return { ok: false, reason: "too_many" };
+    // The per-MESSAGE picture cap (owner 2026-08-27): what is already staged
+    // plus this batch. Tighter than the per-action attachment cap, so it is
+    // the only ceiling staging can hit.
+    if (inputs.length + this.stagedImages.size > MAX_STAGED_IMAGES) {
+      return { ok: false, reason: "too_many_images" };
     }
     const staged: StagedImage[] = [];
     const rejected: { readonly name: string; readonly reason: string }[] = [];

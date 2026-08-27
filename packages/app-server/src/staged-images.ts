@@ -33,6 +33,13 @@ import {
  * and a staged image that never gets sent is not part of anything durable.
  */
 
+/** Most pictures ONE message can carry (owner 2026-08-27). A message is a
+ *  moment in the record, not an album: each image adds a caption block for
+ *  the actor to read and a thumb row on the bubble, and past a handful the
+ *  moment stops being readable. Enforced at the session's staging door
+ *  (already-staged + incoming), whole-batch like the attachFiles cap. */
+export const MAX_STAGED_IMAGES = 5;
+
 export interface StagedImage {
   readonly id: string;
   /** The name the user knows it by. */
@@ -93,6 +100,11 @@ export class StagedImageStore {
         readonly reason: StageRejection;
       }
   > {
+    // The id is minted BEFORE storing and rides the stored NAME: every
+    // staged copy owns exactly one file. Content-hashed names alone aliased
+    // re-staged bytes onto a copy a committed record block already cited,
+    // and deleting the staged entry broke the record's picture (2026-08-27).
+    const id = randomUUID();
     const result = await stageImageSource({
       ...(input.sourcePath !== undefined
         ? { sourcePath: input.sourcePath }
@@ -101,10 +113,9 @@ export class StagedImageStore {
       displayName: input.displayName,
       workspaceRoot: this.deps.workspaceRoot(),
       sessionId: this.deps.sessionId,
+      disambiguator: id.slice(0, 8),
     });
     if (!result.ok) return { ok: false, reason: result.reason };
-
-    const id = randomUUID();
     const stored: StoredImage = result.stored;
     const image: StagedImage = {
       id,

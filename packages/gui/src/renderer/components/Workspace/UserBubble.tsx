@@ -62,10 +62,11 @@ export interface UserBubbleProps {
 /** Everything the bubble needs to draw one attached picture. `caption` is
  *  the instrument's reading — the alt text a screen reader gets, since the
  *  filename says nothing about what is in the frame. `width`/`height` are
- *  the sniffed pixel dimensions: stamped as attributes so the row reserves
- *  the right box BEFORE the bytes load — without them a morph flight (or a
- *  session-open scroll) measures a slot that grows under it when the image
- *  arrives. */
+ *  the sniffed pixel dimensions, stamped as attributes. Under the fixed
+ *  56px cover-crop thumb (owner 2026-08-27) the CSS owns the box, so they
+ *  no longer drive layout — they stay because they are true, cost nothing,
+ *  and any return to natural sizing needs them for pre-load slot height
+ *  (the morph flight measures that slot). */
 export interface UserImageView {
   readonly path: string;
   readonly name: string;
@@ -121,8 +122,8 @@ export const UserBubble = memo(function UserBubble(
               // was called. A screen reader wants the former.
               alt={img.caption ?? img.name}
               title={img.name}
-              // Pixel dimensions reserve the box before the bytes load (see
-              // UserImageView) — the CSS max clamps scale it, ratio kept.
+              // True pixel dimensions (see UserImageView on why they stay
+              // under the fixed-size thumb CSS).
               {...(img.width !== undefined ? { width: img.width } : {})}
               {...(img.height !== undefined ? { height: img.height } : {})}
               draggable={false}

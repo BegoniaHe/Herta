@@ -117,6 +117,44 @@ describe("StagedImageStore", () => {
     expect(await makeStore().unstage("nope")).toBe(false);
   });
 
+  it("every staged copy owns its OWN file — identical bytes never alias (2026-08-27)", async () => {
+    // Content-hashed names alone aliased same-byte stagings onto one file,
+    // so deleting either staged entry broke the other. Seen live in the
+    // fatal form below; this pins the ownership rule directly.
+    const store = makeStore();
+    const bytes = makePng(6, 6);
+    const a = await store.stage({ bytes, displayName: "same.png" });
+    const b = await store.stage({ bytes, displayName: "same.png" });
+    if (!a.ok || !b.ok) return;
+    expect(a.image.path).not.toBe(b.image.path);
+
+    expect(await store.unstage(a.image.id)).toBe(true);
+    expect(onDisk(a.image.path)).toBe(false);
+    // The twin's file is untouched.
+    expect(onDisk(b.image.path)).toBe(true);
+  });
+
+  it("re-staging bytes a COMMITTED block cites cannot delete the record's copy (seen live 2026-08-27)", async () => {
+    // The fatal sequence: stage → send (commit — the record block now cites
+    // the stored path forever) → stage the same bytes again → close the
+    // session (clear). Pre-fix, the second staging landed on the SAME path
+    // and clear() deleted the record's picture out from under it.
+    const store = makeStore();
+    const bytes = makePng(9, 9);
+    const sent = await store.stage({ bytes, displayName: "shot.png" });
+    if (!sent.ok) return;
+    const blocks = await store.commit([sent.image.id]);
+    expect(blocks).toHaveLength(1);
+
+    const again = await store.stage({ bytes, displayName: "shot.png" });
+    if (!again.ok) return;
+    await store.clear();
+
+    // The abandoned staged copy is gone; the committed one still stands.
+    expect(onDisk(again.image.path)).toBe(false);
+    expect(onDisk(sent.image.path)).toBe(true);
+  });
+
   it("clear abandons everything still staged and deletes the copies", async () => {
     // Session close: a picture the user never sent should not outlive the
     // composer it was sitting in.

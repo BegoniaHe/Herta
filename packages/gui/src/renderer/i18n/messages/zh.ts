@@ -207,6 +207,9 @@ export const zh = {
   // Enter with staged pictures and no words (owner 2026-08-27): pictures
   // ride a message; an empty user block is not a message.
   "composer.attach.needText": "图片跟着话走——说点什么再发。",
+  // The per-message picture cap (owner 2026-08-27): a message is a moment,
+  // not an album.
+  "composer.attach.imageLimit": "一条消息最多五张图。",
   "connect.button": "接入黑塔空间站",
   "connect.failed": "会话没能建立——请重试。",
   "workspace.rewind": "回到此处",

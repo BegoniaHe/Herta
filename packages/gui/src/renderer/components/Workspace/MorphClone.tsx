@@ -57,9 +57,9 @@ export const MorphClone = forwardRef<HTMLDivElement, MorphCloneProps>(
                 className="message-images__thumb"
                 src={attachmentImageUrl(img.path)}
                 alt=""
-                // Dimensions reserve the box before the bytes load — the
-                // clone must not grow mid-flight (same reason the echo row
-                // stamps them).
+                // True pixel dimensions, same as the row it swaps for. The
+                // fixed-size thumb CSS owns the box, so the clone cannot
+                // grow mid-flight whether or not the bytes have loaded.
                 {...(img.width !== undefined ? { width: img.width } : {})}
                 {...(img.height !== undefined ? { height: img.height } : {})}
                 draggable={false}

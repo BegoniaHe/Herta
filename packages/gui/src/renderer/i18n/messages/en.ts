@@ -222,6 +222,9 @@ export const en = {
   // Enter with staged pictures and no words (owner 2026-08-27): pictures
   // ride a message; an empty user block is not a message.
   "composer.attach.needText": "Pictures ride a message — say something first.",
+  // The per-message picture cap (owner 2026-08-27): a message is a moment,
+  // not an album.
+  "composer.attach.imageLimit": "Five pictures per message, at most.",
   "connect.button": "Connect to Herta",
   "connect.failed": "Couldn't start a session — try again.",
   "workspace.rewind": "Rewind to here",

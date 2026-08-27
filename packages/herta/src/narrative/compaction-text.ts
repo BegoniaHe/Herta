@@ -49,7 +49,7 @@ export const COMPACTION_TEXT = {
       removed: "开拓者已移除",
       encrypted: "文档已加密，未取正文",
       unsupported: "暂不支持的文档格式，未取正文",
-      no_caption: "图片已存，未读图",
+      no_caption: "图片已存，未能读图",
     },
     /** Second line under a freshly folded attachment citation (ADR 0033
      *  §6g): the user's follow-up may not name the file, so for a few turns

@@ -24,8 +24,8 @@ export const en = {
   "update.downloading": "Downloading",
   "update.ready": "Ready — installs on exit:",
   "update.error": "Check failed",
-  "update.upToDate": "Up to date.",
-  "update.notChecked": "Not checked yet.",
+  "update.upToDate": "Up to date",
+  "update.notChecked": "Not checked yet",
   "update.unsupported": "Updates unavailable here",
   "nav.group.general": "General",
   "nav.group.herta": "Herta",
@@ -85,8 +85,12 @@ export const en = {
   "dream.enableDesc": "Let Herta dream while you're away.",
   "dream.intro":
     "Dream is Herta's downtime. While you're away, she looks back over your finished sessions and writes down the memorable moments — coming to know you a little better the longer you work together.",
+  // Punctuation rule (owner 2026-08-27): a single-clause LABEL or status
+  // carries no terminal period — only prose that explains or instructs keeps
+  // one. So "Couldn't save — try again." keeps its period and "Restart to
+  // apply" does not.
   "common.couldntSave": "Couldn't save — try again.",
-  "common.restartToApply": "Restart to apply.",
+  "common.restartToApply": "Restart to apply",
   "deepseek.intro":
     "The API key is stored encrypted on this device. Get one at platform.deepseek.com.",
   "deepseek.checking": "Checking…",
@@ -100,7 +104,7 @@ export const en = {
   "deepseek.deleteKey": "Delete key",
   "deepseek.deleting": "Deleting…",
   "deepseek.rejected": "DeepSeek rejected that key — check it and try again.",
-  "deepseek.busy": "Finish the current turn first.",
+  "deepseek.busy": "Finish the current turn first",
   "deepseek.unverified":
     "Saved, but couldn't reach DeepSeek to verify it — check your connection if Herta doesn't respond.",
   "deepseek.unencrypted":
@@ -111,7 +115,7 @@ export const en = {
   "deepseek.model.actorDesc": "The model used when talking with Herta.",
   "deepseek.model.backend": "Coprocessor model",
   "deepseek.model.backendDesc":
-    "The model Brick runs tasks with. The vision one can read images directly, but it is still experimental.",
+    "The model Brick runs tasks with. The vision one can read images directly.",
   "deepseek.model.pro": "Pro",
   "deepseek.model.flash": "Flash",
   // ADR 0048 §5 — Brick only: the conversation runs on the completion
@@ -192,8 +196,7 @@ export const en = {
     "This command ends processes — check the target",
   "approval.reason.commandCwdEscape":
     "This command leaves the workspace directory — later relative paths are unguarded",
-  "approval.reason.commandUnresolved":
-    "Part of this command is unreadable to Herta (a variable, glob or expansion) — it cannot tell what it would do",
+  "approval.reason.commandUnresolved": "This command has unresolved parts",
   "approval.alsoClasses": "Also: {list}",
   "app.fanNotice":
     "Herta is a character from Honkai: Star Rail, © HoYoverse. Unofficial fan project, unaffiliated with and not endorsed by HoYoverse.",
@@ -211,20 +214,22 @@ export const en = {
   "composer.attach": "Add documents",
   "composer.attach.formats":
     ".pdf .docx .md .txt .csv .json .log .py .ts and other text",
-  "composer.attach.busy":
-    "This turn isn't finished — wait for her, then drop the file.",
-  "composer.attach.tooMany": "Ten files at a time, at most.",
-  "composer.attach.failed": "Those files didn't make it in.",
-  "composer.attach.denied": "Credential-shaped — not taken.",
+  // The composer-notice pill (owner 2026-08-27): terse, formal, and NO
+  // trailing period — a pill is a label, not a sentence. Settings-row prose
+  // keeps its periods; these do not.
+  "composer.attach.busy": "Turn not finished — cannot add files",
+  "composer.attach.tooMany": "Ten files at most",
+  "composer.attach.failed": "Adding files failed",
+  "composer.attach.denied": "Credential-shaped — refused",
   // The staged strip (ADR 0048): pictures waiting to be sent WITH a message.
   "composer.staged": "Images to send",
   "composer.staged.remove": "Remove",
   // Enter with staged pictures and no words (owner 2026-08-27): pictures
   // ride a message; an empty user block is not a message.
-  "composer.attach.needText": "Pictures ride a message — say something first.",
+  "composer.attach.needText": "Say something first",
   // The per-message picture cap (owner 2026-08-27): a message is a moment,
   // not an album.
-  "composer.attach.imageLimit": "Five pictures per message, at most.",
+  "composer.attach.imageLimit": "Five pictures at most",
   // Click-to-enlarge lightbox (ADR 0048 §4a). `lightbox.open` prefixes the
   // thumb button's aria-label, followed by the filename.
   "lightbox.open": "View picture",
@@ -232,10 +237,10 @@ export const en = {
   "lightbox.zoomIn": "Zoom in",
   "lightbox.zoomOut": "Zoom out",
   "connect.button": "Connect to Herta",
-  "connect.failed": "Couldn't start a session — try again.",
+  "connect.failed": "Session start failed — try again",
   "workspace.rewind": "Rewind to here",
   "workspace.editsNotReverted": "Edited files were not reverted",
-  "workspace.rewindFailed": "Rewind failed — this turn is still here.",
+  "workspace.rewindFailed": "Rewind failed",
   "workspace.processing": "Working…",
   "workspace.took": "Took",
   "workspace.recapping": "Tidying conversation history…",
@@ -314,10 +319,10 @@ export const en = {
   "activity.attachment.extracted": "text extracted",
   "activity.attachment.outline": "outline · {n} entries",
   "activity.attachment.remove": "Remove this attachment",
-  "activity.attachment.removeFailed": "Couldn't remove that attachment.",
+  "activity.attachment.removeFailed": "Removing the attachment failed",
   "activity.plan.more": "+{n} more",
   "plan.card.title": "Todo list",
-  "plan.card.itemsUnavailable": "This record kept no item detail.",
+  "plan.card.itemsUnavailable": "No item detail in this record",
   "trace.card.title": "Operation trace",
   "trace.card.steps": "{n} steps",
   "trace.card.files": "{n} files",
@@ -345,7 +350,10 @@ export const en = {
   "workspace.diffExpand": "Expand diff · {n} lines (+{add} −{del})",
   "workspace.diffCollapse": "Collapse",
   "device.aria": "Agent device",
-  "device.dragHint": "Agent device (drag upward to interact)",
+  // The drag affordance's own label. Terse (owner 2026-08-27) — its context
+  // comes from the enclosing card, labelled "Coprocessor: {state}", and from
+  // the device image's own alt text above.
+  "device.dragHint": "Drag upward",
   "device.ariaLabel": "Coprocessor: {state}",
   "record.chip.coprocessor": "Coprocessor",
   "record.chip.system": "System",
@@ -368,7 +376,7 @@ export const en = {
   "card.resetDefault": "Reset to default",
   "card.workspaceSetError": "could not set workspace",
   "card.rules": "Remembered commands",
-  "card.rulesEmpty": "No commands remembered yet.",
+  "card.rulesEmpty": "No commands remembered",
   "card.rulesRemove": "Remove rule {rule}",
   "card.deviceInfoAria": "device card info",
   "card.deviceInfo":
@@ -385,7 +393,7 @@ export const en = {
     "The desktop bridge ({bridge}) is unavailable — the preload script failed to load.",
   "app.bridgeUnavailableBody":
     "Restart the app. If this persists, the preload build output or its path in the main process is misconfigured.",
-  "app.crashTitle": "The interface hit a problem",
+  "app.crashTitle": "Interface error",
   "app.crashBody":
     "Your session record is safe — reload the interface to continue.",
   "app.crashReload": "Reload",

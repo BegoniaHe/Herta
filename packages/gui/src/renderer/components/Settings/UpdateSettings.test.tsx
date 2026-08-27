@@ -27,7 +27,7 @@ describe("UpdateSettings", () => {
     // (audit 2026-07-24, 1.13); claiming it here told an offline user they
     // were on the newest build.
     expect(screen.getByTestId("update-status")).toHaveTextContent(
-      "Not checked yet.",
+      "Not checked yet",
     );
   });
 
@@ -36,9 +36,7 @@ describe("UpdateSettings", () => {
     act(() => {
       mock.emitUpdate({ phase: "up-to-date" });
     });
-    expect(screen.getByTestId("update-status")).toHaveTextContent(
-      "Up to date.",
-    );
+    expect(screen.getByTestId("update-status")).toHaveTextContent("Up to date");
   });
 
   it("streams state: downloading shows progress, ready swaps in restart-and-install", async () => {

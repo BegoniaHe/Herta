@@ -86,7 +86,7 @@ describe("DeepSeekSettings", () => {
         { actor: "deepseek-v4-flash", backend: "deepseek-v4-flash" },
       ]);
       // The restart fact lives in the intro (static), like the thinking row.
-      expect(queryByText("Restart to apply.")).toBeNull();
+      expect(queryByText("Restart to apply")).toBeNull();
       expect(queryByText(/apply after a restart/)).toBeTruthy();
     });
 
@@ -157,7 +157,7 @@ describe("DeepSeekSettings", () => {
     // A turn starts → the store goes busy (thinking).
     mock.emitTurn({ kind: "started", turnId: "t1" });
     await waitFor(() =>
-      expect(queryByText("Finish the current turn first.")).toBeTruthy(),
+      expect(queryByText("Finish the current turn first")).toBeTruthy(),
     );
     expect((getByText("Save") as HTMLButtonElement).disabled).toBe(true);
     expect((getByText("Delete key") as HTMLButtonElement).disabled).toBe(true);

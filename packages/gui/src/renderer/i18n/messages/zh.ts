@@ -21,8 +21,8 @@ export const zh = {
   "update.downloading": "正在下载",
   "update.ready": "已就绪，退出时安装：",
   "update.error": "检查失败",
-  "update.upToDate": "已是最新。",
-  "update.notChecked": "尚未检查更新。",
+  "update.upToDate": "已是最新",
+  "update.notChecked": "尚未检查更新",
   "update.unsupported": "此环境不支持更新",
   "nav.group.general": "通用",
   "nav.group.herta": "黑塔",
@@ -79,8 +79,12 @@ export const zh = {
   "dream.enableDesc": "你离开时让黑塔入梦。",
   "dream.intro":
     "入梦是黑塔的休息时间。你离开时，她会回顾过往的会话，把那些值得记住的片刻写下来——相处越久，就越了解你。",
+  // Punctuation rule (owner 2026-08-27): a single-clause LABEL or status
+  // carries no terminal 。 — only prose that explains or instructs keeps one.
+  // So "保存失败，请重试。" (two clauses) keeps its period and "重启后生效"
+  // does not.
   "common.couldntSave": "保存失败，请重试。",
-  "common.restartToApply": "重启后生效。",
+  "common.restartToApply": "重启后生效",
   "deepseek.intro":
     "API 密钥以加密形式存储在本机。可在 platform.deepseek.com 获取。",
   "deepseek.checking": "检查中…",
@@ -94,7 +98,7 @@ export const zh = {
   "deepseek.deleteKey": "删除密钥",
   "deepseek.deleting": "删除中…",
   "deepseek.rejected": "DeepSeek 拒绝了该密钥——请检查后重试。",
-  "deepseek.busy": "请先结束当前回合。",
+  "deepseek.busy": "请先结束当前回合",
   "deepseek.unverified":
     "已保存，但无法连接 DeepSeek 验证——若黑塔没有回应，请检查网络。",
   "deepseek.unencrypted": "已明文存储——此设备没有可用的安全密钥链。",
@@ -106,7 +110,7 @@ export const zh = {
   "deepseek.model.actorDesc": "与黑塔交流时使用的模型。",
   "deepseek.model.backend": "协处理器模型",
   "deepseek.model.backendDesc":
-    "板砖执行任务时使用的模型。视觉版能直接看图片，但还是实验版本。",
+    "板砖执行任务时使用的模型。视觉版能直接看图片。",
   "deepseek.model.pro": "Pro",
   "deepseek.model.flash": "Flash",
   // ADR 0048 §5 — 板砖-only: 对话走补全接口，收不了图片。
@@ -171,8 +175,7 @@ export const zh = {
   "approval.reason.commandProcess": "该命令会结束进程，请核对目标",
   "approval.reason.commandCwdEscape":
     "该命令会切到工作区之外，之后的相对路径不受工作区保护",
-  "approval.reason.commandUnresolved":
-    "这条命令里有黑塔读不出来的部分（变量、通配、展开），不能确定它到底会做什么",
+  "approval.reason.commandUnresolved": "这条命令有未解析部分",
   // A chained line with more than one ask class: the other classes, named.
   "approval.alsoClasses": "另含：{list}",
   "app.fanNotice":
@@ -197,19 +200,22 @@ export const zh = {
    *  since ADR 0038: they are the two formats people actually hand over. */
   "composer.attach.formats":
     ".pdf .docx .md .txt .csv .json .log .py .ts 等文本文件",
-  "composer.attach.busy": "这一回合还没结束，等她说完再放文件。",
-  "composer.attach.tooMany": "一次最多十个文件。",
-  "composer.attach.failed": "文件没能加进来。",
-  "composer.attach.denied": "涉及密钥或凭据，没有收下。",
+  // The composer-notice pill (owner 2026-08-27): terse, formal, and NO
+  // trailing 。 — a pill is a label, not a sentence. Settings-row prose keeps
+  // its periods; these do not.
+  "composer.attach.busy": "回合还未结束，无法添加文件",
+  "composer.attach.tooMany": "最多十个文件",
+  "composer.attach.failed": "文件加载失败",
+  "composer.attach.denied": "涉及密钥或凭据，上传失败",
   // The staged strip (ADR 0048): pictures waiting to be sent WITH a message.
   "composer.staged": "待发送的图片",
   "composer.staged.remove": "移除",
   // Enter with staged pictures and no words (owner 2026-08-27): pictures
   // ride a message; an empty user block is not a message.
-  "composer.attach.needText": "图片跟着话走——说点什么再发。",
+  "composer.attach.needText": "说点什么再发",
   // The per-message picture cap (owner 2026-08-27): a message is a moment,
   // not an album.
-  "composer.attach.imageLimit": "一条消息最多五张图。",
+  "composer.attach.imageLimit": "最多五张图",
   // Click-to-enlarge lightbox (ADR 0048 §4a). `lightbox.open` prefixes the
   // thumb button's aria-label, followed by the filename.
   "lightbox.open": "查看图片",
@@ -217,10 +223,10 @@ export const zh = {
   "lightbox.zoomIn": "放大",
   "lightbox.zoomOut": "缩小",
   "connect.button": "接入黑塔空间站",
-  "connect.failed": "会话没能建立——请重试。",
+  "connect.failed": "会话建立失败——请重试",
   "workspace.rewind": "回到此处",
-  "workspace.editsNotReverted": "改动的文件没有被撤销",
-  "workspace.rewindFailed": "撤回失败，这一轮还在。",
+  "workspace.editsNotReverted": "改动的文件未撤销",
+  "workspace.rewindFailed": "撤回失败",
   "workspace.processing": "处理中…",
   "workspace.took": "用时",
   "workspace.recapping": "终端正在归整历史消息…",
@@ -293,17 +299,17 @@ export const zh = {
   // Images (ADR 0048). `{f}` is the format token (PNG/JPEG) — data, not
   // chrome, so it is substituted rather than translated.
   "activity.attachment.image": "图片 {f}",
-  "activity.attachment.unreadable.imageTooLarge": "图片过大，未读图",
+  "activity.attachment.unreadable.imageTooLarge": "图片过大，未能读图",
   "activity.attachment.unreadable.noCaption": "已存图片，未能读图",
   "activity.attachment.pages": "页",
   "activity.attachment.extracted": "已提取文本",
   /** The document's own outline, stored beside the text (2026-08-23). */
   "activity.attachment.outline": "目录 {n} 条",
   "activity.attachment.remove": "移除这个附件",
-  "activity.attachment.removeFailed": "没能移除这个附件。",
+  "activity.attachment.removeFailed": "移除附件失败",
   "activity.plan.more": "还有 {n} 项",
   "plan.card.title": "任务清单",
-  "plan.card.itemsUnavailable": "这次记录没有留下清单明细。",
+  "plan.card.itemsUnavailable": "本次记录无清单明细",
   // 操作轨迹 rail card (2026-08-17) — the plan card's fallback for
   // dispatches with no 任务清单 (every 极简 run).
   "trace.card.title": "操作轨迹",
@@ -340,7 +346,10 @@ export const zh = {
   "workspace.diffExpand": "展开 差异 {n} 行 （+{add} −{del}）",
   "workspace.diffCollapse": "收起",
   "device.aria": "智能体设备",
-  "device.dragHint": "智能体设备（向上拖动以交互）",
+  // The drag affordance's own label. Terse (owner 2026-08-27) — its context
+  // comes from the enclosing card, which is labelled 差分协处理器：{state},
+  // and from the device image's own alt text above.
+  "device.dragHint": "向上拖动",
   "device.ariaLabel": "差分协处理器：{state}",
   "record.chip.coprocessor": "差分协处理器",
   "record.chip.system": "系统",
@@ -363,7 +372,7 @@ export const zh = {
   "card.resetDefault": "恢复默认",
   "card.workspaceSetError": "无法设置工作区",
   "card.rules": "已记住的命令",
-  "card.rulesEmpty": "还没有记住任何命令。",
+  "card.rulesEmpty": "暂无已记住的命令",
   "card.rulesRemove": "删除规则 {rule}",
   "card.deviceInfoAria": "设备卡片信息",
   "card.deviceInfo":
@@ -376,7 +385,7 @@ export const zh = {
   "app.bridgeUnavailable": "桌面桥（{bridge}）不可用——预加载脚本加载失败。",
   "app.bridgeUnavailableBody":
     "重启应用。若仍然如此，可能是预加载脚本的构建产物或它在主进程中的路径配置有误。",
-  "app.crashTitle": "界面出了点问题",
+  "app.crashTitle": "界面出错",
   "app.crashBody": "会话记录没有丢失——重新载入界面即可继续。",
   "app.crashReload": "重新载入",
   "conversation.rowError": "这条记录渲染失败，已跳过。",

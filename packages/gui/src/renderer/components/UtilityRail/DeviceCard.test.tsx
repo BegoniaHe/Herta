@@ -132,7 +132,7 @@ describe("DeviceCard", () => {
     const toggle = screen.getByLabelText("device card info");
     fireEvent.click(toggle);
     await waitFor(() =>
-      expect(screen.queryByText("No commands remembered yet.")).toBeTruthy(),
+      expect(screen.queryByText("No commands remembered")).toBeTruthy(),
     );
     expect(mock.calls.listCommandRules).toBe(1);
     fireEvent.click(toggle); // close

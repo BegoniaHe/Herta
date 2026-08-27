@@ -184,7 +184,7 @@ describe("CardMenu", () => {
   it("shows the empty note for an empty rule list", () => {
     renderWithLocale(<CardMenu {...rulesProps} rules={[]} />);
     fireEvent.click(screen.getByLabelText("device card info"));
-    expect(screen.getByText("No commands remembered yet.")).toBeInTheDocument();
+    expect(screen.getByText("No commands remembered")).toBeInTheDocument();
   });
 
   it("omits the section entirely when rules are undefined (no rule surface)", () => {

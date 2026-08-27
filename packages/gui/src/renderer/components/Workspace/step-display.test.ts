@@ -393,7 +393,7 @@ describe("stepDisplayBody — attachment rows, incl. PDF / Word (ADR 0038)", () 
     "activity.attachment.unreadable.readError": "读取失败",
     "activity.attachment.outline": "目录 {n} 条",
     "activity.attachment.image": "图片 {f}",
-    "activity.attachment.unreadable.imageTooLarge": "图片过大，未读图",
+    "activity.attachment.unreadable.imageTooLarge": "图片过大，未能读图",
     "activity.attachment.unreadable.noCaption": "已存图片，未能读图",
   };
   const ta = (key: MessageKey): string => A[key] ?? `MISSING:${key}`;
@@ -609,7 +609,7 @@ describe("stepDisplayBody — attachment rows, incl. PDF / Word (ADR 0038)", () 
         }),
         ta,
       ),
-    ).toBe("附件 huge.png · 图片 PNG · 9000×9000 · 图片过大，未读图");
+    ).toBe("附件 huge.png · 图片 PNG · 9000×9000 · 图片过大，未能读图");
   });
 });
 

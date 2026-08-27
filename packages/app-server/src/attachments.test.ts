@@ -919,7 +919,7 @@ describe("ingestAttachment — images", () => {
       caption,
     );
     expect(r.unreadable).toBe("too_large");
-    expect(r.block.body).toContain("图片过大，未读图");
+    expect(r.block.body).toContain("图片过大，未能读图");
     expect(existsSync(join(ws, ...r.relPath.split("/")))).toBe(true);
     expect(caption.calls).toHaveLength(0);
   });

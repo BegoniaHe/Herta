@@ -88,7 +88,7 @@ describe("BanzhuanSettings", () => {
       expect(mock.calls.setBackendConfig).toEqual([{ thinking: "max" }]);
       // No appearing note — it re-flowed the pane height (owner 2026-08-03);
       // "Applies on the next launch" lives in the row description instead.
-      expect(queryByText("Restart to apply.")).toBeNull();
+      expect(queryByText("Restart to apply")).toBeNull();
       // (both the thinking and the tool-contract descriptions carry it)
       expect(screen.queryAllByText(/next launch/).length).toBeGreaterThan(0);
     });
@@ -119,7 +119,7 @@ describe("BanzhuanSettings", () => {
       );
       // Snapped back to the value on disk; no restart note for a failed write.
       expect(trigger.textContent).toContain("High");
-      expect(queryByText("Restart to apply.")).toBeNull();
+      expect(queryByText("Restart to apply")).toBeNull();
     });
 
     it("hides the row entirely when the bridge lacks the surface (fakes / website demo)", () => {

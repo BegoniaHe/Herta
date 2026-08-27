@@ -827,7 +827,7 @@ describe("Composer — attachments (ADR 0033)", () => {
       fireEvent.drop(form, fileDrop([{ name: "a.md" }]));
     });
     expect(
-      screen.getByText(/wait for her, then drop the file/i),
+      screen.getByText(/Turn not finished — cannot add files/i),
     ).toBeInTheDocument();
   });
 
@@ -840,7 +840,7 @@ describe("Composer — attachments (ADR 0033)", () => {
     await act(async () => {
       fireEvent.drop(form, fileDrop([{ name: "a.md" }]));
     });
-    expect(screen.getByText(/Ten files at a time/i)).toBeInTheDocument();
+    expect(screen.getByText(/Ten files at most/i)).toBeInTheDocument();
   });
 
   // ── Staged images (ADR 0048 §4) ─────────────────────────────────────────
@@ -916,9 +916,7 @@ describe("Composer — attachments (ADR 0033)", () => {
       fireEvent.submit(form);
     });
     expect(mock.calls.submitText).toHaveLength(0);
-    expect(
-      screen.getByText(/Pictures ride a message — say something first/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Say something first/i)).toBeInTheDocument();
     expect(container.querySelectorAll(".composer-staged__item")).toHaveLength(
       1,
     );
@@ -932,9 +930,7 @@ describe("Composer — attachments (ADR 0033)", () => {
       fireEvent.submit(form);
     });
     expect(mock.calls.submitText).toHaveLength(0);
-    expect(
-      screen.queryByText(/Pictures ride a message/i),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Say something first/i)).not.toBeInTheDocument();
   });
 
   it("staged pictures hold the composer expanded (has-staged; never is-shrunk)", async () => {
@@ -1052,7 +1048,9 @@ describe("Composer — attachments (ADR 0033)", () => {
     await act(async () => {
       fireEvent.drop(form, fileDrop([{ name: "shot.png" }]));
     });
-    expect(screen.getByText(/This turn isn't finished/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Turn not finished — cannot add files/i),
+    ).toBeInTheDocument();
     expect(container.querySelectorAll(".composer-staged__item")).toHaveLength(
       0,
     );
@@ -1070,9 +1068,7 @@ describe("Composer — attachments (ADR 0033)", () => {
     });
     // Whole-batch refusal, like the attachFiles cap: nothing staged, and the
     // notice says the RULE rather than silently staging a prefix.
-    expect(
-      screen.getByText(/Five pictures per message, at most/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Five pictures at most/i)).toBeInTheDocument();
     expect(container.querySelectorAll(".composer-staged__item")).toHaveLength(
       0,
     );

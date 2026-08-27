@@ -21,10 +21,10 @@ describe("DreamSettings", () => {
       expect(toggle.getAttribute("aria-checked")).toBe("false"),
     );
     // No restart note until the user changes it.
-    expect(queryByText("Restart to apply.")).toBeNull();
+    expect(queryByText("Restart to apply")).toBeNull();
     fireEvent.click(toggle);
     expect(mock.calls.setDreamConfig).toEqual([{ enabled: true }]);
-    expect(queryByText("Restart to apply.")).toBeTruthy();
+    expect(queryByText("Restart to apply")).toBeTruthy();
   });
 
   it("hides the restart note when toggled back to the original value", async () => {
@@ -41,9 +41,9 @@ describe("DreamSettings", () => {
       expect(toggle.getAttribute("aria-checked")).toBe("true"),
     );
     fireEvent.click(toggle); // off → differs from the loaded value
-    expect(queryByText("Restart to apply.")).toBeTruthy();
+    expect(queryByText("Restart to apply")).toBeTruthy();
     fireEvent.click(toggle); // back on → matches the loaded value
-    expect(queryByText("Restart to apply.")).toBeNull();
+    expect(queryByText("Restart to apply")).toBeNull();
   });
 
   it("reverts and surfaces an error if the write fails", async () => {
@@ -69,6 +69,6 @@ describe("DreamSettings", () => {
       expect(queryByText("Couldn't save — try again.")).toBeTruthy(),
     );
     expect(toggle.getAttribute("aria-checked")).toBe("true");
-    expect(queryByText("Restart to apply.")).toBeNull();
+    expect(queryByText("Restart to apply")).toBeNull();
   });
 });

@@ -377,7 +377,7 @@ function reasonFor(
     case "too_large":
       // An image over the CAPTION ceiling is stored and citable; only the
       // reading did not happen. Distinct from a document's two size states.
-      if (ctx.image === true) return "图片过大，未读图";
+      if (ctx.image === true) return "图片过大，未能读图";
       if (ctx.format === undefined) return "文件过大，未取正文";
       return ctx.relPath === null ? "页数过多，未提取" : "正文过长，未取正文";
     case "no_caption":

@@ -44,11 +44,13 @@ export function DeepSeekSettings(): JSX.Element {
   // reads the choice at the next bootstrap.
   const modelsSupported = bridge.setModelConfig !== undefined;
   // Pre-load optimistic state = the real handler's defaults (actor Pro,
-  // backend flash — owner 2026-08-17), so the pills never flash a wrong
-  // selection while getModelConfig is in flight.
+  // owner 2026-08-17; backend the VISION flash, owner 2026-08-28 per ADR
+  // 0048 §5a), so the pills never flash a wrong selection while
+  // getModelConfig is in flight. Keep in lockstep with session-service's
+  // getModelConfig and buildConfig — three statements of one default.
   const [models, setModels] = useState<ModelConfig>({
     actor: "deepseek-v4-pro",
-    backend: "deepseek-v4-flash",
+    backend: "deepseek-v4-flash-vision-exp",
   });
   const [modelsFailed, setModelsFailed] = useState(false);
   const [modelsLoadFailed, setModelsLoadFailed] = useState(false);

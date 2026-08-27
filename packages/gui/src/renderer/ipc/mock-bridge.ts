@@ -75,7 +75,7 @@ export interface MockHertaBridgeOpts {
    *  error-note paths are testable. */
   readonly failSetBackendConfig?: boolean;
   /** Seed for getModelConfig (Settings → DeepSeek → 模型). Default
-   *  actor Pro / backend flash (the real handler's defaults). */
+   *  actor Pro / backend the VISION flash (the real handler's defaults). */
   readonly getModelConfigResult?: ModelConfig;
   /** When true, setModelConfig rejects — same seam as failSetBackendConfig. */
   readonly failSetModelConfig?: boolean;
@@ -465,8 +465,9 @@ export function createMockHertaBridge(
       return (
         opts.getModelConfigResult ?? {
           actor: "deepseek-v4-pro",
-          // Mirrors the real handler's default (owner flip 2026-08-17).
-          backend: "deepseek-v4-flash",
+          // Mirrors the real handler's default (owner flip 2026-08-28,
+          // ADR 0048 §5a — was plain flash from 2026-08-17).
+          backend: "deepseek-v4-flash-vision-exp",
         }
       );
     },

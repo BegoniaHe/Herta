@@ -81,9 +81,13 @@ describe("DeepSeekSettings", () => {
       await waitFor(() => expect(actor.textContent).toContain("Pro"));
       fireEvent.click(actor);
       fireEvent.click(getByRole("option", { name: "Flash" }));
-      // Backend rides along at its default (flash since 2026-08-17).
+      // Backend rides along at its default (the vision flash since
+      // 2026-08-28, ADR 0048 §5a).
       expect(mock.calls.setModelConfig).toEqual([
-        { actor: "deepseek-v4-flash", backend: "deepseek-v4-flash" },
+        {
+          actor: "deepseek-v4-flash",
+          backend: "deepseek-v4-flash-vision-exp",
+        },
       ]);
       // The restart fact lives in the intro (static), like the thinking row.
       expect(queryByText("Restart to apply")).toBeNull();

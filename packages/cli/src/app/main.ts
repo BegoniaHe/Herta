@@ -201,12 +201,14 @@ export async function main(
     devBaseUrl !== undefined && devBaseUrl !== ""
       ? { baseUrl: devBaseUrl }
       : {};
+  // Default the VISION flash (owner 2026-08-28, ADR 0048 §5a — parity with
+  // the GUI): 板砖 can re-look at a picture out of the box. Plain flash was
+  // the default from 2026-08-17 and stays one env var away, as does Pro.
+  const backendModel =
+    process.env.HERTA_BACKEND_MODEL ?? "deepseek-v4-flash-vision-exp";
   const backendProvider = deepseekProvider({
     apiKey,
-    // Default flash (owner 2026-08-17, parity with the GUI): on the minimal
-    // contract the outcome lab measured flash-板砖 = Pro-板砖 (62/62) at a
-    // fraction of the cost. HERTA_BACKEND_MODEL=deepseek-v4-pro opts back.
-    model: process.env.HERTA_BACKEND_MODEL ?? "deepseek-v4-flash",
+    model: backendModel,
     // Default "high". HERTA_BACKEND_THINKING accepts low/high/max/false —
     // note deepseek-v4-pro maps a sent "low" to "high" server-side until
     // its announced early-August-2026 update (flash already honors it).
@@ -254,6 +256,12 @@ export async function main(
     lang,
     wantMinimal: process.env.HERTA_BACKEND_CONTRACT !== "standard",
     backendProvider,
+    // ADR 0048 §5: `view_image` mounts only when 板砖's model can actually
+    // see. The GUI derives this inside SessionImpl (isVisionModel); the CLI
+    // builds its stack directly, so it states the same rule here — without
+    // it, an operator on the vision model would pay its latency and still
+    // be told it has no eyes.
+    vision: backendModel.includes("vision"),
     // The digest tool's side model (ADR 0043) — the same flash sidecar the
     // GUI host builds.
     digestModel: digestModelFrom(makeDigestProvider(apiKey, baseUrl)),

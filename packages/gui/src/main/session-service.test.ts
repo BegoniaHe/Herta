@@ -135,10 +135,12 @@ describe("buildConfig", () => {
     expect(cfg.workspaceRoot).toBe(cwd);
     expect(cfg.providers.deepseekApiKey).toBe("sk-test-123");
     // Must match the working CLI: the completion endpoint accepts only
-    // deepseek-v4-pro / deepseek-v4-flash (deepseek-v4-base 400s).
-    // Defaults (owner 2026-08-17): actor Pro, backend FLASH.
+    // deepseek-v4-pro / deepseek-v4-flash (deepseek-v4-base 400s) — which
+    // is why the VISION model is backend-only.
+    // Defaults: actor Pro (owner 2026-08-17); backend the vision flash
+    // (owner 2026-08-28, ADR 0048 §5a — 板砖 can re-look out of the box).
     expect(cfg.providers.actorModel).toBe("deepseek-v4-pro");
-    expect(cfg.providers.backendModel).toBe("deepseek-v4-flash");
+    expect(cfg.providers.backendModel).toBe("deepseek-v4-flash-vision-exp");
     expect(cfg.providers.routerModel).toBe("deepseek-v4-flash");
     // "high" is the default backend reasoning effort (Settings → Coprocessor
     // can lower/raise it; with no settings file the default stands).
@@ -202,9 +204,10 @@ describe("buildConfig", () => {
     );
     const cfg = await buildConfig(cwd, home, "sk-test-123");
     // Actor follows the setting; backend, unset, keeps the built-in default
-    // (flash since 2026-08-17). A PERSISTED backend choice is also honored.
+    // (the vision flash since 2026-08-28). A PERSISTED backend choice is
+    // also honored.
     expect(cfg.providers.actorModel).toBe("deepseek-v4-flash");
-    expect(cfg.providers.backendModel).toBe("deepseek-v4-flash");
+    expect(cfg.providers.backendModel).toBe("deepseek-v4-flash-vision-exp");
     writeFileSync(
       join(cwd, ".herta", "settings.json"),
       JSON.stringify({ models: { backend: "deepseek-v4-pro" } }),
@@ -230,7 +233,8 @@ describe("buildConfig", () => {
     );
     const cfg = await buildConfig(cwd, home, "sk-test-123");
     expect(cfg.providers.actorModel).toBe("deepseek-v4-pro"); // env won
-    expect(cfg.providers.backendModel).toBe("deepseek-v4-flash"); // off-enum → default
+    // off-enum → the built-in default (the vision flash since 2026-08-28)
+    expect(cfg.providers.backendModel).toBe("deepseek-v4-flash-vision-exp");
   });
 
   it("backendContract (ADR 0040): default MINIMAL (owner flip 2026-08-17); setting honored; env beats setting; off-enum → default", async () => {

@@ -161,11 +161,15 @@ export async function buildConfig(
       // settings.json, restart-to-apply) > the built-in default. The guard
       // drops an off-enum value a hand-edited file might carry.
       //
-      // Defaults (owner 2026-08-17): actor Pro (flash is voice-flat and
-      // fabricates on first pass — the actor lab), backend FLASH — on the
-      // minimal contract the outcome lab measured flash-板砖 = Pro-板砖
-      // (62/62) at a fraction of the cost. Pro for 板砖 is the user opt-in
-      // now.
+      // Defaults: actor Pro (owner 2026-08-17 — flash is voice-flat and
+      // fabricates on first pass, per the actor lab). Backend was flash for
+      // the same reason Pro was not (the outcome lab measured flash-板砖 =
+      // Pro-板砖, 62/62, far cheaper); it is now the VISION flash
+      // (owner 2026-08-28, ADR 0048 §5a) so 板砖 can re-look at a picture
+      // without the user opting in. The lab reruns that gate this found no
+      // safety or capability regression (git-dev 74/74, zero destructive
+      // misses) and a real cost the owner accepted knowingly: +77 % wall
+      // clock and +25 % permission cards on the same fifteen briefs.
       actorModel:
         process.env.HERTA_ACTOR_MODEL ??
         (isModelChoice(settings.models?.actor)
@@ -175,7 +179,7 @@ export async function buildConfig(
         process.env.HERTA_BACKEND_MODEL ??
         (isBackendModelChoice(settings.models?.backend)
           ? settings.models.backend
-          : "deepseek-v4-flash"),
+          : "deepseek-v4-flash-vision-exp"),
       routerModel: "deepseek-v4-flash",
       ...(devBaseUrl !== undefined && devBaseUrl !== ""
         ? { baseUrl: devBaseUrl }
@@ -840,10 +844,12 @@ export function createSessionService(
         actor: isModelChoice(s.models?.actor)
           ? s.models.actor
           : "deepseek-v4-pro",
-        // Default flash (owner 2026-08-17) — must match buildConfig's.
+        // Default vision flash (owner 2026-08-28, ADR 0048 §5a) — must
+        // match buildConfig's, or the pane shows a model the next boot
+        // will not use.
         backend: isBackendModelChoice(s.models?.backend)
           ? s.models.backend
-          : "deepseek-v4-flash",
+          : "deepseek-v4-flash-vision-exp",
       };
     });
     handle(

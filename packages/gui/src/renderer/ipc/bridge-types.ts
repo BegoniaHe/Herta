@@ -113,14 +113,21 @@ export interface BackendConfig {
 }
 
 /** The two DeepSeek models a stage can run on (2026-08-17). Exactly the names
- *  the completion endpoint accepts. */
+ *  the completion endpoint accepts — which is why the actor is limited to
+ *  these and 板砖 is not. */
 export type ModelChoice = "deepseek-v4-pro" | "deepseek-v4-flash";
+
+/** 板砖's models: the two above plus the vision model (ADR 0048 §5), which
+ *  mounts `view_image` so a visual question can be answered by a re-look
+ *  rather than by the attachment caption's one-shot reading. Backend-only —
+ *  the actor's completion endpoint accepts neither images nor this name. */
+export type BackendModelChoice = ModelChoice | "deepseek-v4-flash-vision-exp";
 
 /** Settings → DeepSeek → 模型: which model drives the actor (Herta's speech /
  *  thought / beats) and which drives 板砖. Restart-to-apply. */
 export interface ModelConfig {
   readonly actor: ModelChoice;
-  readonly backend: ModelChoice;
+  readonly backend: BackendModelChoice;
 }
 
 /** The UI chrome language (Settings → Language). */

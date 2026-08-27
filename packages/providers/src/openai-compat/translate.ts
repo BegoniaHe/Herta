@@ -20,9 +20,17 @@ interface OpenAIToolCall {
   function: { name: string; arguments: string };
 }
 
+/** OpenAI-style content parts. Only the user role takes them, and only for
+ *  images (ADR 0048 slice 3) — everything else in this wire format is a
+ *  plain string, and keeping it that way is what makes the prompt-cache
+ *  bytes stable for the 99% of messages that carry no picture. */
+type OpenAIContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 type OpenAIMessage =
   | { role: "system"; content: string }
-  | { role: "user"; content: string }
+  | { role: "user"; content: string | OpenAIContentPart[] }
   | {
       role: "assistant";
       content: string | null;
@@ -74,7 +82,7 @@ export function translateActor(
     messages.push({ role: "system", content: frame.retrievedLore });
   }
   for (const m of frame.messages) {
-    messages.push(toOpenAI(m));
+    messages.push(...toOpenAI(m));
   }
   const tools =
     frame.toolSchemas.length > 0 ? frame.toolSchemas.map(toTool) : undefined;
@@ -96,7 +104,7 @@ export function translateBackend(
     messages.push({ role: "system", content: frame.scopedMemory });
   }
   for (const m of frame.messages) {
-    messages.push(toOpenAI(m));
+    messages.push(...toOpenAI(m));
   }
   // Per-iteration todo reminder (ADR 0025 §2): trails the transcript so the
   // stable prefix keeps its prompt-cache bytes; recomputed each call by the
@@ -126,9 +134,19 @@ function finalizeRequest(
   return base;
 }
 
-function toOpenAI(m: Message): OpenAIMessage {
+/**
+ * One transcript message → the wire messages it becomes.
+ *
+ * Almost always exactly one. The exception is a tool result carrying images
+ * (ADR 0048 slice 3): the API takes images in `user` messages only, so the
+ * tool message goes out as text and a synthetic user message follows with
+ * the picture parts. Returning an array keeps that fan-out here, in the
+ * layer that knows the wire format, rather than leaking a provider rule into
+ * the transcript.
+ */
+function toOpenAI(m: Message): OpenAIMessage[] {
   if (m.role === "user") {
-    return { role: "user", content: m.text };
+    return [{ role: "user", content: m.text }];
   }
   if (m.role === "assistant") {
     if (m.toolCalls.length === 0) {
@@ -139,7 +157,7 @@ function toOpenAI(m: Message): OpenAIMessage {
       if (m.reasoningContent !== undefined && m.reasoningContent.length > 0) {
         out.reasoning_content = m.reasoningContent;
       }
-      return out;
+      return [out];
     }
     const out: Extract<OpenAIMessage, { role: "assistant" }> = {
       role: "assistant",
@@ -153,13 +171,36 @@ function toOpenAI(m: Message): OpenAIMessage {
     if (m.reasoningContent !== undefined && m.reasoningContent.length > 0) {
       out.reasoning_content = m.reasoningContent;
     }
-    return out;
+    return [out];
   }
-  return {
+  const toolMessage: OpenAIMessage = {
     role: "tool",
     tool_call_id: m.toolCallId,
     content: toolMessageContent(m.result),
   };
+  const images = m.result.images ?? [];
+  if (images.length === 0) return [toolMessage];
+  return [
+    toolMessage,
+    {
+      role: "user",
+      // The text part names the files so the picture is anchored to a path
+      // the model can cite; without it the images arrive unlabelled and a
+      // multi-image call cannot say which is which.
+      content: [
+        {
+          type: "text",
+          text: `[${images.map((i) => i.path).join(", ")}]`,
+        },
+        ...images.map(
+          (i): OpenAIContentPart => ({
+            type: "image_url",
+            image_url: { url: i.dataUri },
+          }),
+        ),
+      ],
+    },
+  ];
 }
 
 function toolMessageContent(result: ToolResult): string {

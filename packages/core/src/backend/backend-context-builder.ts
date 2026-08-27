@@ -354,6 +354,20 @@ export type BackendContract = "standard" | "minimal";
  * items cross the dispatch boundary); the HOW lives in the tool's own
  * description. D6 still holds — no speaking to the user, no playing Herta.
  */
+/**
+ * NOT here: a line about `view_image` (ADR 0048 §5).
+ *
+ * One was written and then removed the same hour. The evidence for it — a
+ * model that spent a whole brief on `pwd`/`ls`/`find` and never opened the
+ * picture — turned out to be a broken probe passing bare strings as
+ * `userMessages`, so the model was reacting to an EMPTY request. With the
+ * brief actually delivered, the tool's own description is enough: 3 of 3
+ * live briefs called `view_image` first, with zero `bash` calls, at 8-12s.
+ *
+ * The tool description is self-gating (it exists only when the tool is
+ * mounted); a contract line is bytes on the shared, cached prefix. Prompt
+ * text has to earn its place with measured behaviour, not a plausible story.
+ */
 export function minimalBackendContract(
   lang: "zh" | "en",
   workspaceHint?: string,

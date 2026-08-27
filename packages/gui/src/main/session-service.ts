@@ -41,6 +41,7 @@ import {
 } from "./app-global-settings.js";
 import {
   isBackendContract,
+  isBackendModelChoice,
   isBackendThinking,
   isModelChoice,
   readAppSettings,
@@ -172,7 +173,7 @@ export async function buildConfig(
           : "deepseek-v4-pro"),
       backendModel:
         process.env.HERTA_BACKEND_MODEL ??
-        (isModelChoice(settings.models?.backend)
+        (isBackendModelChoice(settings.models?.backend)
           ? settings.models.backend
           : "deepseek-v4-flash"),
       routerModel: "deepseek-v4-flash",
@@ -840,7 +841,7 @@ export function createSessionService(
           ? s.models.actor
           : "deepseek-v4-pro",
         // Default flash (owner 2026-08-17) — must match buildConfig's.
-        backend: isModelChoice(s.models?.backend)
+        backend: isBackendModelChoice(s.models?.backend)
           ? s.models.backend
           : "deepseek-v4-flash",
       };
@@ -848,7 +849,8 @@ export function createSessionService(
     handle(
       CMD.setModelConfig,
       async (_e, cfg: { actor?: unknown; backend?: unknown }) => {
-        if (!isModelChoice(cfg?.actor) || !isModelChoice(cfg?.backend)) return;
+        if (!isModelChoice(cfg?.actor) || !isBackendModelChoice(cfg?.backend))
+          return;
         const ws = appWorkspaceRoot();
         const s = await readAppSettings(ws);
         await writeAppSettings(ws, {

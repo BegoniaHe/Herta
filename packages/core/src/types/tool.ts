@@ -42,6 +42,30 @@ export interface ToolResult<O = unknown> {
    * keys off `data`, so a tool that sets this keeps `data` small.
    */
   modelText?: string;
+  /**
+   * Pictures this tool result puts in front of the model (ADR 0048 slice 3).
+   *
+   * The transcript stays provider-neutral: WHERE an image may ride is a wire
+   * fact, not a harness one. DeepSeek (like OpenAI) accepts images in `user`
+   * messages only, so the translator emits the tool message as text and then
+   * a synthetic user message carrying these parts. A provider that allowed
+   * images inside a tool result would place them differently from the same
+   * field.
+   *
+   * Only set by a vision-capable stack: a model without vision answers 400 to
+   * an image part, so the tool that produces these is mounted only when the
+   * backend model can read one.
+   */
+  images?: readonly ToolResultImage[];
+}
+
+/** One picture handed to the model, with the path it came from so the record
+ *  and any later citation name a real file rather than an opaque blob. */
+export interface ToolResultImage {
+  /** `data:image/png;base64,…` */
+  readonly dataUri: string;
+  /** Workspace-relative path of the source file. */
+  readonly path: string;
 }
 
 export interface ToolSchema {

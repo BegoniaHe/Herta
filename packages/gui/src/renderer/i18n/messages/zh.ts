@@ -105,9 +105,12 @@ export const zh = {
   "deepseek.model.actor": "对话模型",
   "deepseek.model.actorDesc": "与黑塔交流时使用的模型。",
   "deepseek.model.backend": "协处理器模型",
-  "deepseek.model.backendDesc": "板砖执行任务时使用的模型。",
+  "deepseek.model.backendDesc":
+    "板砖执行任务时使用的模型。视觉版能直接看图片，但还是实验版本。",
   "deepseek.model.pro": "Pro",
   "deepseek.model.flash": "Flash",
+  // ADR 0048 §5 — 板砖-only: 对话走补全接口，收不了图片。
+  "deepseek.model.vision": "Flash 视觉版",
   "keyprompt.title": "将黑塔接入 DeepSeek",
   "keyprompt.body":
     "黑塔需要一个 DeepSeek API 密钥才能思考。它存放在本机的系统密钥链里，除了调用 DeepSeek 绝不外传。",

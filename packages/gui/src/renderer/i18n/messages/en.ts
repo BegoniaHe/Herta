@@ -110,9 +110,13 @@ export const en = {
   "deepseek.model.actor": "Conversation model",
   "deepseek.model.actorDesc": "The model used when talking with Herta.",
   "deepseek.model.backend": "Coprocessor model",
-  "deepseek.model.backendDesc": "The model Brick runs tasks with.",
+  "deepseek.model.backendDesc":
+    "The model Brick runs tasks with. The vision one can read images directly, but it is still experimental.",
   "deepseek.model.pro": "Pro",
   "deepseek.model.flash": "Flash",
+  // ADR 0048 §5 — Brick only: the conversation runs on the completion
+  // endpoint, which takes no images.
+  "deepseek.model.vision": "Flash Vision",
   "keyprompt.title": "Connect Herta to DeepSeek",
   // "stored in your OS keychain", not "stored encrypted" (audit BL18):
   // key-store falls back to plaintext when safeStorage reports no encryption

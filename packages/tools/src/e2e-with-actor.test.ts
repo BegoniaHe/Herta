@@ -213,6 +213,26 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
     ]);
   });
 
+  it("view_image mounts ONLY on a vision-capable model (ADR 0048 §5)", () => {
+    // A model without vision answers 400 to an image part, and a tool the
+    // model is told it has but cannot use is worse than no tool: it invites a
+    // call that fails, and invites the model to believe it looked.
+    expect(createMvpTools().map((t) => t.name)).not.toContain("view_image");
+    expect(
+      createMvpTools({ digestModel: null, vision: true }).map((t) => t.name),
+    ).toContain("view_image");
+
+    const minimal = (vision: boolean) =>
+      createMinimalTools({
+        bashPath: "/nonexistent/bash",
+        workspaceShellPath: () => "/ws",
+        digestModel: null,
+        vision,
+      }).map((t) => t.name);
+    expect(minimal(false)).not.toContain("view_image");
+    expect(minimal(true)).toContain("view_image");
+  });
+
   it("createMinimalTools (ADR 0040): the trained pair plus the record channels (digest ADR 0043, todo_write ADR 0047 §4), and the record channels accept the shell's path spelling", async () => {
     ws = await mkTmpWorkspace({ "src/a.ts": "one\ntwo\nthree\n" });
     const tools = createMinimalTools({

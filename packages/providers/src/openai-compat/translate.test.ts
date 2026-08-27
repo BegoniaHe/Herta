@@ -603,4 +603,99 @@ describe("translateBackend", () => {
     expect(req.messages[0]?.role).toBe("system");
     expect(req.messages.at(-1)).toEqual({ role: "user", content: "hello" });
   });
+
+  // ── Tool-result images (ADR 0048 slice 3) ──────────────────────────────
+
+  const imageResult = (paths: readonly string[]) => ({
+    role: "tool" as const,
+    toolCallId: "call_1",
+    ts: "2026-08-27T00:00:00.000Z",
+    result: {
+      ok: true,
+      summary: `viewing ${paths.join(", ")}`,
+      images: paths.map((p) => ({
+        dataUri: `data:image/png;base64,AAAA-${p}`,
+        path: p,
+      })),
+    },
+  });
+
+  it("puts a tool result's images in a USER message after it", () => {
+    // The API takes images in user messages only. Emitting them inside the
+    // tool message would 400 the whole turn, so the fan-out lives here — in
+    // the layer that knows the wire format.
+    const req = translate(
+      makeBackendFrame({ messages: [imageResult(["shots/a.png"])] }),
+      { model: "test-model" },
+    );
+    const tool = req.messages.at(-2);
+    const user = req.messages.at(-1);
+    expect(tool).toEqual({
+      role: "tool",
+      tool_call_id: "call_1",
+      content: "viewing shots/a.png",
+    });
+    expect(user).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "[shots/a.png]" },
+        {
+          type: "image_url",
+          image_url: { url: "data:image/png;base64,AAAA-shots/a.png" },
+        },
+      ],
+    });
+  });
+
+  it("names every picture in the text part, so a multi-image call can cite", () => {
+    const req = translate(
+      makeBackendFrame({ messages: [imageResult(["a.png", "b.png"])] }),
+      { model: "test-model" },
+    );
+    const user = req.messages.at(-1) as {
+      content: { type: string; text?: string }[];
+    };
+    expect(user.content[0]?.text).toBe("[a.png, b.png]");
+    expect(user.content).toHaveLength(3);
+  });
+
+  it("leaves an ordinary tool result exactly as it was — one message, a string", () => {
+    // The 99% path. Content parts on every tool message would change the
+    // cached prefix bytes for every brief that never sees a picture.
+    const req = translate(
+      makeBackendFrame({
+        messages: [
+          {
+            role: "tool",
+            toolCallId: "call_1",
+            ts: "2026-08-27T00:00:00.000Z",
+            result: { ok: true, summary: "2 files" },
+          },
+        ],
+      }),
+      { model: "test-model" },
+    );
+    expect(req.messages.at(-1)).toEqual({
+      role: "tool",
+      tool_call_id: "call_1",
+      content: "2 files",
+    });
+  });
+
+  it("an empty images array adds no message", () => {
+    const req = translate(
+      makeBackendFrame({
+        messages: [
+          {
+            role: "tool",
+            toolCallId: "call_1",
+            ts: "2026-08-27T00:00:00.000Z",
+            result: { ok: true, summary: "nothing", images: [] },
+          },
+        ],
+      }),
+      { model: "test-model" },
+    );
+    expect(req.messages.at(-1)).toMatchObject({ role: "tool" });
+  });
 });

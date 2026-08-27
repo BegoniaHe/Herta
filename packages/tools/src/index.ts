@@ -29,6 +29,7 @@ import {
   strReplaceEditorTool,
 } from "./str-replace-editor/index.js";
 import { todoWriteTool } from "./todo-write/index.js";
+import { viewImageTool } from "./view-image/index.js";
 import { writeNewFileTool } from "./write-new-file/index.js";
 
 export {
@@ -161,6 +162,13 @@ export {
   validateWorkspaceRoot,
   type WorkspaceRootCheck,
 } from "./validate-workspace-root.js";
+export type { ViewImageData } from "./view-image/index.js";
+export {
+  MAX_VIEW_IMAGE_BYTES,
+  MAX_VIEW_IMAGES,
+  viewImageTool,
+} from "./view-image/index.js";
+export type { ViewImageInput } from "./view-image/schema.js";
 export type {
   WriteNewFileData,
   WriteNewFileRuleDeps,
@@ -179,6 +187,16 @@ export type { WriteNewFileInput } from "./write-new-file/schema.js";
 export interface DigestToolsOpts {
   readonly digestModel: DigestModel | null;
   readonly lang?: "zh" | "en";
+  /**
+   * Whether the backend MODEL can read an image (ADR 0048 slice 3). Mounts
+   * `view_image`.
+   *
+   * Gated rather than always-on: a model without vision answers 400 to an
+   * image part, and a tool the model is told it has but cannot use is worse
+   * than no tool — it invites a call that fails, and invites the model to
+   * believe it looked. Absent = false, which is every stack today.
+   */
+  readonly vision?: boolean;
 }
 
 export interface MinimalToolsOpts extends DigestToolsOpts {
@@ -229,6 +247,10 @@ export function createMinimalTools(opts: MinimalToolsOpts): HertaTool[] {
       mapPath,
       ...(opts.lang !== undefined ? { lang: opts.lang } : {}),
     }),
+    // Only on a vision-capable model (ADR 0048 §5): the caption is one shot
+    // and lossy, and a visual question that outruns it deserves a RE-LOOK
+    // rather than a longer guess.
+    ...(opts.vision === true ? [viewImageTool({ mapPath })] : []),
   ];
 }
 
@@ -270,6 +292,8 @@ export function createMvpTools(
       model: opts.digestModel,
       ...(opts.lang !== undefined ? { lang: opts.lang } : {}),
     }),
+    // Vision-capable models only (ADR 0048 §5) — see createMinimalTools.
+    ...(opts.vision === true ? [viewImageTool()] : []),
   ];
 }
 

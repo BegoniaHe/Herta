@@ -20,9 +20,10 @@ export function isBackendThinking(v: unknown): v is BackendThinking {
   return typeof v === "string" && BACKEND_THINKING_VALUES.includes(v);
 }
 
-/** The two DeepSeek models the app can drive each stage with (2026-08-17,
- *  owner: API prices rose; the actor is the biggest per-turn lever). The
- *  completion endpoint accepts exactly these two names. */
+/** The DeepSeek models the app can drive each stage with (2026-08-17, owner:
+ *  API prices rose; the actor is the biggest per-turn lever). The completion
+ *  endpoint accepts only the first two names — which is why the vision model
+ *  below is BACKEND-only. */
 export type ModelChoice = "deepseek-v4-pro" | "deepseek-v4-flash";
 
 const MODEL_CHOICE_VALUES: readonly string[] = [
@@ -32,6 +33,27 @@ const MODEL_CHOICE_VALUES: readonly string[] = [
 
 export function isModelChoice(v: unknown): v is ModelChoice {
   return typeof v === "string" && MODEL_CHOICE_VALUES.includes(v);
+}
+
+/**
+ * 板砖's models (ADR 0048 §5) — the two above plus the vision model, which
+ * mounts `view_image` so a visual question can be answered by a re-look
+ * instead of the attachment caption's one-shot reading.
+ *
+ * Backend-only, for a hard reason: images ride chat-shaped endpoints, and the
+ * ACTOR runs on the completion endpoint, which accepts neither images nor
+ * this model name (D8). Opt-in and not the default while it is `-Exp`, and
+ * until the backend labs have been rerun on it (the stage→model rule).
+ */
+export type BackendModelChoice = ModelChoice | "deepseek-v4-flash-vision-exp";
+
+const BACKEND_MODEL_VALUES: readonly string[] = [
+  ...MODEL_CHOICE_VALUES,
+  "deepseek-v4-flash-vision-exp",
+];
+
+export function isBackendModelChoice(v: unknown): v is BackendModelChoice {
+  return typeof v === "string" && BACKEND_MODEL_VALUES.includes(v);
 }
 
 /** Which model-facing tool contract 板砖 runs (ADR 0040, 2026-08-17).
@@ -62,7 +84,9 @@ export interface AppSettings {
    *  both). Read at bootstrap; restart-to-apply like the rows above. */
   readonly models?: {
     readonly actor?: ModelChoice;
-    readonly backend?: ModelChoice;
+    /** 板砖 may also run the vision model (ADR 0048 §5); the actor may not —
+     *  the completion endpoint does not accept it. */
+    readonly backend?: BackendModelChoice;
   };
 }
 

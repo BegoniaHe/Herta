@@ -256,6 +256,19 @@ export interface SessionInternalDeps {
 const EASTER_EGG_COOLDOWN_MS = 60 * 60 * 1000;
 
 /**
+ * Whether a backend model name is one that can read images (ADR 0048 §5).
+ *
+ * Matched by SUBSTRING rather than an exact name so the model can graduate
+ * from `-Exp` without this going quietly false — which would drop
+ * `view_image` from the stack while the Settings row still offered the
+ * model, the worst of both. DeepSeek's vision models carry `vision` in the
+ * name; nothing else does.
+ */
+export function isVisionModel(model: string): boolean {
+  return model.includes("vision");
+}
+
+/**
  * ADR 0044: the record note a NEW session carries when the configured
  * `minimal` contract fell back to `standard` because no bash exists on this
  * machine. Names the remedy — before this, the only surfaces were a
@@ -1681,6 +1694,11 @@ export class SessionImpl implements Session {
       // one `→ 系统` record note naming the remedy (see contractFallbackNote).
       wantMinimal: config.backendContract === "minimal",
       backendProvider,
+      // ADR 0048 §5: `view_image` is mounted only when 板砖's model can
+      // actually see. Derived from the model name rather than a separate
+      // setting — the capability IS the model, and two switches that could
+      // disagree would eventually disagree.
+      vision: isVisionModel(config.providers.backendModel),
       // The digest tool's side model (ADR 0043): flash, thinking off. A test
       // override takes the place of the real provider; without one the tool
       // mounts as `unavailable` rather than reaching the network under test.

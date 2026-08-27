@@ -3,6 +3,7 @@ import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useActiveSession } from "../../hooks/useActiveSession.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import type {
+  BackendModelChoice,
   DeepSeekKeyStatus,
   ModelChoice,
   ModelConfig,
@@ -69,7 +70,12 @@ export function DeepSeekSettings(): JSX.Element {
     };
   }, [bridge]);
 
-  const onModel = (stage: keyof ModelConfig, next: ModelChoice): void => {
+  // `BackendModelChoice` is the wider of the two unions (the actor's is a
+  // subset), so one handler serves both rows without a cast at either call.
+  const onModel = (
+    stage: keyof ModelConfig,
+    next: BackendModelChoice,
+  ): void => {
     const prev = models;
     const nextCfg: ModelConfig = { ...models, [stage]: next };
     modelsWriteSeqRef.current += 1;
@@ -248,7 +254,11 @@ export function DeepSeekSettings(): JSX.Element {
             title={t("deepseek.model.backend")}
             description={t("deepseek.model.backendDesc")}
             control={
-              <Select<ModelChoice>
+              // 板砖 gets a third option the actor cannot have (ADR 0048 §5):
+              // the vision model reads images, and the actor runs on the
+              // completion endpoint, which accepts neither images nor this
+              // name (D8).
+              <Select<BackendModelChoice>
                 value={models.backend}
                 ariaLabel={t("deepseek.model.backend")}
                 options={[
@@ -256,6 +266,10 @@ export function DeepSeekSettings(): JSX.Element {
                   {
                     value: "deepseek-v4-flash",
                     label: t("deepseek.model.flash"),
+                  },
+                  {
+                    value: "deepseek-v4-flash-vision-exp",
+                    label: t("deepseek.model.vision"),
                   },
                 ]}
                 onChange={(v) => onModel("backend", v)}

@@ -54,6 +54,28 @@ const READER_CARVE_OUTS = {
   allowHarnessReadPaths: true,
   allowEvidenceExcerptPaths: true,
 } as const;
+/**
+ * A recovery hint for the one denial that reads as a dead end (live vision
+ * probe, 2026-08-27).
+ *
+ * `.herta/` holds settings, project memory and every transcript, so listing
+ * it stays denied — but the model's orientation reflex is `ls`/`find` over
+ * the directory it was pointed at, and a bare "denied segment: .herta" told
+ * it the attachments were unreachable. In two of three live briefs it then
+ * gave up without ever opening the file it had been handed the path to.
+ *
+ * The carve-out it needed was already there: `.herta/attachments/<session>/`
+ * and below IS readable, by path. This says so, at the exact moment the
+ * model is deciding whether to give up. The GUARD is unchanged — an allow is
+ * still earned, not widened (ADR 0045's lesson); only the message improves.
+ */
+function hintFor(candidate: string, code: string): string {
+  if (code !== "path_denied") return "";
+  const normalized = candidate.replace(/\\/g, "/");
+  if (!/(^|\/)\.herta(\/|$)/.test(normalized)) return "";
+  return " (listing .herta is denied; an attachment under .herta/attachments/<session>/ is readable directly by its full path)";
+}
+
 export async function checkReaderArgvPaths(
   workspaceRoot: string,
   effectiveCwd: string,
@@ -86,7 +108,7 @@ export async function checkReaderArgvPaths(
       return {
         ok: false,
         code: r.code,
-        message: `read-only command targets ${cand} → ${r.message}`,
+        message: `read-only command targets ${cand} → ${r.message}${hintFor(cand, r.code)}`,
       };
     }
   }

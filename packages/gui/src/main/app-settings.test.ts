@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   isBackendContract,
+  isBackendModelChoice,
   isBackendThinking,
   isModelChoice,
   readAppSettings,
@@ -113,6 +114,31 @@ describe("app-settings", () => {
     expect(isModelChoice("deepseek-v4-base")).toBe(false);
     expect(isModelChoice("flash")).toBe(false);
     expect(isModelChoice(undefined)).toBe(false);
+  });
+
+  it("only 板砖 may take the vision model — the actor's endpoint cannot (ADR 0048 §5)", async () => {
+    // Images ride chat-shaped endpoints; the actor runs on the COMPLETION
+    // endpoint, which accepts neither images nor this model name (D8). Two
+    // guards, deliberately different widths.
+    expect(isBackendModelChoice("deepseek-v4-flash-vision-exp")).toBe(true);
+    expect(isModelChoice("deepseek-v4-flash-vision-exp")).toBe(false);
+    // The wider guard still accepts everything the narrow one does…
+    expect(isBackendModelChoice("deepseek-v4-pro")).toBe(true);
+    expect(isBackendModelChoice("deepseek-v4-flash")).toBe(true);
+    // …and still refuses what neither endpoint takes.
+    expect(isBackendModelChoice("deepseek-v4-base")).toBe(false);
+    expect(isBackendModelChoice(undefined)).toBe(false);
+
+    const ws = mk();
+    await writeAppSettings(ws, {
+      models: {
+        actor: "deepseek-v4-pro",
+        backend: "deepseek-v4-flash-vision-exp",
+      },
+    });
+    expect((await readAppSettings(ws)).models?.backend).toBe(
+      "deepseek-v4-flash-vision-exp",
+    );
   });
 
   it("read + merge + write preserves unrelated keys (the handler pattern)", async () => {

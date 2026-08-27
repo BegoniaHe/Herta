@@ -155,6 +155,10 @@ export interface BackendStackOpts {
   /** The digest tool's side model (ADR 0043); null mounts the tool as
    *  `unavailable` (no key, tests). */
   readonly digestModel: DigestModel | null;
+  /** The backend model can read images (ADR 0048 §5) — mounts `view_image`
+   *  so a visual question can be answered by a RE-LOOK rather than by the
+   *  attachment caption's one-shot reading. Default false. */
+  readonly vision?: boolean;
   /** Test seam for the host-note decision (ADR 0044); defaults to
    *  `process.platform`. On "win32" the STANDARD contract carries
    *  `windowsBackendHostNote` — the minimal contract never does (it runs on
@@ -219,16 +223,25 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
       ? wsHolder.current
       : new PersistentShell({ bashPath, workspaceRoot: wsHolder.current })
           .workspaceShellPath;
+  // Whether the backend MODEL can read a picture (ADR 0048 §5). Mounts
+  // `view_image` on either contract; false everywhere else, so a model
+  // without vision is never told it can look.
+  const vision = opts.vision === true;
   if (contract === "minimal") {
     for (const t of createMinimalTools({
       bashPath: bashPath as string,
       workspaceShellPath,
       digestModel: opts.digestModel,
       lang,
+      vision,
     }))
       backendTools.register(t);
   } else {
-    for (const t of createMvpTools({ digestModel: opts.digestModel, lang }))
+    for (const t of createMvpTools({
+      digestModel: opts.digestModel,
+      lang,
+      vision,
+    }))
       backendTools.register(t);
   }
 

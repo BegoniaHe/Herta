@@ -236,6 +236,9 @@ export const en = {
   "lightbox.close": "Close",
   "lightbox.zoomIn": "Zoom in",
   "lightbox.zoomOut": "Zoom out",
+  // The pill's tooltip: a bare wheel scrolls, so the zoom gesture is said
+  // here (owner 2026-08-28).
+  "lightbox.zoomHint": "Ctrl + wheel to zoom, drag to pan",
   "connect.button": "Connect to Herta",
   "connect.failed": "Session start failed — try again",
   "workspace.rewind": "Rewind to here",

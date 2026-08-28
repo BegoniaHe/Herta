@@ -67,9 +67,12 @@ describe("ImageLightbox", () => {
     fireEvent.click(screen.getByText("trigger"));
     const viewport = document.querySelector(".lightbox-viewport") as Element;
     const img = viewport.querySelector(".lightbox-img") as Element;
-    fireEvent.mouseDown(img);
+    // A press that starts ON the picture is a pan, never a close.
+    fireEvent.mouseDown(img, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.mouseUp(window, { clientX: 10, clientY: 10 });
     expect(screen.queryByTestId("lightbox")).not.toBeNull();
-    fireEvent.mouseDown(viewport);
+    fireEvent.mouseDown(viewport, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.mouseUp(window, { clientX: 10, clientY: 10 });
     expect(screen.queryByTestId("lightbox")).toBeNull();
   });
 
@@ -92,18 +95,19 @@ describe("ImageLightbox", () => {
     expect(img.style.width).toBe("640px");
   });
 
-  it("the wheel zooms, and its listener is non-passive so the viewport does not scroll instead (owner 2026-08-28)", () => {
+  it("CTRL + wheel zooms, and its listener is non-passive so the pane does not scroll instead (owner 2026-08-28)", () => {
     renderLightbox();
     fireEvent.click(screen.getByText("trigger"));
     const viewport = document.querySelector(".lightbox-viewport") as Element;
     const label = () =>
       document.querySelector(".lightbox-zoom__label")?.textContent;
 
-    // Wheel UP zooms in. The event must be cancelable and actually
-    // defaultPrevented — a passive listener (React's onWheel) cannot do
-    // that, and the pane would scroll rather than zoom.
+    // The event must be cancelable and actually defaultPrevented — a passive
+    // listener (React's onWheel) cannot do that, and the pane would scroll
+    // rather than zoom.
     const up = new WheelEvent("wheel", {
       deltaY: -100,
+      ctrlKey: true,
       bubbles: true,
       cancelable: true,
     });
@@ -111,14 +115,93 @@ describe("ImageLightbox", () => {
     expect(up.defaultPrevented).toBe(true);
     expect(label()).toBe("125%");
 
-    // …and wheel DOWN zooms back out.
     const down = new WheelEvent("wheel", {
       deltaY: 100,
+      ctrlKey: true,
       bubbles: true,
       cancelable: true,
     });
     fireEvent(viewport, down);
     expect(label()).toBe("100%");
+  });
+
+  it("a BARE wheel is left to the browser — it scrolls the pane, it does not zoom", () => {
+    // The first cut zoomed on every wheel, which left a zoomed picture with
+    // no way to move (owner report): the wheel was spent and the scrollbar
+    // was broken by the close handler.
+    renderLightbox();
+    fireEvent.click(screen.getByText("trigger"));
+    const viewport = document.querySelector(".lightbox-viewport") as Element;
+    const bare = new WheelEvent("wheel", {
+      deltaY: -100,
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(viewport, bare);
+    // Untouched: not consumed, and no zoom was applied (the label shows a
+    // percentage only once a zoom exists).
+    expect(bare.defaultPrevented).toBe(false);
+    expect(
+      document.querySelector(".lightbox-zoom__label")?.textContent,
+    ).not.toContain("%");
+  });
+
+  it("grabbing the SCROLLBAR neither pans nor closes — it belongs to the browser (owner 2026-08-28)", () => {
+    // The close handler used to fire for any press whose target was the
+    // viewport, and a scrollbar press is exactly that: reaching for the bar
+    // closed the picture instead of scrolling it.
+    renderLightbox();
+    fireEvent.click(screen.getByText("trigger"));
+    const vp = document.querySelector(".lightbox-viewport") as HTMLElement;
+    // jsdom gives zero geometry, so pin what the check reads: a border box
+    // WIDER than the content box is what proves a scrollbar exists, and
+    // anything past the content box is on it.
+    vp.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 100, bottom: 100 }) as DOMRect;
+    for (const [prop, value] of [
+      ["clientWidth", 90],
+      ["clientHeight", 90],
+      ["offsetWidth", 100],
+      ["offsetHeight", 100],
+    ] as const) {
+      Object.defineProperty(vp, prop, { value, configurable: true });
+    }
+
+    fireEvent.mouseDown(vp, { button: 0, clientX: 95, clientY: 50 });
+    fireEvent.mouseUp(window, { clientX: 95, clientY: 50 });
+    expect(screen.queryByTestId("lightbox")).not.toBeNull();
+
+    // …and the same press INSIDE the content box does close, which is what
+    // makes the assertion above about the scrollbar rather than about
+    // nothing happening at all.
+    fireEvent.mouseDown(vp, { button: 0, clientX: 50, clientY: 50 });
+    fireEvent.mouseUp(window, { clientX: 50, clientY: 50 });
+    expect(screen.queryByTestId("lightbox")).toBeNull();
+  });
+
+  it("a DRAG pans and does not close, while a click on the ground still closes", () => {
+    renderLightbox();
+    fireEvent.click(screen.getByText("trigger"));
+    const vp = document.querySelector(".lightbox-viewport") as HTMLElement;
+    vp.scrollTop = 100;
+    vp.scrollLeft = 60;
+
+    // Drag up-left by 30/10px: the content follows the hand, so the scroll
+    // offsets grow. The move and release land on the WINDOW — a drag that
+    // outruns the viewport must keep working.
+    fireEvent.mouseDown(vp, { button: 0, clientX: 50, clientY: 50 });
+    fireEvent.mouseMove(window, { clientX: 40, clientY: 20 });
+    fireEvent.mouseUp(window, { clientX: 40, clientY: 20 });
+    expect(vp.scrollTop).toBe(130);
+    expect(vp.scrollLeft).toBe(70);
+    // A drag is not a click: the viewer stays open even though it began on
+    // the background.
+    expect(screen.queryByTestId("lightbox")).not.toBeNull();
+
+    // A press that never moves still closes.
+    fireEvent.mouseDown(vp, { button: 0, clientX: 50, clientY: 50 });
+    fireEvent.mouseUp(window, { clientX: 50, clientY: 50 });
+    expect(screen.queryByTestId("lightbox")).toBeNull();
   });
 
   it("the zoom label never claims a scale the image is not at — it stops at the cap", () => {

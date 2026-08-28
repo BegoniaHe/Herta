@@ -222,6 +222,9 @@ export const zh = {
   "lightbox.close": "关闭",
   "lightbox.zoomIn": "放大",
   "lightbox.zoomOut": "缩小",
+  // The pill's tooltip: a bare wheel scrolls, so the zoom gesture is said
+  // here (owner 2026-08-28).
+  "lightbox.zoomHint": "Ctrl + 滚轮缩放，按住拖动可移动",
   "connect.button": "接入黑塔空间站",
   "connect.failed": "会话建立失败——请重试",
   "workspace.rewind": "回到此处",

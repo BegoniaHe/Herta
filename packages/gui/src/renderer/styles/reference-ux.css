@@ -5990,6 +5990,15 @@ button.session-item__badge--dismiss {
   display: flex;
   padding: 44px;
 }
+/* Drag-to-pan (owner 2026-08-28) — the grab cursor appears only while the
+   picture actually overflows, so it never promises a drag that does
+   nothing. `is-pannable` is toggled per zoom commit by the component. */
+.lightbox-viewport.is-pannable {
+  cursor: grab;
+}
+.lightbox-viewport.is-pannable:active {
+  cursor: grabbing;
+}
 /* The house scrollbar (same geometry as .conversation / .composer-input),
    in its light-on-dark form: a zoomed image panned with the OS's chunky
    default bars, arrow buttons and all, on top of the frosted app (owner

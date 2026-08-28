@@ -77,6 +77,11 @@ const ZOOM_STEP = 1.25;
  *  and shows scrollbars on a "fitted" image (seen live 2026-08-27). */
 const VIEWPORT_PAD = 44;
 
+/** Pointer travel (px, Manhattan) below which a press is still a CLICK.
+ *  Without it a hand that moves two pixels between press and release would
+ *  turn the close-on-background click into a no-op pan. */
+const DRAG_SLOP = 4;
+
 function clampZoom(z: number): number {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
 }
@@ -136,13 +141,20 @@ function ImageLightbox({
     closeRef.current?.focus();
   }, []);
 
-  // The wheel zooms (owner 2026-08-28) — in a picture viewer that is what
-  // the wheel is for; the scrollbars still pan a zoomed image.
+  // CTRL (or ⌘) + wheel zooms; a bare wheel SCROLLS (owner 2026-08-28).
+  //
+  // The first cut made every wheel a zoom, which left a zoomed picture with
+  // no way to move: the wheel was spent, and the scrollbar — the only other
+  // route — was broken by the close handler below. Ctrl+wheel is also the
+  // platform's own convention for "zoom the thing under the pointer", and a
+  // trackpad pinch arrives as exactly this event, so pinch-to-zoom works
+  // without another code path. Bare wheel is left to the browser: vertical
+  // by default, horizontal with Shift, at the OS's own scroll speed.
   //
   // A NATIVE listener with `passive: false`, not React's onWheel: a passive
-  // listener cannot preventDefault, and without that the viewport just
-  // scrolls instead of zooming. Registered once and reading live state
-  // through refs, so wheeling never re-subscribes.
+  // listener cannot preventDefault, and the zoom would scroll the pane
+  // instead. Registered once and reading live state through refs, so
+  // wheeling never re-subscribes.
   const zoomRef = useRef<number | null>(zoom);
   zoomRef.current = zoom;
   const naturalRef = useRef(natural);
@@ -168,10 +180,26 @@ function ImageLightbox({
     vp.scrollLeft += r.left + a.fx * r.width - a.clientX;
     vp.scrollTop += r.top + a.fy * r.height - a.clientY;
   }, [zoom]);
+
+  // The grab cursor is a claim that dragging does something, so it is made
+  // only while the picture actually overflows its pane. Recomputed on every
+  // zoom commit (and on the fit, which arrives as one).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `zoom` is the TRIGGER — the overflow it changes is read off the DOM
+  useLayoutEffect(() => {
+    const vp = viewportRef.current;
+    if (vp === null) return;
+    vp.classList.toggle(
+      "is-pannable",
+      vp.scrollWidth > vp.clientWidth || vp.scrollHeight > vp.clientHeight,
+    );
+  }, [zoom]);
   useEffect(() => {
     const vp = viewportRef.current;
     if (vp === null) return;
     const onWheel = (e: WheelEvent): void => {
+      // A bare wheel is the browser's to handle — do not preventDefault, or
+      // the pane stops scrolling and the picture is stuck again.
+      if (!e.ctrlKey && !e.metaKey) return;
       const nat = naturalRef.current;
       const img = imgRef.current;
       if (nat === null || img === null) return;
@@ -203,6 +231,80 @@ function ImageLightbox({
     return () => vp.removeEventListener("wheel", onWheel);
   }, []);
 
+  // Drag to pan (owner 2026-08-28). The scrollbars still work, but a zoomed
+  // picture wants to be pushed around directly — and it means the pan does
+  // not depend on hitting a 10px gutter.
+  //
+  // This also owns the CLOSE, because the two gestures share a press: the
+  // dark ground closes on a click that did NOT become a drag. The first cut
+  // closed on mousedown anywhere the target was the viewport — and a
+  // scrollbar press has the viewport as its target, so grabbing the
+  // scrollbar closed the picture instead of scrolling it (owner report).
+  //
+  // MOUSE events, not pointer events: the drag continues while the cursor
+  // is outside the viewport (over the zoom pill, past the window edge),
+  // which pointer events buy with capture and these buy by listening on the
+  // WINDOW. The listeners are always attached while the viewer is open and
+  // no-op unless a drag is live — cheaper than add/remove churn per press,
+  // and they cannot outlive the component.
+  const drag = useRef<{
+    readonly startX: number;
+    readonly startY: number;
+    readonly scrollLeft: number;
+    readonly scrollTop: number;
+    readonly onBackground: boolean;
+    moved: boolean;
+  } | null>(null);
+  const closeRef2 = useRef(onClose);
+  closeRef2.current = onClose;
+  useEffect(() => {
+    const onMove = (e: MouseEvent): void => {
+      const d = drag.current;
+      const vp = viewportRef.current;
+      if (d === null || vp === null) return;
+      const dx = e.clientX - d.startX;
+      const dy = e.clientY - d.startY;
+      // A few pixels of travel during a click is a click, not a drag —
+      // otherwise a twitchy hand would eat the close.
+      if (!d.moved && Math.abs(dx) + Math.abs(dy) < DRAG_SLOP) return;
+      d.moved = true;
+      vp.scrollLeft = d.scrollLeft - dx;
+      vp.scrollTop = d.scrollTop - dy;
+    };
+    const onUp = (): void => {
+      const d = drag.current;
+      drag.current = null;
+      // The dark ground closes on a press that never became a drag; one
+      // that started on the picture is a pan however far it travelled.
+      if (d !== null && !d.moved && d.onBackground) closeRef2.current();
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+
+  /** Did this press land on a scrollbar rather than inside the content box?
+   *  Such a press belongs to the browser: neither pan nor close may consume
+   *  it. Measured against the rect, not offsetX/Y, so a scrolled container
+   *  cannot skew it — and gated on a scrollbar actually EXISTING (border box
+   *  wider than content box), because an element with no layout yet reports
+   *  zeros, and "past zero" would otherwise swallow every press. */
+  const onScrollbar = (
+    el: HTMLElement,
+    e: { clientX: number; clientY: number },
+  ): boolean => {
+    const r = el.getBoundingClientRect();
+    const vBar = el.offsetWidth > el.clientWidth;
+    const hBar = el.offsetHeight > el.clientHeight;
+    return (
+      (vBar && e.clientX > r.left + el.clientWidth) ||
+      (hBar && e.clientY > r.top + el.clientHeight)
+    );
+  };
+
   // Both pill buttons step from what is ON SCREEN, not from 100%: before the
   // first explicit zoom the picture sits at its fit scale, and starting from
   // 1 made the first click jump (fit 59% → 125%) instead of stepping.
@@ -226,15 +328,26 @@ function ImageLightbox({
       aria-label={image.caption ?? image.name}
       data-testid="lightbox"
     >
-      {/* Clicking the dark ground closes; clicking the picture or the
-          controls does not. mousedown, matching the settings backdrop — a
-          drag that ends outside the image must not count as a click. */}
+      {/* Drag anywhere to pan; a press on the dark ground that never became
+          a drag closes. Clicking the picture or the controls never closes,
+          and a press on a scrollbar belongs to the browser. */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer convenience only — Escape and the labelled ✕ are the accessible close paths */}
       <div
         ref={viewportRef}
         className="lightbox-viewport"
         onMouseDown={(e) => {
-          if (e.target === e.currentTarget) onClose();
+          const vp = e.currentTarget;
+          // Primary button only (`> 0` covers middle/right), and never a
+          // press that landed on a scrollbar.
+          if (e.button > 0 || onScrollbar(vp, e)) return;
+          drag.current = {
+            startX: e.clientX,
+            startY: e.clientY,
+            scrollLeft: vp.scrollLeft,
+            scrollTop: vp.scrollTop,
+            onBackground: e.target === vp,
+            moved: false,
+          };
         }}
       >
         <img
@@ -280,7 +393,9 @@ function ImageLightbox({
           <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" />
         </svg>
       </button>
-      <div className="lightbox-zoom">
+      {/* The pill is where zoom is discoverable — a bare wheel scrolls now,
+          so the Ctrl gesture needs saying somewhere. */}
+      <div className="lightbox-zoom" title={t("lightbox.zoomHint")}>
         <button
           type="button"
           className="lightbox-zoom__btn"

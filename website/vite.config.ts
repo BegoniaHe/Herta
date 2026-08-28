@@ -20,7 +20,24 @@ export default defineConfig({
     __BUILD_ID__: JSON.stringify(Date.now().toString(36)),
   },
   resolve: {
-    alias: { "@gui": resolve(__dirname, "../packages/gui/src/renderer") },
+    alias: [
+      // The one seam in "the demo is the real renderer": stored pictures.
+      // The renderer builds its <img>/lightbox URLs in shared/attachment-image
+      // against an Electron protocol; the demo swaps that ONE module for a
+      // twin that serves the showcase's two pictures as bundled assets (see
+      // src/demo-attachment-image.ts). Everything else runs the app's code.
+      {
+        // Whole-specifier match: a regex alias REPLACES the matched span
+        // only, so anchoring both ends is what swaps the full relative
+        // import ("../../../shared/attachment-image.js") for the shim.
+        find: /^.*\/shared\/attachment-image\.js$/,
+        replacement: resolve(__dirname, "src/demo-attachment-image.ts"),
+      },
+      {
+        find: "@gui",
+        replacement: resolve(__dirname, "../packages/gui/src/renderer"),
+      },
+    ],
     dedupe: ["react", "react-dom"],
   },
   build: {

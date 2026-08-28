@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -92,6 +93,7 @@ function ImageLightbox({
   // reach — or be eaten by — the approval panel / settings underneath.
   const isTop = useModalOverlay("lightbox", true, OVERLAY_Z.lightbox);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const [natural, setNatural] = useState<{
     readonly w: number;
@@ -134,10 +136,86 @@ function ImageLightbox({
     closeRef.current?.focus();
   }, []);
 
+  // The wheel zooms (owner 2026-08-28) — in a picture viewer that is what
+  // the wheel is for; the scrollbars still pan a zoomed image.
+  //
+  // A NATIVE listener with `passive: false`, not React's onWheel: a passive
+  // listener cannot preventDefault, and without that the viewport just
+  // scrolls instead of zooming. Registered once and reading live state
+  // through refs, so wheeling never re-subscribes.
+  const zoomRef = useRef<number | null>(zoom);
+  zoomRef.current = zoom;
+  const naturalRef = useRef(natural);
+  naturalRef.current = natural;
+  /** The point the next zoom must hold still: where the cursor sat inside
+   *  the image (0..1) and where that was on screen. Consumed by the layout
+   *  effect below, which runs after React has committed the new width —
+   *  a rAF callback measured the OLD size and corrected by zero. */
+  const anchor = useRef<{
+    readonly fx: number;
+    readonly fy: number;
+    readonly clientX: number;
+    readonly clientY: number;
+  } | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `zoom` is the TRIGGER, not an input — the body reads refs, but the correction must run on the commit that changed the width
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    anchor.current = null;
+    const vp = viewportRef.current;
+    const img = imgRef.current;
+    if (a === null || vp === null || img === null) return;
+    const r = img.getBoundingClientRect();
+    vp.scrollLeft += r.left + a.fx * r.width - a.clientX;
+    vp.scrollTop += r.top + a.fy * r.height - a.clientY;
+  }, [zoom]);
+  useEffect(() => {
+    const vp = viewportRef.current;
+    if (vp === null) return;
+    const onWheel = (e: WheelEvent): void => {
+      const nat = naturalRef.current;
+      const img = imgRef.current;
+      if (nat === null || img === null) return;
+      e.preventDefault();
+      const rect = img.getBoundingClientRect();
+      // Start from what is ON SCREEN, which is the fit scale until the
+      // first explicit zoom — otherwise the first notch would jump to 100%.
+      // A ZERO-width rect means it has not been laid out yet (a wheel in the
+      // first frame; every rect in jsdom): deriving a scale from it would
+      // divide to 0 and clamp the picture to ZOOM_MIN.
+      const current =
+        zoomRef.current ?? (rect.width > 0 ? rect.width / nat.w : 1);
+      const next = clampZoom(
+        e.deltaY < 0 ? current * ZOOM_STEP : current / ZOOM_STEP,
+      );
+      if (next === current) return;
+      // Keep the point under the cursor under the cursor: remember where it
+      // sits in the image (0..1), then correct the scroll once the new size
+      // has been laid out.
+      anchor.current = {
+        fx: rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0.5,
+        fy: rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0.5,
+        clientX: e.clientX,
+        clientY: e.clientY,
+      };
+      setZoom(next);
+    };
+    vp.addEventListener("wheel", onWheel, { passive: false });
+    return () => vp.removeEventListener("wheel", onWheel);
+  }, []);
+
+  // Both pill buttons step from what is ON SCREEN, not from 100%: before the
+  // first explicit zoom the picture sits at its fit scale, and starting from
+  // 1 made the first click jump (fit 59% → 125%) instead of stepping.
   const step = (dir: 1 | -1): void =>
-    setZoom((z) =>
-      clampZoom((z ?? 1) * (dir === 1 ? ZOOM_STEP : 1 / ZOOM_STEP)),
-    );
+    setZoom((z) => {
+      const rect = imgRef.current?.getBoundingClientRect();
+      const current =
+        z ??
+        (natural !== null && rect !== undefined && rect.width > 0
+          ? rect.width / natural.w
+          : 1);
+      return clampZoom(dir === 1 ? current * ZOOM_STEP : current / ZOOM_STEP);
+    });
 
   return createPortal(
     <div
@@ -160,6 +238,7 @@ function ImageLightbox({
         }}
       >
         <img
+          ref={imgRef}
           className="lightbox-img"
           src={attachmentImageUrl(image.path)}
           alt={image.caption ?? image.name}

@@ -92,6 +92,51 @@ describe("ImageLightbox", () => {
     expect(img.style.width).toBe("640px");
   });
 
+  it("the wheel zooms, and its listener is non-passive so the viewport does not scroll instead (owner 2026-08-28)", () => {
+    renderLightbox();
+    fireEvent.click(screen.getByText("trigger"));
+    const viewport = document.querySelector(".lightbox-viewport") as Element;
+    const label = () =>
+      document.querySelector(".lightbox-zoom__label")?.textContent;
+
+    // Wheel UP zooms in. The event must be cancelable and actually
+    // defaultPrevented — a passive listener (React's onWheel) cannot do
+    // that, and the pane would scroll rather than zoom.
+    const up = new WheelEvent("wheel", {
+      deltaY: -100,
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(viewport, up);
+    expect(up.defaultPrevented).toBe(true);
+    expect(label()).toBe("125%");
+
+    // …and wheel DOWN zooms back out.
+    const down = new WheelEvent("wheel", {
+      deltaY: 100,
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(viewport, down);
+    expect(label()).toBe("100%");
+  });
+
+  it("the zoom label never claims a scale the image is not at — it stops at the cap", () => {
+    // The owner's second bug: the picture stopped growing (a flex item
+    // shrinks by default) while + kept counting to 500%. The width the
+    // component writes IS the scale, so the two cannot drift; here the cap
+    // holds the number as well as the picture.
+    renderLightbox();
+    fireEvent.click(screen.getByText("trigger"));
+    const zoomIn = screen.getByLabelText("Zoom in");
+    for (let i = 0; i < 12; i++) fireEvent.click(zoomIn);
+    const label = document.querySelector(".lightbox-zoom__label")?.textContent;
+    expect(label).toBe("500%"); // ZOOM_MAX, and it stops there
+    const img = document.querySelector(".lightbox-img") as HTMLElement;
+    // 640 natural × 5 — the written width matches the number shown.
+    expect(img.style.width).toBe("3200px");
+  });
+
   it("a session switch closes it — an enlarged picture belongs to its session", () => {
     const mock = createMockHertaBridge();
     renderLightbox(mock);

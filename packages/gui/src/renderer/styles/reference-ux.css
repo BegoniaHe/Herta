@@ -6019,9 +6019,17 @@ button.session-item__badge--dismiss {
 }
 .lightbox-img {
   /* margin:auto in a flex container BOTH centers a small image and keeps a
-     zoomed-past-the-pane one scrollable from its true top-left (plain
-     centering clips the far edges of overflowing flex content). */
+     zoomed-past-the-pane one scrollable from its true top-left: auto margins
+     resolve to zero once free space goes negative, so the image sits at the
+     start edge and overflows to the end (plain centering clips the far edges
+     of overflowing flex content). */
   margin: auto;
+  /* THE ZOOM CAP BUG (owner 2026-08-28): a flex item shrinks by default, so
+     past the viewport's width the inline `width` this component sets was
+     shrunk straight back — the picture stopped growing at whatever filled
+     the pane while the percentage kept counting to 500%. `flex: none` makes
+     the written width authoritative and lets the viewport scroll instead. */
+  flex: none;
   display: block;
   border-radius: 6px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);

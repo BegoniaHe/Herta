@@ -564,7 +564,12 @@ export const ActivityBlock = memo(function ActivityBlock(
                     : b.digest?.kind === "attachment" &&
                         b.digest.path.length > 0 &&
                         b.digest.image === undefined &&
-                        b.digest.unreadable === undefined
+                        // `too_large` means STORED but no head excerpt taken
+                        // — the viewer's own bounded read is exactly the
+                        // remedy, so it stays clickable; genuinely dead
+                        // states (removed / read_error / …) stay plain.
+                        (b.digest.unreadable === undefined ||
+                          b.digest.unreadable === "too_large")
                       ? {
                           path: b.digest.path,
                           // The row DISPLAYS the middle-truncated name

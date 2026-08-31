@@ -619,9 +619,13 @@ body:after{
 }
 /* Mode A — the rail yields (ADR 0050, owner-picked): the rail track
    collapses while the viewer track opens to the dragged width; the same
-   track interpolation the disconnect slide already animates. */
+   track interpolation the disconnect slide already animates. The min()
+   cap is the HARD guarantee (owner 2026-08-31: a maximize→restore left
+   the panel wider than the window, its head buttons clipped outside):
+   whatever the JS clamp last wrote, the track can never exceed the
+   content width minus the conversation's 584px floor. */
 .workspace-body.viewer-docked{
-  grid-template-columns:minmax(584px,1fr) 0px var(--viewer-w,480px);
+  grid-template-columns:minmax(584px,1fr) 0px min(var(--viewer-w,480px), calc(100% - 584px));
 }
 /* Divider drag: every frame writes --viewer-w; an eased track would lag
    the pointer, so the drag suppresses the slide transitions. */
@@ -1032,7 +1036,7 @@ body:after{
 .app:has(.workspace.is-morphing) .device-card {
   backdrop-filter: none;
 }
-@media(max-width:1200px){.app{grid-template-columns:230px 1fr}.sidebar{--sidebar-content-w:176px}.workspace-body{grid-template-columns:minmax(0,1fr) 300px 0px;gap:0;padding:18px}.workspace{margin-right:18px}.workspace-body.viewer-docked{grid-template-columns:minmax(0,1fr) 0px var(--viewer-w,420px)}.assistant-turn{margin-left:0}.status-row{width:90%}.device-card{height:300px}.composer{height:104px}}
+@media(max-width:1200px){.app{grid-template-columns:230px 1fr}.sidebar{--sidebar-content-w:176px}.workspace-body{grid-template-columns:minmax(0,1fr) 300px 0px;gap:0;padding:18px}.workspace{margin-right:18px}.workspace-body.viewer-docked{grid-template-columns:minmax(0,1fr) 0px min(var(--viewer-w,420px), calc(100% - 440px))}.assistant-turn{margin-left:0}.status-row{width:90%}.device-card{height:300px}.composer{height:104px}}
 @media(max-width:900px){.utility-rail{display:none}.workspace-body{grid-template-columns:minmax(0,1fr) 0px 0px}.workspace{margin-right:0}.app{grid-template-columns:210px 1fr}.sidebar{--sidebar-content-w:156px}}
 /* Slice 3 additions — Conversation message rows and bubbles */
 .message-row {
@@ -5099,6 +5103,29 @@ button.session-item__badge--dismiss {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 12px;
   line-height: 1.6;
+}
+/* House scrollbars, both axes (owner 2026-08-31: the panel showed the OS
+   defaults) — the conversation's pill thumb, plus a transparent corner so
+   the axes' junction doesn't paint a system-grey square. */
+.file-viewer__code::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.file-viewer__code::-webkit-scrollbar-track {
+  background: transparent;
+}
+.file-viewer__code::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.file-viewer__code::-webkit-scrollbar-thumb {
+  background: var(--ink-a13);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.file-viewer__code::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-a22);
+  background-clip: padding-box;
 }
 .file-viewer__gutter {
   margin: 0;

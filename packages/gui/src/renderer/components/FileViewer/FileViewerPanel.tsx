@@ -9,6 +9,7 @@ import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useSessionSelector } from "../../hooks/useSessionSelector.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import type { ReadWorkspaceFileReply } from "../../ipc/bridge-types.js";
+import { Tooltip } from "../Tooltip/Tooltip.js";
 import {
   CONVERSATION_MIN_PX,
   clampViewerWidth,
@@ -109,15 +110,18 @@ export function FileViewerPanel(): JSX.Element | null {
     >
       {/* Pointer-only resize affordance; the width also self-clamps on
           every resize, so no keyboard path is required to keep the layout
-          sane. Hidden from the tree — it narrates nothing useful. */}
+          sane. Hidden from the tree — it narrates nothing useful, and the
+          col-resize cursor + hover line ARE the hint (no native title:
+          the OS-beige tooltip mismatch, owner 2026-08-10/31). */}
       <div
         className="file-viewer__divider"
         aria-hidden="true"
-        title={t("viewer.dividerAria")}
         onPointerDown={onDividerDown}
       />
       <div className="file-viewer__head">
-        <span className="file-viewer__crumbs" title={relative}>
+        {/* No native `title` here either — the copy-path action is how the
+            real (storage) path is reached. */}
+        <span className="file-viewer__crumbs">
           {crumbs.slice(0, -1).map((c, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: crumbs are a stable path split
             <span key={i} className="file-viewer__crumb">
@@ -127,76 +131,97 @@ export function FileViewerPanel(): JSX.Element | null {
           ))}
           <span className="file-viewer__name">{name}</span>
         </span>
+        {/* The app's styled pill, not native `title` (owner 2026-08-31 — the
+          same OS-beige mismatch the attachment ✕ had), and PORTALED so the
+          panel's overflow clip can't cut it. */}
         <span className="file-viewer__actions">
-          <button
-            type="button"
-            className="file-viewer__action"
-            aria-label={t("viewer.copyPath")}
-            title={copied ? t("viewer.copied") : t("viewer.copyPath")}
-            onClick={() => {
-              navigator.clipboard?.writeText(relative).then(
-                () => setCopied(true),
-                () => undefined,
-              );
-            }}
+          <Tooltip
+            label={copied ? t("viewer.copied") : t("viewer.copyPath")}
+            placement="bottom"
+            align="center"
+            portal
           >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 13 13"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.2"
-              aria-hidden="true"
+            <button
+              type="button"
+              className="file-viewer__action"
+              aria-label={t("viewer.copyPath")}
+              onClick={() => {
+                navigator.clipboard?.writeText(relative).then(
+                  () => setCopied(true),
+                  () => undefined,
+                );
+              }}
             >
-              <rect x="4" y="4" width="7" height="7" rx="1.5" />
-              <path d="M9 4V3a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 3v4.5A1.5 1.5 0 0 0 3 9h1" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            className="file-viewer__action"
-            aria-label={t("viewer.openExternal")}
-            title={t("viewer.openExternal")}
-            onClick={() => {
-              if (sessionId !== null)
-                void bridge.openWorkspaceFile?.(sessionId, path);
-            }}
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 13 13"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                aria-hidden="true"
+              >
+                <rect x="4" y="4" width="7" height="7" rx="1.5" />
+                <path d="M9 4V3a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 3v4.5A1.5 1.5 0 0 0 3 9h1" />
+              </svg>
+            </button>
+          </Tooltip>
+          <Tooltip
+            label={t("viewer.openExternal")}
+            placement="bottom"
+            align="center"
+            portal
           >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 13 13"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.2"
-              strokeLinecap="round"
-              aria-hidden="true"
+            <button
+              type="button"
+              className="file-viewer__action"
+              aria-label={t("viewer.openExternal")}
+              onClick={() => {
+                if (sessionId !== null)
+                  void bridge.openWorkspaceFile?.(sessionId, path);
+              }}
             >
-              <path d="M5.5 2.5H3A1.5 1.5 0 0 0 1.5 4v6A1.5 1.5 0 0 0 3 11.5h6A1.5 1.5 0 0 0 10.5 10V7.5" />
-              <path d="M7.5 1.5h4v4M11.2 1.8 6.5 6.5" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            className="file-viewer__action"
-            aria-label={t("viewer.close")}
-            title={t("viewer.close")}
-            onClick={v.close}
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 13 13"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
+                <path d="M5.5 2.5H3A1.5 1.5 0 0 0 1.5 4v6A1.5 1.5 0 0 0 3 11.5h6A1.5 1.5 0 0 0 10.5 10V7.5" />
+                <path d="M7.5 1.5h4v4M11.2 1.8 6.5 6.5" />
+              </svg>
+            </button>
+          </Tooltip>
+          <Tooltip
+            label={t("viewer.close")}
+            placement="bottom"
+            align="center"
+            portal
           >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 12 12"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.3"
-              strokeLinecap="round"
-              aria-hidden="true"
+            <button
+              type="button"
+              className="file-viewer__action"
+              aria-label={t("viewer.close")}
+              onClick={v.close}
             >
-              <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" />
-            </svg>
-          </button>
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 12 12"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
+                <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" />
+              </svg>
+            </button>
+          </Tooltip>
         </span>
       </div>
       <FileViewerBody reply={reply} />

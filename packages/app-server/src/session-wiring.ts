@@ -419,9 +419,16 @@ export async function createActorStack(
     (await buildStaticHertaPrefix({
       workspaceRoot,
       lang,
-      ...(opts.onFewShotDropped !== undefined
-        ? { onFewShotDropped: opts.onFewShotDropped }
-        : {}),
+      // ALWAYS log a dropped few-shot (ADR 0051): the 2026-08-06 guard
+      // regression silently dropped the entire 废案 corpus for 25 days
+      // because only the CLI passed a logger and the GUI path had none —
+      // a voice-defining failure with zero observable signal. The caller's
+      // handler (when given) still runs; the warn is the floor, not the
+      // ceiling.
+      onFewShotDropped: (name, reason) => {
+        console.warn(`few-shot dropped from prefix: ${name} — ${reason}`);
+        opts.onFewShotDropped?.(name, reason);
+      },
       readFile: async (relPath) =>
         readFile(join(workspaceRoot, relPath), "utf-8"),
       readNarrativeDir: async () => {

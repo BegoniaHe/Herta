@@ -38,7 +38,9 @@ export function makeWriteNewFileRule(
     }
     const { path, content } = parsed.data;
 
-    const safe = await resolveSafePath(ctx.workspaceRoot, path);
+    const safe = await resolveSafePath(ctx.workspaceRoot, path, {
+      mutation: true,
+    });
     if (!safe.ok) {
       return { kind: "deny", code: safe.code, reason: safe.message };
     }

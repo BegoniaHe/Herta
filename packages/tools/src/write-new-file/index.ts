@@ -64,7 +64,9 @@ export function writeNewFileTool(): HertaTool {
       }
       const { path, content } = parsed.data;
 
-      const safe = await resolveSafePath(ctx.workspaceRoot, path);
+      const safe = await resolveSafePath(ctx.workspaceRoot, path, {
+        mutation: true,
+      });
       if (!safe.ok) {
         return errResult(
           safe.code,

@@ -2,6 +2,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import type { RiskLevel } from "@herta/core";
 import { isCredentialPath } from "../credential-denylist.js";
 import { detectInProgressState, resolveGitDir } from "../git/repo-probe.js";
+import { gitDirShapeWriteDenial } from "../path-safety.js";
 import {
   classifyCommand,
   classifyShellBody,
@@ -756,6 +757,23 @@ function classifySegment(
   for (const r of redirects) {
     if (r.kind === "out") {
       if (isDevNull(r.target)) continue;
+      // Bare-repo shape guard (ADR 0049 §6): a redirect completing the
+      // HEAD+objects/+refs/ triple (or feeding a shaped directory's hooks)
+      // is the write half of an arbitrary-execution pair — the actual write
+      // happens inside bash where path-safety cannot intercept it, so the
+      // guard lives at classification, block tier like the credential
+      // denylist. The editors' write lane has the same guard in
+      // resolveSafePath.
+      const shapeDenial = redirectGitShapeDenial(r.target, opts);
+      if (shapeDenial !== null) {
+        return {
+          verdict: {
+            kind: "block",
+            code: "command_blocked",
+            reason: shapeDenial,
+          },
+        };
+      }
       const outside = leavesWorkspace(r.target, opts);
       asks.push({
         kind: "ask",
@@ -1410,6 +1428,25 @@ function leavesWorkspace(token: string, opts: ShellClassifyOpts): boolean {
   const base = opts.cwd ?? opts.workspaceRoot;
   const resolved = resolveNative(base, t);
   return !isInside(opts.workspaceRoot, resolved);
+}
+
+/** Bare-repo shape denial for an out-redirect target (ADR 0049 §6), or null.
+ *  Unknowable targets (variables, substitutions, unmappable spellings) stay
+ *  null — they already ask as leaving the workspace; the guard fires only on
+ *  a literal in-workspace path it can resolve. */
+function redirectGitShapeDenial(
+  token: string,
+  opts: ShellClassifyOpts,
+): string | null {
+  const t = token.replace(/^["']|["']$/g, "");
+  if (/[$`]/.test(t)) return null;
+  let native = opts.paths.toNative(t);
+  if (native === null) {
+    if (/^[\\/]/.test(t)) return null; // unmappable absolute spelling
+    native = resolveNative(opts.cwd ?? opts.workspaceRoot, t);
+  }
+  if (!isInside(opts.workspaceRoot, native)) return null;
+  return gitDirShapeWriteDenial(opts.workspaceRoot, resolve(native));
 }
 
 /**

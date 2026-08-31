@@ -43,7 +43,9 @@ export function makeEditFileRule(deps: EditFileRuleDeps = {}): PermissionRule {
     }
     const { path, hunks } = parsed.data;
 
-    const safe = await resolveSafePath(ctx.workspaceRoot, path);
+    const safe = await resolveSafePath(ctx.workspaceRoot, path, {
+      mutation: true,
+    });
     if (!safe.ok) {
       return { kind: "deny", code: safe.code, reason: safe.message };
     }

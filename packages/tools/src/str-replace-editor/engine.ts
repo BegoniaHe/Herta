@@ -73,7 +73,7 @@ export async function resolveEditorPath(
           allowHarnessReadPaths: true,
           allowEvidenceExcerptPaths: true,
         }
-      : {},
+      : { mutation: true },
   );
   if (!safe.ok) {
     return {

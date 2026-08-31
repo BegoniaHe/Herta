@@ -385,3 +385,73 @@ describe("resolveSafePath", () => {
     },
   );
 });
+
+describe("resolveSafePath — bare-repo shape guard (ADR 0049 §6)", () => {
+  // The vector: git treats any directory holding HEAD + objects/ + refs/ as
+  // a BARE REPO and runs hooks from it. No segment is `.git`, so the
+  // per-segment tree denial never fires — these writes all passed the jail
+  // before the guard existed (fails-pre-fix).
+  it("denies the write that completes the triple — from either side", async () => {
+    ws = await mkTmpWorkspace({
+      "objects/.keep": "",
+      "refs/.keep": "",
+    });
+    // objects/ and refs/ exist; writing HEAD is the final piece.
+    const head = await resolveSafePath(ws.root, "HEAD", { mutation: true });
+    expect(head.ok).toBe(false);
+    if (!head.ok) expect(head.code).toBe("path_denied");
+
+    // And from the other side: HEAD + refs/ exist, writing into objects/.
+    const ws2 = await mkTmpWorkspace({
+      HEAD: "ref: refs/heads/main\n",
+      "refs/.keep": "",
+    });
+    try {
+      const obj = await resolveSafePath(ws2.root, "objects/aa/bb", {
+        mutation: true,
+      });
+      expect(obj.ok).toBe(false);
+    } finally {
+      await ws2.cleanup();
+    }
+  });
+
+  it("denies hooks writes into an already-shaped directory, root or subdir", async () => {
+    ws = await mkTmpWorkspace({
+      "bare.git/HEAD": "ref: refs/heads/main\n",
+      "bare.git/objects/.keep": "",
+      "bare.git/refs/.keep": "",
+    });
+    const r = await resolveSafePath(ws.root, "bare.git/hooks/pre-commit", {
+      mutation: true,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toContain("hooks");
+  });
+
+  it("an incomplete shape stays writable — no name blocklist", async () => {
+    // Honest projects have objects/ or hooks/ directories; only the
+    // completed triple is dangerous.
+    ws = await mkTmpWorkspace({ "objects/.keep": "" });
+    expect(
+      (await resolveSafePath(ws.root, "HEAD", { mutation: true })).ok,
+    ).toBe(true); // no refs/ — not the final piece
+    expect(
+      (await resolveSafePath(ws.root, "objects/model.obj", { mutation: true }))
+        .ok,
+    ).toBe(true); // no HEAD file
+    expect(
+      (await resolveSafePath(ws.root, "hooks/deploy.ts", { mutation: true }))
+        .ok,
+    ).toBe(true); // root is not shaped
+  });
+
+  it("reads are untouched — the guard is mutation-only", async () => {
+    ws = await mkTmpWorkspace({
+      HEAD: "data\n",
+      "objects/.keep": "",
+      "refs/.keep": "",
+    });
+    expect((await resolveSafePath(ws.root, "HEAD")).ok).toBe(true);
+  });
+});

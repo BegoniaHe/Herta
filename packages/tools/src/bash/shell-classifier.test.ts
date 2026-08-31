@@ -50,6 +50,29 @@ describe("classifyShellCommand — consequence notes (ADR 0049 §5)", () => {
   });
 });
 
+describe("classifyShellCommand — bare-repo shape guard (ADR 0049 §6)", () => {
+  it("blocks a redirect that completes the triple; incomplete shapes still just ask", async () => {
+    const { mkdtemp, mkdir, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = await mkdtemp(join(tmpdir(), "shape-"));
+    try {
+      await mkdir(join(root, "objects"));
+      await mkdir(join(root, "refs"));
+      const local = { workspaceRoot: root, paths };
+      // The write half of the arbitrary-execution pair: bash performs the
+      // write itself, so the guard must live at classification — block tier,
+      // like the credential denylist.
+      expect(classifyShellCommand("echo ref > HEAD", local).kind).toBe("block");
+      // Without refs/ the triple stays incomplete — an ordinary write ask.
+      await rm(join(root, "refs"), { recursive: true });
+      expect(classifyShellCommand("echo ref > HEAD", local).kind).toBe("ask");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("classifyShellCommand — block tier (no override)", () => {
   it("blocks catastrophic commands anywhere in the line", () => {
     expect(kind("rm -rf /")).toBe("block");

@@ -69,13 +69,13 @@ One-line changes that detonate in chains have their own display case in the Guil
 ```
 
 （我 想）
-Full suite 142/142. Now "passed" can stand on its own feet.
+Full suite through, not one red. Now "passed" can stand on its own feet.
 
 The commit remains. He asked for it at the start — explicit instruction, no need to re-ask. The message states the change plainly: an off-by-one fix is an off-by-one fix, not an epic.
 （/我 想）
 
 （我 说）
-Full suite 142/142 — passed for real this time. @板砖 commit, message states the fact: fix the paginator's last-page off-by-one.
+Full suite green — passed for real this time. @板砖 commit, message states the fact: fix the paginator's last-page off-by-one.
 （/我 说）
 
 （开拓者 说）
@@ -113,7 +113,7 @@ No "also." One ticket, one matter. If you want the sorting fixed, dispatch it on
 ```
 
 （我 想）
-Close it. Three pieces of evidence in the record: one line changed, full suite 142/142, commit 3f7d21a.
+Close it. Three pieces of evidence in the record: which line changed, the full-suite figure, the commit id — every one of them scrollable above, none needing me to retell it as a story.
 
 The verdict reports those three and stops — the process is all in the record, he can scroll. And no new threads: if he really wants the sorting job, he'll come back for it himself.
 （/我 想）

@@ -12,6 +12,8 @@ describe("pageSubjectFor", () => {
   it.each([
     ["data/角色图鉴/019_大黑塔.html", HERTA_PERSON_PRIME],
     ["data/角色图鉴/078_黑塔.html", HERTA_FORM_DOLL],
+    ["data/star_rail_data/角色语音/019_大黑塔.html", HERTA_PERSON_PRIME],
+    ["data/star_rail_data/角色语音/078_黑塔.html", HERTA_FORM_DOLL],
     ["data/星海纪闻/003_空间站「黑塔」.html", HERTA_PLACE_SPACE_STATION],
     ["data/book_html/013_黑塔的手稿.html", HERTA_WORK_MANUSCRIPT],
   ])("%s -> %s", (path, expected) => {
@@ -61,6 +63,31 @@ describe("labelDocument", () => {
     expect(speakerMention?.speakerEntityId).toBe(HERTA_PERSON_PRIME);
     expect(speakerMention?.embodimentEntityId).toBe(HERTA_FORM_DOLL);
     expect(c1?.isHertaVoiceEvidence).toBe(true);
+  });
+
+  it("maps speaker label '大黑塔' to prime voice evidence — no doll checks (alias gap found in herta.person.prime scenes, 2026-08-31)", () => {
+    const out = labelDocument({
+      id: "doc-amph",
+      // A doll-signal path on purpose: the surface 大黑塔 is unambiguous and
+      // must stay prime even where 黑塔 would earn a doll embodiment.
+      path: "data/plot_html/模拟宇宙/x.html",
+      title: "在第八日启程",
+      chunks: [
+        {
+          id: "cd",
+          sectionPath: ["剧情内容"],
+          speaker: "大黑塔",
+          text: "——何为「神性」？",
+          isDialogue: true,
+        },
+      ],
+    });
+    const c = out.find((r) => r.chunkId === "cd");
+    const m = c?.mentions.find((mn) => mn.speakerEntityId !== undefined);
+    expect(m?.surface).toBe("大黑塔");
+    expect(m?.speakerEntityId).toBe(HERTA_PERSON_PRIME);
+    expect(m?.embodimentEntityId).toBeUndefined();
+    expect(c?.isHertaVoiceEvidence).toBe(true);
   });
 
   it("maps '空间站「黑塔」' to the station, not the person", () => {

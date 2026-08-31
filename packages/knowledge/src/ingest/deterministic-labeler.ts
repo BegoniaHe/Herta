@@ -38,6 +38,10 @@ export function pageSubjectFor(
   const norm = path.replace(/\\/g, "/");
   if (/角色图鉴\/\d+_大黑塔\.html$/.test(norm)) return HERTA_PERSON_PRIME;
   if (/角色图鉴\/\d+_黑塔\.html$/.test(norm)) return HERTA_FORM_DOLL;
+  // 角色语音 (VO atlas, scraped 2026-08-31) mirrors the 图鉴 split: the
+  // 大黑塔 page is the prime speaking, the 黑塔 page the doll form.
+  if (/角色语音\/\d+_大黑塔\.html$/.test(norm)) return HERTA_PERSON_PRIME;
+  if (/角色语音\/\d+_黑塔\.html$/.test(norm)) return HERTA_FORM_DOLL;
   if (norm.includes("空间站「黑塔」")) return HERTA_PLACE_SPACE_STATION;
   // Phase 2A: book/lore titles using corner-bracket 「黑塔」 (without 空间站
   // prefix) or 黑塔藏品间 are station-asset references in real corpus.
@@ -191,6 +195,24 @@ export function labelDocument(input: LabelDocumentInput): LabelChunkResult[] {
         confidence: CONF_DOLL_SURFACE,
         method: "deterministic",
       });
+    }
+
+    // Speaker label "大黑塔" in mission dialogue (the 3.x arcs credit the
+    // playable prime this way): unambiguous prime, no doll checks — the
+    // compound surface can never mean the doll or the station. Found as an
+    // alias gap 2026-08-31: these turns carried no speakerEntityId, so
+    // scene extraction filed the「何为神性」lines under otherSpeakers.
+    if (chunk.isDialogue && chunk.speaker === "大黑塔") {
+      mentions.push({
+        surface: "大黑塔",
+        referentEntityId: HERTA_PERSON_PRIME,
+        speakerEntityId: HERTA_PERSON_PRIME,
+        pageSubjectEntityId: pageSubject,
+        confidence: CONF_HIGH_SURFACE,
+        method: "deterministic",
+        rationale: "Mission speaker label 大黑塔 — unambiguous prime surface.",
+      });
+      isHertaVoiceEvidence = true;
     }
 
     // Speaker label "黑塔" in mission dialogue.

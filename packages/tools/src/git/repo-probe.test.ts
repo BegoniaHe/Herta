@@ -295,7 +295,10 @@ describe.skipIf(!GIT_AVAILABLE)(
 
 describe.skipIf(!GIT_AVAILABLE)(
   "diffCommittedRange",
-  { timeout: 20_000 },
+  // 60s like the other git-fixture describes (2026-08-31): under full-suite
+  // contention on Windows these spawn-heavy cases run at 14s+ alone and blew
+  // the 20s cap, taking a temp-dir EBUSY with them on cleanup.
+  { timeout: 60_000 },
   () => {
     const git = (dir: string, ...a: string[]) =>
       spawnSync("git", a, { cwd: dir, encoding: "utf8" });

@@ -27,6 +27,7 @@ import { SwapText } from "./SwapText.js";
 import {
   latestOpStep,
   latestTodoProgressStep,
+  middleTruncateName,
   stepDisplayBody,
   stepDisplayDetail,
 } from "./step-display.js";
@@ -543,14 +544,38 @@ export const ActivityBlock = memo(function ActivityBlock(
               const failed = b.digest?.kind === "tool-fail";
               // The file NAME as a click target (ADR 0050 §1): op rows
               // whose digest arg is the path — reads, writes, and the
-              // folded-patch edit rows all carry one.
-              const filePath =
-                openFile !== null &&
-                b.digest?.kind === "op" &&
-                (b.digest.verb === "Reading" || b.digest.verb === "Writing") &&
-                b.digest.arg.length > 0
-                  ? b.digest.arg
-                  : null;
+              // folded-patch edit rows all carry one. Attachment rows too
+              // (owner 2026-08-31): the NAME in the body opens the STORED
+              // copy under .herta/attachments/ — text attachments only
+              // (pictures already have the thumbnail + lightbox), and only
+              // while the store still holds the file (not removed/failed).
+              const fileTarget: {
+                readonly path: string;
+                readonly name?: string;
+                readonly label?: string;
+              } | null =
+                openFile === null
+                  ? null
+                  : b.digest?.kind === "op" &&
+                      (b.digest.verb === "Reading" ||
+                        b.digest.verb === "Writing") &&
+                      b.digest.arg.length > 0
+                    ? { path: b.digest.arg }
+                    : b.digest?.kind === "attachment" &&
+                        b.digest.path.length > 0 &&
+                        b.digest.image === undefined &&
+                        b.digest.unreadable === undefined
+                      ? {
+                          path: b.digest.path,
+                          // The row DISPLAYS the middle-truncated name
+                          // (long names wrapped the row, owner 2026-08-10)
+                          // — split on what is actually on screen or a long
+                          // name silently loses its click affordance. The
+                          // panel breadcrumb gets the WHOLE name.
+                          name: middleTruncateName(b.digest.name),
+                          label: b.digest.name,
+                        }
+                      : null;
               // A parallel batch (ADR 0025 slice 5) has several ops in
               // flight at once — shimmer the last `inFlightCount` op rows
               // together; the classic single-row shimmer otherwise.
@@ -608,12 +633,16 @@ export const ActivityBlock = memo(function ActivityBlock(
                         removeLabel: t("activity.attachment.remove"),
                       }
                     : {})}
-                  {...(filePath !== null && openFile !== null
+                  {...(fileTarget !== null && openFile !== null
                     ? {
                         file: {
-                          path: filePath,
-                          onOpen: () => openFile(filePath),
-                          ariaLabel: `${t("activity.file.openAria")} ${filePath}`,
+                          path: fileTarget.path,
+                          ...(fileTarget.name !== undefined
+                            ? { name: fileTarget.name }
+                            : {}),
+                          onOpen: () =>
+                            openFile(fileTarget.path, fileTarget.label),
+                          ariaLabel: `${t("activity.file.openAria")} ${fileTarget.name ?? fileTarget.path}`,
                         },
                       }
                     : {})}

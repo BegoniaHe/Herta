@@ -122,11 +122,19 @@ function measureFinalSendBox(
     null) as HTMLElement | null;
   const rail = (app?.querySelector(".utility-rail") ??
     null) as HTMLElement | null;
+  // `.workspace` transitions margin-right since ADR 0050 (the old grid gap
+  // moved onto it) — an ARMED margin transition makes the suppressed read
+  // return its start value (0 while disconnected), which measured the send
+  // spot 24px right of true and landed the circle on the composer's edge
+  // (owner 2026-08-31). Same suppression as the grid/rail.
+  const wsEl = (app?.querySelector(".workspace") ?? null) as HTMLElement | null;
   const wasDisc = app?.classList.contains("is-disconnected") ?? false;
   const bodyTr = body?.style.transition ?? "";
   const railTr = rail?.style.transition ?? "";
+  const wsTr = wsEl?.style.transition ?? "";
   if (body !== null) body.style.transition = "none";
   if (rail !== null) rail.style.transition = "none";
+  if (wsEl !== null) wsEl.style.transition = "none";
   if (wasDisc) app?.classList.remove("is-disconnected");
   // Force the un-collapsed grid to lay out with transitions off (so the read
   // below sees the settled narrow columns, not a transition start).
@@ -140,6 +148,7 @@ function measureFinalSendBox(
   if (body !== null) void body.offsetWidth;
   if (body !== null) body.style.transition = bodyTr;
   if (rail !== null) rail.style.transition = railTr;
+  if (wsEl !== null) wsEl.style.transition = wsTr;
   return {
     sb: { left: r.left, top: r.top, width: r.width, height: r.height },
     ov: { left: ov.left, top: ov.top, width: ov.width, height: ov.height },

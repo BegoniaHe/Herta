@@ -83,6 +83,11 @@ export interface ActivityStepProps {
    */
   readonly file?: {
     readonly path: string;
+    /** The display NAME to locate in the body when it differs from `path` —
+     *  an attachment row shows the file's name while its `path` is the
+     *  stored copy under `.herta/attachments/` (ADR 0050 amendment,
+     *  owner 2026-08-31). Absent → the path is the display text. */
+    readonly name?: string;
     readonly onOpen: () => void;
     /** Localized aria label ("查看文件 x"), session-language like the row. */
     readonly ariaLabel: string;
@@ -100,7 +105,7 @@ function bodyWithFileName(
   body: string,
   file: NonNullable<ActivityStepProps["file"]>,
 ): JSX.Element | string {
-  const split = splitBodyAtPath(body, file.path);
+  const split = splitBodyAtPath(body, file.name ?? file.path);
   if (split === null) return body;
   const activate = (e: { stopPropagation: () => void }): void => {
     e.stopPropagation();

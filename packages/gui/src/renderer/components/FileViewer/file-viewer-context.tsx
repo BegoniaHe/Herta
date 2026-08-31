@@ -22,9 +22,18 @@ import { useSessionScoped } from "../../hooks/useSessionScoped.js";
  *   docked/overlay) for the FEW consumers that must re-render with it:
  *   the panel, the workspace-body shell, and the rail's WebGL gates.
  */
+/** What the panel is showing: the record-spelled path to read, plus an
+ *  optional display LABEL — an attachment's real file name, where `path`
+ *  is its stored copy under `.herta/attachments/` and would read as
+ *  machine internals in the breadcrumb (owner 2026-08-31). */
+export interface FileViewerTarget {
+  readonly path: string;
+  readonly label?: string;
+}
+
 export interface FileViewerState {
-  /** The open file's record-spelled path, or null when closed. */
-  readonly target: string | null;
+  /** The open file, or null when closed. */
+  readonly target: FileViewerTarget | null;
   /** Panel width in px (docked track / overlay sheet alike). */
   readonly widthPx: number;
   /** Measured workspace-body content width; 0 before first measure. */
@@ -39,13 +48,17 @@ export interface FileViewerState {
   readonly setBodyWidth: (w: number) => void;
 }
 
-const OpenContext = createContext<((path: string) => void) | null>(null);
+const OpenContext = createContext<
+  ((path: string, label?: string) => void) | null
+>(null);
 const StateContext = createContext<FileViewerState | null>(null);
 
 /** The stable opener, or null when file reads are unavailable (no bridge
  *  method — the demo) or no provider is mounted (bare component tests).
  *  Rows render a plain, non-clickable name on null. */
-export function useFileViewerOpen(): ((path: string) => void) | null {
+export function useFileViewerOpen():
+  | ((path: string, label?: string) => void)
+  | null {
   return useContext(OpenContext);
 }
 
@@ -111,7 +124,7 @@ export function FileViewerProvider({
   // belongs to the session whose record named it — a switch, delete, or
   // disconnect closes the panel rather than pointing it at another
   // session's workspace.
-  const [target, setTarget] = useSessionScoped<string | null>(null);
+  const [target, setTarget] = useSessionScoped<FileViewerTarget | null>(null);
   const [widthPx, setWidthState] = useState<number>(
     () => readStoredWidth() ?? 0,
   );
@@ -124,7 +137,11 @@ export function FileViewerProvider({
   const { bridge } = useHertaBridge();
   const available = bridge.readWorkspaceFile !== undefined;
 
-  const openRef = useCallback((path: string) => setTarget(path), [setTarget]);
+  const openRef = useCallback(
+    (path: string, label?: string) =>
+      setTarget(label !== undefined ? { path, label } : { path }),
+    [setTarget],
+  );
   const close = useCallback(() => setTarget(null), [setTarget]);
   const setWidthPx = useCallback((w: number) => {
     setWidthState(w);

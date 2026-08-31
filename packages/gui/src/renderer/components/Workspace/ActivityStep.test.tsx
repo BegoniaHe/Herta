@@ -79,6 +79,27 @@ describe("ActivityStep", () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
+  it("an attachment row splits on the display NAME and opens the stored path", () => {
+    const onOpen = vi.fn();
+    const { container } = renderWithLocale(
+      <ActivityStep
+        body="文本文件 notes.txt · 12 行"
+        t={tEn}
+        active={false}
+        file={{
+          path: ".herta/attachments/ab12-notes.txt",
+          name: "notes.txt",
+          onOpen,
+          ariaLabel: "View file notes.txt",
+        }}
+      />,
+    );
+    const name = container.querySelector(".file-open-name");
+    expect(name?.textContent).toBe("notes.txt");
+    fireEvent.click(name as Element);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
   it("a body that no longer carries the path degrades to plain text", () => {
     const { container } = renderWithLocale(
       <ActivityStep

@@ -113,9 +113,13 @@ export async function readWorkspaceFileBounded(
     const { bytesRead } = await fh.read(buf, 0, cap, 0);
     const head = buf.subarray(0, Math.min(bytesRead, BINARY_SNIFF_BYTES));
     if (head.includes(0)) return { ok: false, reason: "binary" };
+    // A UTF-8 BOM decodes to ﻿ and paints as a ghost glyph on line 1
+    // of the panel (seen live on a PowerShell-written attachment) — the
+    // viewer is presentation, so shed it.
+    const text = buf.subarray(0, bytesRead).toString("utf8");
     return {
       ok: true,
-      content: buf.subarray(0, bytesRead).toString("utf8"),
+      content: text.startsWith("\uFEFF") ? text.slice(1) : text,
       truncated: stat.size > MAX_VIEWER_BYTES,
       size: stat.size,
       relative: resolved.relative,

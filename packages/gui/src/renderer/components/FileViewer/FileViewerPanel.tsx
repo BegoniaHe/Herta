@@ -38,7 +38,8 @@ export function FileViewerPanel(): JSX.Element | null {
   const v = useFileViewerState();
   const { bridge } = useHertaBridge();
   const sessionId = useSessionSelector((s) => s.sessionId);
-  const path = v?.target ?? null;
+  const path = v?.target?.path ?? null;
+  const label = v?.target?.label;
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
   const [copied, setCopied] = useState(false);
   const panelRef = useRef<HTMLElement | null>(null);
@@ -86,8 +87,14 @@ export function FileViewerPanel(): JSX.Element | null {
 
   const reply = load.kind === "loaded" ? load.reply : null;
   const relative = reply?.ok === true ? reply.relative : path;
-  const crumbs = relative.split("/").filter((s) => s.length > 0);
-  const name = crumbs[crumbs.length - 1] ?? relative;
+  // A labeled target (an attachment) shows its REAL file name alone — the
+  // stored path under .herta/attachments/ is machine internals, kept to
+  // the tooltip (owner 2026-08-31).
+  const crumbs =
+    label !== undefined
+      ? [label]
+      : relative.split("/").filter((s) => s.length > 0);
+  const name = label ?? crumbs[crumbs.length - 1] ?? relative;
 
   return (
     <section

@@ -19,13 +19,28 @@ export type { GitDiffInput } from "./schema.js";
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 export interface GitDiffData {
-  mode: "working-tree" | "staged" | "ref";
+  mode: "working-tree" | "staged" | "ref" | "base";
   ref?: string;
+  /** The requested base branch (mode "base"). */
+  base?: string;
+  /** The resolved merge-base commit id (mode "base") — returned so the
+   *  answer is checkable (ADR 0049 §3 / PHILOSOPHY §9). */
+  mergeBase?: string;
   files: readonly GitDiffFile[];
   totalAdditions: number;
   totalDeletions: number;
   empty: boolean;
+  /** Unified diff text, present when the call asked `{patch: true}`. */
+  patch?: string;
+  /** The patch was cut at a cap — what's here is a PREFIX, and a caller
+   *  quoting it must say so. */
+  patchTruncated?: boolean;
 }
+
+/** Hard cap on the returned patch text. The transcript layer already
+ *  persists oversized results (preview + path, ADR 0025 slice 2); this cap
+ *  keeps the in-memory result/event from carrying megabytes. */
+const MAX_PATCH_CHARS = 200_000;
 
 export function gitDiffTool(): HertaTool {
   return {
@@ -35,7 +50,7 @@ export function gitDiffTool(): HertaTool {
       return {
         name: "git_diff",
         description:
-          "Return a structured per-file diff summary: exact added/deleted line counts and full repo-relative paths. Defaults to working-tree-vs-HEAD. Pass { staged: true } for staged-only or { ref } for vs-ref (a ref, not an option). ref and staged are mutually exclusive. Read-only.",
+          'Return a structured per-file diff summary: exact added/deleted line counts and full repo-relative paths. Modes (mutually exclusive): default = working tree vs HEAD; { staged: true } = staged only; { ref } = vs that commit (two-dot — includes changes the REF itself accumulated, so on a feature branch { ref: "main" } is usually the wrong question); { base: "main" } = what THIS branch changed since it forked from base (merge-base semantics; the remote-tracking origin/<base> is preferred over a possibly-stale local branch, and the result carries the resolved mergeBase commit id). Add { patch: true } to include the unified diff text (bounded; patchTruncated flags a cut). Read-only.',
         inputSchema: gitDiffJsonSchema,
       };
     },
@@ -48,7 +63,7 @@ export function gitDiffTool(): HertaTool {
         return errResult(
           "invalid_input",
           formatInputIssues(parsed.error),
-          "usage: {} or {staged: true} or {ref} — staged and ref are exclusive",
+          "usage: {} or {staged: true} or {ref} or {base} (mutually exclusive), optionally {patch: true}",
           "invalid input",
         );
       }
@@ -69,9 +84,66 @@ export function gitDiffTool(): HertaTool {
       ];
       let mode: GitDiffData["mode"];
       let argv: string[];
+      let mergeBase: string | undefined;
       if (input.staged === true) {
         mode = "staged";
         argv = [...base, "--cached", "--"];
+      } else if (input.base !== undefined) {
+        // Merge-base semantics (ADR 0049 §3): "what did THIS branch change"
+        // is a diff against the fork point, not against the base branch's
+        // tip — a two-dot compare answers the inverted question on any
+        // branch whose base has moved. The remote-tracking ref is preferred
+        // over the local branch, which may be stale and inflate the answer.
+        mode = "base";
+        const remoteRef = `refs/remotes/origin/${input.base}`;
+        const remote = await spawnGit(
+          ctx.workspaceRoot,
+          hardenedGitArgs(["rev-parse", "--verify", "--quiet", remoteRef]),
+          ctx.signal,
+          { allowExitCodes: [1] },
+        );
+        const remoteExists =
+          remote.ok && remote.exitCode === 0 && remote.stdout.trim().length > 0;
+        // Exit 1 = no common ancestor, which for the remote candidate falls
+        // back to the local name; for the final candidate it is an honest
+        // "these histories never met".
+        let mb = remoteExists
+          ? await spawnGit(
+              ctx.workspaceRoot,
+              hardenedGitArgs(["merge-base", "HEAD", remoteRef]),
+              ctx.signal,
+              { allowExitCodes: [1] },
+            )
+          : null;
+        if (mb === null || !mb.ok || mb.exitCode !== 0) {
+          mb = await spawnGit(
+            ctx.workspaceRoot,
+            hardenedGitArgs(["merge-base", "HEAD", input.base]),
+            ctx.signal,
+            { allowExitCodes: [1] },
+          );
+        }
+        if (!mb.ok) {
+          if (mb.code === "not_a_repo") {
+            return errResult(
+              "not_a_repo",
+              mb.message,
+              "this workspace is not a git repository — git tools are unavailable",
+              "not a git repo",
+            );
+          }
+          return errResult("git_failed", mb.message, undefined, "git failed");
+        }
+        if (mb.exitCode !== 0 || mb.stdout.trim().length === 0) {
+          return errResult(
+            "git_failed",
+            `no merge base between HEAD and ${input.base}`,
+            "the two histories share no common ancestor — if you really mean a plain compare against that commit, use { ref } instead",
+            "no merge base",
+          );
+        }
+        mergeBase = mb.stdout.trim();
+        argv = [...base, mergeBase, "--"];
       } else if (input.ref !== undefined) {
         mode = "ref";
         argv = [...base, input.ref, "--"];
@@ -133,19 +205,55 @@ export function gitDiffTool(): HertaTool {
       }
 
       const stat = parseDiffStatZ(r.stdout);
+
+      // Hunks on demand (ADR 0049 §3): a second spawn with --patch in place
+      // of --numstat, same hardening, same target. Separate on purpose —
+      // the counts stay O(files) even when the patch is enormous, and the
+      // patch is only paid for when asked.
+      let patch: string | undefined;
+      let patchTruncated = false;
+      if (input.patch === true && stat.files.length > 0) {
+        const patchArgv = argv.map((a) => (a === "--numstat" ? "--patch" : a));
+        const p = await spawnGit(
+          ctx.workspaceRoot,
+          hardenedGitArgs(patchArgv),
+          ctx.signal,
+        );
+        if (p.ok) {
+          patch = p.stdout;
+          patchTruncated = p.truncated;
+          if (patch.length > MAX_PATCH_CHARS) {
+            patch = patch.slice(0, MAX_PATCH_CHARS);
+            patchTruncated = true;
+          }
+        }
+        // A failed patch spawn degrades to the counts-only answer rather
+        // than failing the call the counts already answered.
+      }
+
       const data: GitDiffData = {
         mode,
         ...(mode === "ref" && input.ref !== undefined
           ? { ref: input.ref }
           : {}),
+        ...(mode === "base" && input.base !== undefined
+          ? { base: input.base }
+          : {}),
+        ...(mergeBase !== undefined ? { mergeBase } : {}),
         files: stat.files,
         totalAdditions: stat.totalAdditions,
         totalDeletions: stat.totalDeletions,
         empty: stat.files.length === 0,
+        ...(patch !== undefined ? { patch } : {}),
+        ...(patch !== undefined && patchTruncated ? { patchTruncated } : {}),
       };
       const summary = data.empty
         ? "no diff"
-        : `${data.files.length} files, +${data.totalAdditions}/-${data.totalDeletions}`;
+        : `${data.files.length} files, +${data.totalAdditions}/-${data.totalDeletions}${
+            mergeBase !== undefined
+              ? ` (since merge-base ${mergeBase.slice(0, 7)})`
+              : ""
+          }${patchTruncated ? " (patch truncated)" : ""}`;
       return { ok: true, data, summary };
     },
   };

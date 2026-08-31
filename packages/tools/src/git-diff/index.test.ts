@@ -242,3 +242,212 @@ describe.skipIf(!GIT_AVAILABLE)("git_diff tool", { timeout: 20_000 }, () => {
     }
   });
 });
+
+describe.skipIf(!GIT_AVAILABLE)(
+  "git_diff { base } — merge-base semantics (ADR 0049 §3)",
+  { timeout: 20_000 },
+  () => {
+    const sig = new AbortController().signal;
+    const revParse = async (root: string, ref: string) => {
+      const r = await spawnGit(root, ["rev-parse", ref], sig);
+      return r.ok ? r.stdout.trim() : "";
+    };
+
+    it("prefers origin/<base> — a stale local base cannot inflate the answer", async () => {
+      const ws = await mkTmpWorkspace({});
+      const originWs = await mkTmpWorkspace({});
+      try {
+        await seedRepo(ws.root);
+        await spawnGit(originWs.root, ["init", "-q", "--bare"], sig);
+        await commitFile(ws.root, "a.txt", "A\n", "A");
+        const shaA = await revParse(ws.root, "HEAD");
+        await spawnGit(ws.root, ["branch", "-M", "main"], sig);
+        await spawnGit(
+          ws.root,
+          ["remote", "add", "origin", originWs.root],
+          sig,
+        );
+        await spawnGit(ws.root, ["push", "-q", "-u", "origin", "main"], sig);
+        // origin/main advances to B…
+        await commitFile(ws.root, "b.txt", "B\n", "B");
+        const shaB = await revParse(ws.root, "HEAD");
+        await spawnGit(ws.root, ["push", "-q", "origin", "main"], sig);
+        // …while LOCAL main goes stale back at A.
+        await spawnGit(ws.root, ["reset", "-q", "--hard", shaA], sig);
+        // The feature forks from the REMOTE's tip (B) and does its own work.
+        await spawnGit(
+          ws.root,
+          ["checkout", "-qb", "feature", "origin/main"],
+          sig,
+        );
+        await commitFile(ws.root, "f.txt", "F\n", "feature work");
+
+        const r = await gitDiffTool().run(
+          { id: "b1", tool: "git_diff", input: { base: "main" } },
+          mkToolContext({ workspaceRoot: ws.root }),
+          () => {},
+        );
+        expect(r.ok).toBe(true);
+        const data = r.data as {
+          mode: string;
+          base?: string;
+          mergeBase?: string;
+          files: ReadonlyArray<{ path: string }>;
+        };
+        expect(data.mode).toBe("base");
+        expect(data.base).toBe("main");
+        // Stale local main would have answered shaA — and the diff would
+        // then claim B's b.txt as the feature's own work (the inflation).
+        expect(data.mergeBase).toBe(shaB);
+        expect(data.files.map((f) => f.path)).toEqual(["f.txt"]);
+      } finally {
+        await ws.cleanup();
+        await originWs.cleanup();
+      }
+    });
+
+    it("falls back to the local branch when there is no remote", async () => {
+      const ws = await mkTmpWorkspace({});
+      try {
+        await seedRepo(ws.root);
+        await commitFile(ws.root, "a.txt", "A\n", "A");
+        const fork = await revParse(ws.root, "HEAD");
+        await spawnGit(ws.root, ["branch", "-M", "main"], sig);
+        await spawnGit(ws.root, ["checkout", "-qb", "feature"], sig);
+        await commitFile(ws.root, "f.txt", "F\n", "feature work");
+        const r = await gitDiffTool().run(
+          { id: "b2", tool: "git_diff", input: { base: "main" } },
+          mkToolContext({ workspaceRoot: ws.root }),
+          () => {},
+        );
+        expect(r.ok).toBe(true);
+        const data = r.data as { mergeBase?: string };
+        expect(data.mergeBase).toBe(fork);
+      } finally {
+        await ws.cleanup();
+      }
+    });
+
+    it("says plainly when the histories share no ancestor", async () => {
+      const ws = await mkTmpWorkspace({});
+      try {
+        await seedRepo(ws.root);
+        await commitFile(ws.root, "a.txt", "A\n", "A");
+        await spawnGit(ws.root, ["branch", "-M", "main"], sig);
+        await spawnGit(ws.root, ["checkout", "-q", "--orphan", "island"], sig);
+        await commitFile(ws.root, "i.txt", "I\n", "island");
+        const r = await gitDiffTool().run(
+          { id: "b3", tool: "git_diff", input: { base: "main" } },
+          mkToolContext({ workspaceRoot: ws.root }),
+          () => {},
+        );
+        expect(r.ok).toBe(false);
+        expect(r.error?.code).toBe("git_failed");
+        expect(r.error?.message).toContain("no merge base");
+      } finally {
+        await ws.cleanup();
+      }
+    });
+
+    it("rejects base combined with ref or staged", async () => {
+      const ws = await mkTmpWorkspace({});
+      try {
+        for (const input of [
+          { base: "main", ref: "HEAD" },
+          { base: "main", staged: true },
+        ]) {
+          const r = await gitDiffTool().run(
+            { id: "b4", tool: "git_diff", input },
+            mkToolContext({ workspaceRoot: ws.root }),
+            () => {},
+          );
+          expect(r.ok).toBe(false);
+          expect(r.error?.code).toBe("invalid_input");
+        }
+      } finally {
+        await ws.cleanup();
+      }
+    });
+  },
+);
+
+describe.skipIf(!GIT_AVAILABLE)(
+  "git_diff { patch } — hunks on demand (ADR 0049 §3)",
+  { timeout: 20_000 },
+  () => {
+    it("returns the unified diff beside the counts", async () => {
+      const ws = await mkTmpWorkspace({});
+      try {
+        await seedRepo(ws.root);
+        await commitFile(ws.root, "a.txt", "one\n", "init");
+        await writeFile(join(ws.root, "a.txt"), "one\ntwo\n", "utf8");
+        const r = await gitDiffTool().run(
+          { id: "p1", tool: "git_diff", input: { patch: true } },
+          mkToolContext({ workspaceRoot: ws.root }),
+          () => {},
+        );
+        expect(r.ok).toBe(true);
+        const data = r.data as {
+          patch?: string;
+          patchTruncated?: boolean;
+          totalAdditions: number;
+        };
+        expect(data.totalAdditions).toBe(1);
+        expect(data.patch).toContain("+two");
+        expect(data.patch).toContain("--- a/a.txt");
+        expect(data.patchTruncated).toBeUndefined();
+      } finally {
+        await ws.cleanup();
+      }
+    });
+
+    it("omits the patch when there is nothing to show", async () => {
+      const ws = await mkTmpWorkspace({});
+      try {
+        await seedRepo(ws.root);
+        await commitFile(ws.root, "a.txt", "one\n", "init");
+        const r = await gitDiffTool().run(
+          { id: "p2", tool: "git_diff", input: { patch: true } },
+          mkToolContext({ workspaceRoot: ws.root }),
+          () => {},
+        );
+        expect(r.ok).toBe(true);
+        const data = r.data as { empty: boolean; patch?: string };
+        expect(data.empty).toBe(true);
+        expect(data.patch).toBeUndefined();
+      } finally {
+        await ws.cleanup();
+      }
+    });
+
+    it("composes with { base } — the patch shows only the branch's own work", async () => {
+      const ws = await mkTmpWorkspace({});
+      try {
+        await seedRepo(ws.root);
+        await commitFile(ws.root, "a.txt", "A\n", "A");
+        await spawnGit(
+          ws.root,
+          ["branch", "-M", "main"],
+          new AbortController().signal,
+        );
+        await spawnGit(
+          ws.root,
+          ["checkout", "-qb", "feature"],
+          new AbortController().signal,
+        );
+        await commitFile(ws.root, "f.txt", "F\n", "feature work");
+        const r = await gitDiffTool().run(
+          { id: "p3", tool: "git_diff", input: { base: "main", patch: true } },
+          mkToolContext({ workspaceRoot: ws.root }),
+          () => {},
+        );
+        expect(r.ok).toBe(true);
+        const data = r.data as { patch?: string };
+        expect(data.patch).toContain("+F");
+        expect(data.patch).not.toContain("+A");
+      } finally {
+        await ws.cleanup();
+      }
+    });
+  },
+);

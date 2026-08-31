@@ -24,11 +24,22 @@ export const gitDiffInputSchema = z
       .max(200)
       .regex(REF_PATTERN, "ref contains disallowed characters")
       .optional(),
+    base: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(REF_PATTERN, "base contains disallowed characters")
+      .optional(),
+    patch: z.boolean().optional(),
   })
   .strict()
-  .refine((v) => !(v.staged === true && v.ref !== undefined), {
-    message: "staged and ref are mutually exclusive",
-  });
+  .refine(
+    (v) =>
+      [v.staged === true, v.ref !== undefined, v.base !== undefined].filter(
+        Boolean,
+      ).length <= 1,
+    { message: "staged, ref and base are mutually exclusive" },
+  );
 
 export type GitDiffInput = z.infer<typeof gitDiffInputSchema>;
 

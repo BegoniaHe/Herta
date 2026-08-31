@@ -245,7 +245,11 @@ describe.skipIf(!GIT_AVAILABLE)("git_diff tool", { timeout: 20_000 }, () => {
 
 describe.skipIf(!GIT_AVAILABLE)(
   "git_diff { base } — merge-base semantics (ADR 0049 §3)",
-  { timeout: 20_000 },
+  // 60s: the stale-local fixture alone runs ~10 git processes (bare origin,
+  // two pushes, reset, branch, commits) before the tool's own spawns; the
+  // siblings ran 18-19.5s under full-suite load and the first one tripped
+  // the 20s file default.
+  { timeout: 60_000 },
   () => {
     const sig = new AbortController().signal;
     const revParse = async (root: string, ref: string) => {
@@ -373,7 +377,7 @@ describe.skipIf(!GIT_AVAILABLE)(
 
 describe.skipIf(!GIT_AVAILABLE)(
   "git_diff { patch } — hunks on demand (ADR 0049 §3)",
-  { timeout: 20_000 },
+  { timeout: 60_000 },
   () => {
     it("returns the unified diff beside the counts", async () => {
       const ws = await mkTmpWorkspace({});

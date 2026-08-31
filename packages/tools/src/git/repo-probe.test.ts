@@ -175,7 +175,10 @@ describe.skipIf(!GIT_AVAILABLE)("resolveGitDir", { timeout: 20_000 }, () => {
 
 describe.skipIf(!GIT_AVAILABLE)(
   "describeRepoContext",
-  { timeout: 20_000 },
+  // 60s: each test spawns a dozen real git processes plus the probe's four,
+  // and under full-suite load individual spawns have been observed at 3.5s+
+  // (the 2026-07-05 flake class) — 20s tripped on the first full-suite run.
+  { timeout: 60_000 },
   () => {
     const git = (dir: string, ...a: string[]) =>
       spawnSync("git", a, { cwd: dir, encoding: "utf8" });

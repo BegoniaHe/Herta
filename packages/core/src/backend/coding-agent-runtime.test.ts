@@ -1285,6 +1285,80 @@ describe("CodingAgentRuntime.runBrief", () => {
  * can delete at all, so the highest-blast-radius operation was the one the
  * attribution was structurally blind to.
  */
+describe("the repo snapshot header (ADR 0049 §2)", () => {
+  it("threads the injected repoContext into the frame the provider receives", async () => {
+    let seenSystem = "";
+    const provider = new FakeProvider({
+      turns: [
+        (frame) => {
+          seenSystem =
+            "backendSystem" in frame ? (frame.backendSystem ?? "") : "";
+          return [{ type: "finish", reason: "stop" }];
+        },
+      ],
+    });
+    const runtime = new CodingAgentRuntime({
+      sessionId: "s-1",
+      provider,
+      tools: new InMemoryToolRegistry(),
+      permissions: new NoopPermissionEngine(),
+      backendBuilder: new BackendContextBuilder({
+        tools: new InMemoryToolRegistry(),
+      }),
+      bus: new InMemoryEventBus<AgentEvent>(),
+      clock: () => new Date("2026-05-07T00:00:00.000Z"),
+      workspaceRoot: wsRoot,
+      memory: new NoopMemoryManager(),
+      repoContext: async () => ({
+        branch: "main",
+        detached: false,
+        headShort: "abc1234",
+        upstream: "origin/main",
+        ahead: 1,
+        behind: 0,
+        defaultBranch: "main",
+        inProgress: null,
+        conflicted: [],
+        dirty: [],
+        dirtyTotal: 0,
+        recentSubjects: ["abc1234 seed"],
+      }),
+    });
+    await runtime.runBrief(sampleBrief, { userMessages: [{ text: "go" }] });
+    expect(seenSystem).toContain("# 仓库快照");
+    expect(seenSystem).toContain("分支: main → origin/main（领先 1，落后 0）");
+  });
+
+  it("a null describer leaves the frame without the section", async () => {
+    let seenSystem = "";
+    const provider = new FakeProvider({
+      turns: [
+        (frame) => {
+          seenSystem =
+            "backendSystem" in frame ? (frame.backendSystem ?? "") : "";
+          return [{ type: "finish", reason: "stop" }];
+        },
+      ],
+    });
+    const runtime = new CodingAgentRuntime({
+      sessionId: "s-1",
+      provider,
+      tools: new InMemoryToolRegistry(),
+      permissions: new NoopPermissionEngine(),
+      backendBuilder: new BackendContextBuilder({
+        tools: new InMemoryToolRegistry(),
+      }),
+      bus: new InMemoryEventBus<AgentEvent>(),
+      clock: () => new Date("2026-05-07T00:00:00.000Z"),
+      workspaceRoot: wsRoot,
+      memory: new NoopMemoryManager(),
+      repoContext: async () => null,
+    });
+    await runtime.runBrief(sampleBrief, { userMessages: [{ text: "go" }] });
+    expect(seenSystem).not.toContain("仓库快照");
+  });
+});
+
 describe("the dispatch baseline (2026-08-25)", () => {
   const runWith = async (
     snapshots: Array<{ head: string | null; dirty: string[] } | null>,

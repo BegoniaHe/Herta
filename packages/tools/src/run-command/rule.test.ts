@@ -46,7 +46,11 @@ function ctxFor(workspaceRoot: string) {
   };
 }
 
-describe("run_command permission rule — in-progress consequence (ADR 0049 §5)", () => {
+// 60s: a dozen real git spawns; the 5s default tripped under full-suite
+// load (the 2026-07-05 flake class).
+describe("run_command permission rule — in-progress consequence (ADR 0049 §5)", {
+  timeout: 60_000,
+}, () => {
   it("a mid-merge `git commit` ask carries the note; a clean repo's does not", async () => {
     const { spawnSync } = await import("node:child_process");
     const gitAvailable = (() => {

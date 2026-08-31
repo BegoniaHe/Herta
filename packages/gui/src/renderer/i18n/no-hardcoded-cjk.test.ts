@@ -48,7 +48,9 @@ function collectSourceFiles(dir: string): string[] {
   return results;
 }
 
-describe("no-hardcoded-cjk", () => {
+// 30s: this walks the whole renderer tree; it runs in ~100ms alone but blew
+// the default 5s cap twice on 2026-08-31 under full-suite disk contention.
+describe("no-hardcoded-cjk", { timeout: 30_000 }, () => {
   it("renderer source has no hardcoded CJK characters outside i18n catalogs and allow-list", () => {
     const files = collectSourceFiles(RENDERER_ROOT);
     const violations: string[] = [];

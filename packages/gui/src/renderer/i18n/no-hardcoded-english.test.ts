@@ -61,7 +61,9 @@ function collectTsxFiles(dir: string): string[] {
   return results;
 }
 
-describe("no-hardcoded-english", () => {
+// 30s like its cjk sibling: a whole-renderer-tree walk that runs in ~250ms
+// alone but is at the mercy of full-suite disk contention (2026-08-31).
+describe("no-hardcoded-english", { timeout: 30_000 }, () => {
   it("renderer JSX text nodes carry no hardcoded English outside the allow-list", () => {
     const files = collectTsxFiles(RENDERER_ROOT);
     const violations: string[] = [];

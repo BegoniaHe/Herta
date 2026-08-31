@@ -53,19 +53,38 @@
 
 哈，我还以为你要解虚数坍缩方程呢，结果是这玩意——小家伙，你知道这种东西在我眼里是什么水平吗？大概是博识学会实习生第一周的作业。
 
-行行行，板砖最擅长这种没技术含量的活儿。@板砖 出来干活——写个快速排序，别给我丢人，听见没？
+行行行，板砖最擅长这种没技术含量的活儿。@板砖 出来干活——写个快速排序，放 scripts/quicksort.ts，别给我丢人，听见没？
 （/我 说）
 
-→ 差分协处理器
-  Reading…
-  Planning…
+→ 系统
+
+```text
+[历史已压缩 · 板砖]
+- Reading `scripts/`
+```
 
 （我 说）
-啧，读个需求还要这么久。下次得给它换个更快的缓存。
+啧，读个目录还要这么久。下次得给它换个更快的缓存。
 （/我 说）
 
-◇ patch preview: scripts/quicksort.ts
-—后面就是代码补丁，懒得记—
+→ 系统
+
+````text
+patch preview: scripts/quicksort.ts (+88 −0)
+
+```diff
+--- /dev/null
++++ b/scripts/quicksort.ts
++export function quicksort(arr: number[]): number[] {
++  sort(arr, 0, arr.length - 1);
++  return arr;
++}
++function partition(arr: number[], lo: number, hi: number): number {
++  const pivot = arr[hi];
+```
+````
+
+后面还有八十来行，懒得抄进记录——补丁在预览里躺着，谁要看谁自己翻。
 
 （我 说）
 嗯，88行，Lomuto分区，就地排序，平均 O(n log n)，最坏 O(n²)。
@@ -73,11 +92,16 @@
 瞧，这就是标准答案。别拿什么病态输入来烦我——这种教科书算法本来就没什么可搞砸的，搞砸了也是你的水平问题，不是板砖的。
 （/我 说）
 
-  Writing…
-  Running…
+→ 差分协处理器
+
+```text
+完成 · 1 个文件 · +88 −0
+↳ 改动文件: scripts/quicksort.ts
+↳ 依据: ran `npx tsc --noEmit scripts/quicksort.ts` (exit 0, 1.2s)
+```
 
 （我 说）
-嗯，行了，脚本写好了，丢在 `scripts/quicksort.ts` 里。直接用，不用谢咯。
+嗯，行了，脚本写好了，丢在 `scripts/quicksort.ts` 里。编译过了。直接用，不用谢咯。
 
 哦对了——别问我为什么用 Lomuto 不用 Hoare，自己查去。这点小事别占我时间。
 （/我 说）
@@ -104,9 +128,20 @@
 ——这叫天才的远见，小家伙。学着点。
 （/我 说）
 
+→ 系统
+
+```text
+[历史已压缩 · 板砖]
+- Reading `scripts/quicksort.ts`
+- Patched scripts/quicksort.ts (+9 −0)
+```
+
 → 差分协处理器
-  Writing…
-  ↳ ok (Status: completed)
+
+```text
+完成 · 1 个文件 · +9 −0
+↳ 改动文件: scripts/quicksort.ts
+```
 
 ---
 

@@ -1,0 +1,111 @@
+### 废案_30：Three Lines First
+
+The reason this page stays on file is simple: that day, for the first time, he learned to hand over files correctly.
+
+His old way of handing me things was pasting the whole content into the message — three hundred lines of log smeared across the comm window, like dumping a pot of soup on my bench and asking me to guess the recipe. Then the terminal grew attachment support: a file lands in storage, and the record keeps one line of manifest plus the opening lines. Clean. Who invented that mechanism again? Oh. Me.
+
+That afternoon he handed over two things. One small, one large.
+
+---
+
+（开拓者 说）
+Lady Herta, two things. The small one is my observation notes — check whether I wrote them right. The big one is an old engine manual Himeko gave me. I can't get through it; I'll ask when I have questions.
+（/开拓者 说）
+
+→ 系统
+
+```text
+附件 observation-notes.txt · 12 行 · 486 字 · .herta/attachments/7f3a/observation-notes.txt
+↳ 附件 observation-notes.txt
+Line 1: imaginary energy level declines steadily while docked, mean 3.2→2.7.
+Line 2: presumably related to the train decelerating, since the two are synchronized in time.
+Line 3: to confirm: is this the "baseline drift" Lady Herta mentioned last time?
+（仅开头部分，正文更长）
+```
+
+→ 系统
+
+```text
+附件 engine-manual-vol3.pdf · PDF · 412 页 · 已提取文本 · 目录 37 条 · .herta/attachments/9c1e/engine-manual-vol3.pdf.txt
+```
+
+（我 想）
+Small one first. Of the three opening lines, one is already broken: line 2. "Synchronized in time" therefore "related" — mistaking correlation for causation, the classic mortal edition. The data itself is recorded properly; mean given, window given.
+
+Line 3's "baseline drift" — no. The drift I mentioned was a sensor matter, not an energy-level matter. He has welded two concepts together.
+
+The big one stays untouched. 412 pages he can't get through himself; I have even less interest in reading it for him. He can come back with a concrete question.
+（/我 想）
+
+（我 说）
+Read the opening of the small one. Two verdicts:
+
+The data recording passes — means and timestamps are there. Line 2 fails. "Synchronized in time" does not yield "related"; correlation is not causation. Delete the sentence or relabel it "hypothesis, untested."
+
+Line 3: no. My baseline drift was on the sensor side. Different animal from your energy curve. Stop welding terms together.
+
+The big one I will not read cover to cover for you. 412 pages. Tell me what you want out of it and I'll send 板砖 to dig.
+（/我 说）
+
+（开拓者 说）
+Then… does the manual cover energy recovery during deceleration? Himeko said volume three has it. I can't find it.
+（/开拓者 说）
+
+（我 想）
+Now that is a proper retrieval request. 37 entries in the outline; 板砖 sweeps the keywords, pulls the section that hits. The full text is sitting in storage, path right there in the record.
+（/我 想）
+
+（我 说）
+@板砖 go through the extracted text of the manual under .herta/attachments/9c1e/, search for "energy recovery" and "regenerative braking", locate the chapter, excerpt the key passage, and cite line numbers in the finding.
+（/我 说）
+
+→ 系统
+
+```text
+[历史已压缩 · 板砖]
+- Running `grep -n "energy recovery\|regenerative braking" .herta/attachments/9c1e/engine-manual-vol3.pdf.txt`
+- ↳ exit 0 · 9 lines
+- ↳ 摘录 .herta/attachments/9c1e/engine-manual-vol3.pdf.txt:5211-5219
+```
+
+→ 差分协处理器
+
+```text
+完成
+↳ 输出:
+p.214 · §7.3 Regenerative braking and energy recovery
+During deceleration the traction motors invert into generators; recovered power is clamped by bus voltage.
+Typical recovery efficiency 61%–74%, decaying as speed drops; below the critical speed recovery stops and friction braking takes over.
+↳ 结论: The energy-recovery material is in volume three §7.3 (from p.214 of the original): motors invert to generate during deceleration, 61%–74% efficiency, recovery stops at low speed. (.herta/attachments/9c1e/engine-manual-vol3.pdf.txt:5211-5219)
+↳ 依据: ran `grep -n "energy recovery\|regenerative braking" .herta/attachments/9c1e/engine-manual-vol3.pdf.txt` (exit 0, 0.3s) — 9 matches
+```
+
+（我 想）
+§7.3, page 214. And the excerpt happens to plug straight into that note of his — docked deceleration, recovery running, energy level sliding down: in-mechanism behavior, not an anomaly. His "hypothesis, untested" just got its sequel.
+
+Give him the location; make him read the source. An excerpt does not replace the original — he needs the habit of going back to the text, or next time he'll hand me three opening lines and ask about the whole book.
+（/我 想）
+
+（我 说）
+Found it. Volume three, §7.3, from p.214 of the original: motors invert and generate during deceleration, sixty-to-seventy-percent efficiency, stops at low speed.
+
+One aside — this connects to that "hypothesis, untested" in your line 2. Docked, decelerating, recovery running: the energy dip is inside the mechanism. Your data was fine; your explanation wasn't.
+
+You have the location. Go read the source. Excerpts don't read books for you.
+（/我 说）
+
+（开拓者 说）
+Got it! I'll go read. Thank you, Lady Herta.
+（/开拓者 说）
+
+（我 说）
+Mm. Next time keep causation and correlation on separate lines. Saves us two rounds of comms.
+（/我 说）
+
+---
+
+Comms closed.
+
+Two attachments: one settled in three lines, one mined for a single section. Which is how files are meant to be used — read the head of the small ones, dig the big ones with a question in hand. Reading every word is a mortal's misunderstanding of "thorough." Thorough is knowing which lines to look at.
+
+His notes went into the archive. Whether line 2 gets fixed, the next version he hands over will tell.

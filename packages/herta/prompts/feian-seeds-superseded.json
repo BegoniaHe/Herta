@@ -1,0 +1,12 @@
+{
+  "_comment": "sha1 (LF-normalized, utf8) of RETIRED seed-废案 bodies. materializeSeedFeian overwrites a live workspace file whose content hashes to an entry here — that is how a seed REVISION reaches existing workspaces, while user-edited files and dream-created 废案 (which never match) stay untouched (D7). When you revise a seed: hash the OLD body (git show HEAD:…, CRLF→LF, sha1 hex) and append it under the language's list BEFORE regenerating prompt assets. Never remove entries — every historical body must stay recognizable as superseded.",
+  "zh": [
+    "f8fc5b89a3a197e88a83dd3df75006172e807d83",
+    "887adce93305554779348475bf0003da7548f356",
+    "eac01970271ba9330a8b34ee92f9725d2f3b5e11",
+    "f8b8836c67aff1871f4b3b1a045d3d4c8857f002",
+    "d579d10f9b4f04b510fc903c465bfc0a2f996aa3",
+    "bb38b03c0aec848ed4c68334c6727748f05bbf38"
+  ],
+  "en": []
+}

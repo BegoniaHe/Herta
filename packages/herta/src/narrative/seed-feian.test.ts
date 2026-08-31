@@ -30,7 +30,8 @@ describe("materializeSeedFeian (M-prompts-1)", () => {
     for (const name of Object.keys(PROMPT_ASSETS.feianSeeds)) {
       expect(files).toContain(name);
     }
-    // 8 originals + the two ADR 0052 coverage seeds (废案_30/31).
+    // 8 originals + the two ADR 0052 coverage seeds (远程办公 其七/其八,
+    // files 废案_08/09).
     expect(Object.keys(PROMPT_ASSETS.feianSeeds).length).toBe(10);
   });
 

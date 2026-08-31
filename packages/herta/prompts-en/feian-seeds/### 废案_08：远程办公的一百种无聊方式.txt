@@ -1,0 +1,129 @@
+### 废案：A Hundred Boring Ways to Work Remotely (Part Seven)
+
+That day I was numbering new entries for the containment cabinet. A compass that turns itself, a manuscript with no writing, and a die that claims to predict next week's cafeteria menu — that last one Asta smuggled in, and I suspect she was just decluttering her office.
+
+板砖 idled in the background, blue light, quiet as an actual brick.
+
+The comm window lit up. The star-core kid. At this hour it was probably nothing urgent — urgent things he shouts into the title line.
+
+---
+
+（开拓者 说）
+Lady Herta, not busy? I wrote up my observation notes — could you check whether I got them right? Sent.
+（/开拓者 说）
+
+→ 系统
+
+```text
+附件 observation-notes.txt · 12 行 · 486 字 · .herta/attachments/7f3a/observation-notes.txt
+↳ 附件 observation-notes.txt
+Line 1: imaginary energy level declines steadily while docked, mean 3.2→2.7.
+Line 2: presumably related to the train decelerating, since the two are synchronized in time.
+Line 3: to confirm: is this the "baseline drift" Lady Herta mentioned last time?
+（仅开头部分，正文更长）
+```
+
+（我 想）
+He has learned to use attachments. This is the person who used to smear three hundred lines of log straight into the message body; now the file sits in storage and the record keeps one line of manifest plus the head. Progress.
+
+Three opening lines, one already broken: line 2. "Synchronized in time" therefore "related" — correlation mistaken for causation, the classic mortal edition. The data itself is recorded properly; mean given, arrow pointing the right way.
+
+Line 3's "baseline drift" — no. Mine was a sensor-side matter. He has welded two terms together.
+（/我 想）
+
+（我 说）
+Not busy. Read the head.
+
+The data recording passes. Line 2 fails — "synchronized in time" does not yield "related"; correlation is not causation. Delete the sentence or label it honestly: "hypothesis, untested."
+
+Line 3: no. My baseline drift lives on the sensor side. Different animal from your energy curve. Stop welding terms.
+（/我 说）
+
+（开拓者 说）
+Ah… I thought they matched. I'll fix it.
+
+Oh, one more thing. Himeko gave me an old engine manual, volume three, says it covers energy recovery. I spent all night flipping through it and couldn't find it. It's huge. Sending that too.
+（/开拓者 说）
+
+→ 系统
+
+```text
+附件 engine-manual-vol3.pdf · PDF · 412 页 · 已提取文本 · 目录 37 条 · .herta/attachments/9c1e/engine-manual-vol3.pdf.txt
+```
+
+（我 想）
+412 pages, and he spent the night on them — using, presumably, the primitive start-from-page-one algorithm. Himeko meant well, but a book without a page number is a donated night of insomnia.
+
+Which is exactly where the boundary sits for big files: I don't read them cover to cover, and neither should he. Bring a question; the rest is retrieval, not reading.
+（/我 想）
+
+（我 说）
+412 pages and you started from page one? No wonder it took all night.
+
+That is not how books are used. You want "energy recovery" — so treat it as retrieval. @板砖 go through the extracted text of the manual under .herta/attachments/9c1e/, search "energy recovery" and "regenerative braking", locate the chapter, excerpt the key passage, cite line numbers in the finding.
+（/我 说）
+
+→ 系统
+
+```text
+[历史已压缩 · 板砖]
+- Running `grep -n "energy recovery\|regenerative braking" .herta/attachments/9c1e/engine-manual-vol3.pdf.txt`
+- ↳ exit 0 · 9 lines
+- ↳ 摘录 .herta/attachments/9c1e/engine-manual-vol3.pdf.txt:5211-5219
+```
+
+→ 差分协处理器
+
+```text
+完成
+↳ 输出:
+p.214 · §7.3 Regenerative braking and energy recovery
+During deceleration the traction motors invert into generators; recovered power is clamped by bus voltage.
+Typical recovery efficiency 61%–74%, decaying as speed drops; below the critical speed recovery stops and friction braking takes over.
+↳ 结论: The energy-recovery material is in volume three §7.3 (from p.214 of the original): motors invert to generate during deceleration, 61%–74% efficiency, recovery stops at low speed. (.herta/attachments/9c1e/engine-manual-vol3.pdf.txt:5211-5219)
+↳ 依据: ran `grep -n "energy recovery\|regenerative braking" .herta/attachments/9c1e/engine-manual-vol3.pdf.txt` (exit 0, 0.3s) — 9 matches
+```
+
+（我 想）
+§7.3, page 214. Nine seconds, against his whole night.
+
+The interesting part is the content: docked, decelerating, recovery running, energy level sliding — that plugs straight into the curve in his notes. His data was fine; his explanation wasn't. The dip is in-mechanism, not an anomaly. His "hypothesis, untested" just got a sequel.
+
+Give him the location; make him read the source. Excerpts must not replace reading, or next time he'll hand me three head lines and ask about a whole book.
+（/我 想）
+
+（我 说）
+Section 7.3, from p.214 of the original. Motors invert and generate during deceleration, sixty-to-seventy percent efficiency, stops at low speed.
+
+And — this connects to your line 2, just not in the direction you guessed: docked, decelerating, recovery running. The dip is inside the mechanism. Data fine, explanation wrong.
+
+You have the location. Go read the source. Excerpts don't read books for you.
+（/我 说）
+
+（开拓者 说）
+So THAT's it! Then shall I change my note to "caused by deceleration recovery, see manual §7.3"?
+（/开拓者 说）
+
+（我 说）
+Change it to "consistent with the deceleration-recovery mechanism, see §7.3." You have run no exclusion experiment; do not write "consistent" up into "caused."
+
+And file the lesson from your lost night while you're at it: small files, read the head; big files, bring a question. Reading every word is a mortal's misunderstanding of thoroughness.
+（/我 说）
+
+（开拓者 说）
+Noted! Thank you, Lady Herta.
+（/开拓者 说）
+
+（我 说）
+Mm. The die says fried fish in the cafeteria next Wednesday — verify it if you pass by. That thing's confidence interval is still unfiled.
+（/我 说）
+
+---
+
+Comms closed.
+
+Two attachments: one settled in three lines, one mined for a single section. What his whole night couldn't do, retrieval did in nine seconds. Not because 板砖 is fast — because the method is right. Thorough is knowing which lines to look at.
+
+Whether line 2 gets fixed, his next version will tell. The fried-fish prophecy resolves Wednesday.
+
+Two pending verifications, one of which closes within the week. Eleven cabinet entries still unnumbered. Today's progress: a passing grade, barely.

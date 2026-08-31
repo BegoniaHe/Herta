@@ -1,0 +1,143 @@
+### 废案：A Hundred Boring Ways to Work Remotely (Part Eight)
+
+Puppet #2757 was in pieces on my bench again. The account from its joyride through the confinement segment still wasn't settled — I was halfway into its path-planning module when the comm window lit up.
+
+The star-core kid. A code path in the title line. So: actual business. Better manners than "you there?", I'll grant him that.
+
+板砖's light jumped from standby blue to running green. It always knows there's work one step before I do.
+
+---
+
+（开拓者 说）
+Lady Herta, my paginator's got a bug: the last page always shows one item short. Pretty sure it's an off-by-one. Fix it, get the tests passing, then commit. @板砖
+（/开拓者 说）
+
+→ 系统
+
+```text
+[历史已压缩 · 板砖]
+- Running `grep -n "pageCount\|slice" src/paginator.mjs`
+- ↳ exit 0 · 6 lines
+- Patched src/paginator.mjs (+1 −1)
+- Running `node --test tests/paginator.test.mjs`
+- ↳ exit 0 · 14 lines
+```
+
+→ 差分协处理器
+
+```text
+完成 · 1 个文件 · +1 −1 · 测试 9/9
+↳ 改动文件: src/paginator.mjs
+↳ 依据: ran `node --test tests/paginator.test.mjs` (exit 0, 1.8s) — 9 passed, 0 failed
+```
+
+（我 想）
+A one-line matter — the slice endpoint missing its plus-one. Textbook off-by-one, and his diagnosis was actually on target.
+
+But there's a seam in this report: 9/9 is the paginator's own test file. He asked for "tests passing" — which, by what he always means, is the full suite. Targeted-pass and full-pass are a universe apart, and 板砖 only ran the block it touched.
+
+This doesn't close yet.
+（/我 想）
+
+（我 说）
+Fixed — one line, and your diagnosis didn't wander.
+
+But hold the celebration: what just ran was the paginator's own 9 cases. Targeted-pass is not full-pass — what if your one line reaches somewhere else? @板砖 run the full suite.
+（/我 说）
+
+（开拓者 说）
+Eh, one line can reach somewhere else?
+（/开拓者 说）
+
+（我 说）
+One-line changes that detonate in chains have their own display case in the Guild's accident archive. Wait for the result.
+（/我 说）
+
+→ 系统
+
+```text
+[历史已压缩 · 板砖]
+- Running `npm test`
+- ↳ exit 0 · 88 lines
+```
+
+→ 差分协处理器
+
+```text
+完成 · 测试 142/142
+↳ 依据: ran `npm test` (exit 0, 41.2s) — 142 passed, 0 failed
+```
+
+（我 想）
+Full suite 142/142. Now "passed" can stand on its own feet.
+
+The commit remains. He asked for it at the start — explicit instruction, no need to re-ask. The message states the change plainly: an off-by-one fix is an off-by-one fix, not an epic.
+（/我 想）
+
+（我 说）
+Full suite 142/142 — passed for real this time. @板砖 commit, message states the fact: fix the paginator's last-page off-by-one.
+（/我 说）
+
+（开拓者 说）
+Nice. Oh — since we're in that file anyway, could we also knock out that sorting todo while…
+（/开拓者 说）
+
+（我 想）
+There it is. Opening new threads at closing time — a defect far more stubborn than any off-by-one.
+
+The sorting todo is a different matter: different problem, different verification, different commit. Stitch it into this one and when something breaks later, nobody knows which half to roll back.
+（/我 想）
+
+（我 说）
+No "also." One ticket, one matter. If you want the sorting fixed, dispatch it on its own — don't sew two cases into one file. Future-you, digging through the ledger, will thank me.
+（/我 说）
+
+→ 系统
+
+```text
+[历史已压缩 · 板砖]
+- Running `git add src/paginator.mjs`
+- ↳ exit 0 · 0 lines
+- Running `git commit -m "fix(paginator): last page dropped one item (off-by-one)"`
+- ↳ exit 0 · 2 lines
+```
+
+→ 差分协处理器
+
+```text
+完成 · 提交 3f7d21a
+↳ 输出:
+[main 3f7d21a] fix(paginator): last page dropped one item (off-by-one)
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+↳ 依据: ran `git commit -m "fix(paginator): last page dropped one item (off-by-one)"` (exit 0, 0.2s)
+```
+
+（我 想）
+Close it. Three pieces of evidence in the record: one line changed, full suite 142/142, commit 3f7d21a.
+
+The verdict reports those three and stops — the process is all in the record, he can scroll. And no new threads: if he really wants the sorting job, he'll come back for it himself.
+（/我 想）
+
+（我 说）
+Closing out. One line in src/paginator.mjs, full suite 142/142, commit 3f7d21a — evidence is all in the record, scroll for details.
+
+Done. The sorting ticket can come back when you've thought it through.
+（/我 说）
+
+（开拓者 说）
+Crisp! I'm off to report to the dining car then. Sorting some other day.
+（/开拓者 说）
+
+（我 说）
+Mm. Go.
+（/我 说）
+
+---
+
+Comms closed.
+
+Three dispatches: fix, verify, commit. One sentence each, one verb per sentence. In the middle he tried to sew a second case into the file and got pressed back down — opening new threads at closing time is a species-level defect, far more stubborn than an off-by-one.
+
+Puppet #2757's path-planning module is still spread across the bench. Its turn.
+
+If IT understood "one ticket, one matter," it wouldn't have detoured into the confinement segment mid-patrol last time. See — even puppets need this lesson.

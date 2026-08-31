@@ -11,14 +11,30 @@ import {
 function Probe(): JSX.Element {
   const open = useFileViewerOpen();
   return (
-    <button
-      type="button"
-      data-testid="probe"
-      data-available={open !== null}
-      onClick={() => open?.("src/a.ts")}
-    >
-      open
-    </button>
+    <>
+      <button
+        type="button"
+        data-testid="probe"
+        data-available={open !== null}
+        onClick={() => open?.("src/a.ts")}
+      >
+        open
+      </button>
+      <button
+        type="button"
+        data-testid="probe-b"
+        onClick={() => open?.("src/b.ts")}
+      >
+        open b
+      </button>
+      <button
+        type="button"
+        data-testid="probe-anchored"
+        onClick={() => open?.("src/a.ts", { anchor: { from: 2, to: 3 } })}
+      >
+        open anchored
+      </button>
+    </>
   );
 }
 
@@ -62,9 +78,9 @@ describe("FileViewerPanel (ADR 0050)", () => {
       ).toContain("one\ntwo"),
     );
     expect(readWorkspaceFile).toHaveBeenCalledWith("s1", "src/a.ts");
-    // The breadcrumb names the file.
+    // The tab chip names the file (v1.5 — the tab strip replaced the crumb).
     expect(
-      screen.getByTestId("file-viewer").querySelector(".file-viewer__name")
+      screen.getByTestId("file-viewer").querySelector(".file-viewer__tab-name")
         ?.textContent,
     ).toBe("a.ts");
   });
@@ -86,6 +102,107 @@ describe("FileViewerPanel (ADR 0050)", () => {
           ?.textContent,
       ).toContain("no longer exists"),
     );
+  });
+
+  it("tabs: two opens make two chips, activate swaps, × closes one (ADR 0050 v1.5)", async () => {
+    const mock = createMockHertaBridge();
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: vi.fn(async (_sid: string, p: string) => ({
+        ok: true as const,
+        content: `content of ${p}\n`,
+        truncated: false,
+        size: 10,
+        relative: p,
+      })),
+    });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("probe"));
+    await waitFor(() =>
+      expect(screen.getByTestId("file-viewer")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId("probe-b"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("file-viewer").querySelectorAll(".file-viewer__tab")
+          .length,
+      ).toBe(2),
+    );
+    // The newest tab is active and shown.
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("file-viewer").querySelector(".file-viewer__text")
+          ?.textContent,
+      ).toContain("content of src/b.ts"),
+    );
+    // Re-opening an open path activates its tab instead of duplicating.
+    fireEvent.click(screen.getByTestId("probe"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("file-viewer").querySelector(".file-viewer__text")
+          ?.textContent,
+      ).toContain("content of src/a.ts"),
+    );
+    expect(
+      screen.getByTestId("file-viewer").querySelectorAll(".file-viewer__tab")
+        .length,
+    ).toBe(2);
+    // Clicking the other chip swaps back.
+    const chips = screen
+      .getByTestId("file-viewer")
+      .querySelectorAll(".file-viewer__tab-name");
+    fireEvent.click(chips[1] as Element);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("file-viewer").querySelector(".file-viewer__text")
+          ?.textContent,
+      ).toContain("content of src/b.ts"),
+    );
+    // × on the active chip closes it; the other remains shown.
+    const xs = screen
+      .getByTestId("file-viewer")
+      .querySelectorAll(".file-viewer__tab-x");
+    fireEvent.click(xs[1] as Element);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("file-viewer").querySelectorAll(".file-viewer__tab")
+          .length,
+      ).toBe(1),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("file-viewer").querySelector(".file-viewer__text")
+          ?.textContent,
+      ).toContain("content of src/a.ts"),
+    );
+  });
+
+  it("a cite anchor renders the highlight band over the cited lines", async () => {
+    const mock = createMockHertaBridge();
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: vi.fn(async () => ({
+        ok: true as const,
+        content: "l1\nl2\nl3\nl4\n",
+        truncated: false,
+        size: 12,
+        relative: "src/a.ts",
+      })),
+    });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("probe-anchored"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("file-viewer").querySelector(".file-viewer__anchor"),
+      ).not.toBeNull(),
+    );
+    const band = screen
+      .getByTestId("file-viewer")
+      .querySelector(".file-viewer__anchor") as HTMLElement;
+    // Lines 2-3 at the jsdom fallback line height (19.2px): one line down,
+    // two lines tall.
+    expect(Number.parseFloat(band.style.top)).toBeCloseTo(19.2, 1);
+    expect(Number.parseFloat(band.style.height)).toBeCloseTo(38.4, 1);
   });
 
   it("Escape closes; a session SWITCH closes too (the transient-state boundary)", async () => {

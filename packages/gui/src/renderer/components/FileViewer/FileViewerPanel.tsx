@@ -1,7 +1,8 @@
-﻿import {
+import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -13,9 +14,11 @@ import { Tooltip } from "../Tooltip/Tooltip.js";
 import {
   CONVERSATION_MIN_PX,
   clampViewerWidth,
+  type FileViewerTarget,
   useFileViewerState,
   VIEWER_GAP_PX,
   VIEWER_MIN_PX,
+  type ViewerAnchor,
 } from "./file-viewer-context.js";
 
 /**
@@ -23,16 +26,27 @@ import {
  * Renders as the workspace grid's third track in docked mode (the rail
  * parked behind it) or as an absolute sheet in overlay mode — the
  * `.workspace-body` shell owns that distinction; this component is the
- * same DOM either way.
+ * same DOM either way. v1.5: a bounded tab strip (open files), and line
+ * anchors from finding cites (scroll + highlight band).
  */
 
 /** Rendered-line cap: a 1.5MB log is ~30k lines and 30k gutter rows of DOM
  *  helps nobody — the panel shows the head and says the file continues. */
 const MAX_RENDER_LINES = 8_000;
 
+/** Fallback line height when the computed style is unreadable (jsdom) —
+ *  the CSS pins 12px × 1.6. */
+const FALLBACK_LINE_H = 19.2;
+
 type LoadState =
   | { readonly kind: "loading" }
   | { readonly kind: "loaded"; readonly reply: ReadWorkspaceFileReply };
+
+function tabName(tab: FileViewerTarget): string {
+  if (tab.label !== undefined) return tab.label;
+  const parts = tab.path.split("/").filter((s) => s.length > 0);
+  return parts[parts.length - 1] ?? tab.path;
+}
 
 export function FileViewerPanel(): JSX.Element | null {
   const t = useT();
@@ -40,7 +54,7 @@ export function FileViewerPanel(): JSX.Element | null {
   const { bridge } = useHertaBridge();
   const sessionId = useSessionSelector((s) => s.sessionId);
   const path = v?.target?.path ?? null;
-  const label = v?.target?.label;
+  const anchor = v?.target?.anchor;
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
   const [copied, setCopied] = useState(false);
   const panelRef = useRef<HTMLElement | null>(null);
@@ -88,21 +102,14 @@ export function FileViewerPanel(): JSX.Element | null {
 
   const reply = load.kind === "loaded" ? load.reply : null;
   const relative = reply?.ok === true ? reply.relative : path;
-  // A labeled target (an attachment) shows its REAL file name alone — the
-  // stored path under .herta/attachments/ is machine internals, kept to
-  // the tooltip (owner 2026-08-31).
-  const crumbs =
-    label !== undefined
-      ? [label]
-      : relative.split("/").filter((s) => s.length > 0);
-  const name = label ?? crumbs[crumbs.length - 1] ?? relative;
+  const activeName = tabName(v.tabs[v.active] ?? { path });
 
   return (
     <section
       ref={panelRef}
       className="file-viewer"
       data-testid="file-viewer"
-      aria-label={name}
+      aria-label={activeName}
       tabIndex={-1}
       onKeyDown={(e) => {
         if (e.key === "Escape") v.close();
@@ -119,18 +126,45 @@ export function FileViewerPanel(): JSX.Element | null {
         onPointerDown={onDividerDown}
       />
       <div className="file-viewer__head">
-        {/* No native `title` here either — the copy-path action is how the
-            real (storage) path is reached. */}
-        <span className="file-viewer__crumbs">
-          {crumbs.slice(0, -1).map((c, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: crumbs are a stable path split
-            <span key={i} className="file-viewer__crumb">
-              {c}
-              <span className="file-viewer__crumb-sep">/</span>
+        {/* Open files as a bounded tab strip (ADR 0050 v1.5). Each chip's
+            own × closes THAT file; the header × closes the whole panel. */}
+        <div className="file-viewer__tabs" role="tablist">
+          {v.tabs.map((tab, i) => (
+            <span
+              key={tab.path}
+              className={`file-viewer__tab${i === v.active ? " is-active" : ""}`}
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={i === v.active}
+                className="file-viewer__tab-name"
+                onClick={() => v.activateTab(i)}
+              >
+                {tabName(tab)}
+              </button>
+              <button
+                type="button"
+                className="file-viewer__tab-x"
+                aria-label={`${t("viewer.closeTab")} ${tabName(tab)}`}
+                onClick={() => v.closeTab(i)}
+              >
+                <svg
+                  width="9"
+                  height="9"
+                  viewBox="0 0 9 9"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                  strokeLinecap="round"
+                  aria-hidden="true"
+                >
+                  <path d="M1.5 1.5l6 6M7.5 1.5l-6 6" />
+                </svg>
+              </button>
             </span>
           ))}
-          <span className="file-viewer__name">{name}</span>
-        </span>
+        </div>
         {/* The app's styled pill, not native `title` (owner 2026-08-31 — the
           same OS-beige mismatch the attachment ✕ had), and PORTALED so the
           panel's overflow clip can't cut it. */}
@@ -224,17 +258,52 @@ export function FileViewerPanel(): JSX.Element | null {
           </Tooltip>
         </span>
       </div>
-      <FileViewerBody reply={reply} />
+      <FileViewerBody reply={reply} anchor={anchor} />
     </section>
   );
 }
 
 function FileViewerBody({
   reply,
+  anchor,
 }: {
   readonly reply: ReadWorkspaceFileReply | null;
+  readonly anchor?: ViewerAnchor | undefined;
 }): JSX.Element {
   const t = useT();
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const textRef = useRef<HTMLPreElement | null>(null);
+  const [band, setBand] = useState<{
+    readonly top: number;
+    readonly height: number;
+  } | null>(null);
+
+  const lineCount =
+    reply?.ok === true
+      ? Math.min(reply.content.split("\n").length, MAX_RENDER_LINES)
+      : 0;
+
+  // Cite anchor (ADR 0050 v1.5): a highlight band positioned by line
+  // metrics, and a scroll that puts the cited lines a third of the way
+  // down. Layout effect so the first paint already shows the band.
+  useLayoutEffect(() => {
+    if (reply?.ok !== true || anchor === undefined || anchor.from > lineCount) {
+      setBand(null);
+      return;
+    }
+    const scroller = scrollerRef.current;
+    const text = textRef.current;
+    if (scroller === null || text === null) return;
+    const cs = getComputedStyle(text);
+    const lh = Number.parseFloat(cs.lineHeight) || FALLBACK_LINE_H;
+    const padTop = Number.parseFloat(cs.paddingTop) || 0;
+    const from = Math.max(1, anchor.from);
+    const to = Math.min(Math.max(anchor.to, from), lineCount);
+    const top = padTop + (from - 1) * lh;
+    setBand({ top, height: (to - from + 1) * lh });
+    scroller.scrollTop = Math.max(0, top - scroller.clientHeight * 0.3);
+  }, [reply, anchor, lineCount]);
+
   if (reply === null) {
     // A local read answers in single-digit milliseconds; a spinner would
     // only flash. Hold the empty body for the beat.
@@ -261,11 +330,22 @@ function FileViewerBody({
   const gutter = lines.map((_, i) => i + 1).join("\n");
   return (
     <div className="file-viewer__body">
-      <div className="file-viewer__code">
-        <pre className="file-viewer__gutter" aria-hidden="true">
-          {gutter}
-        </pre>
-        <pre className="file-viewer__text">{lines.join("\n")}</pre>
+      <div ref={scrollerRef} className="file-viewer__code">
+        <div className="file-viewer__code-inner">
+          {band !== null && (
+            <div
+              className="file-viewer__anchor"
+              style={{ top: band.top, height: band.height }}
+              aria-hidden="true"
+            />
+          )}
+          <pre className="file-viewer__gutter" aria-hidden="true">
+            {gutter}
+          </pre>
+          <pre ref={textRef} className="file-viewer__text">
+            {lines.join("\n")}
+          </pre>
+        </div>
       </div>
       {(reply.truncated || elided > 0) && (
         <p className="file-viewer__notice">{t("viewer.truncatedNote")}</p>

@@ -8,11 +8,15 @@ import {
 } from "react";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import { makeT } from "../../i18n/LocaleProvider.js";
-import { useFileViewerOpen } from "../FileViewer/file-viewer-context.js";
-import { ActivityStep } from "./ActivityStep.js";
+import {
+  useFileViewerOpen,
+  type ViewerAnchor,
+} from "../FileViewer/file-viewer-context.js";
+import { ActivityStep, type FileLinkTarget } from "./ActivityStep.js";
 import { useUnpinConversation } from "./ConversationPin.js";
 import { DiffStat, type DiffStatValue } from "./DiffStat.js";
 import { type DiffSummary, summarizeDiff } from "./diff-summary.js";
+import { opTarget, parseCite } from "./file-name-target.js";
 import {
   activityChipLabel,
   activityHasTerminalMarker,
@@ -553,6 +557,7 @@ export const ActivityBlock = memo(function ActivityBlock(
                 readonly path: string;
                 readonly name?: string;
                 readonly label?: string;
+                readonly anchor?: ViewerAnchor;
               } | null =
                 openFile === null
                   ? null
@@ -560,7 +565,13 @@ export const ActivityBlock = memo(function ActivityBlock(
                       (b.digest.verb === "Reading" ||
                         b.digest.verb === "Writing") &&
                       b.digest.arg.length > 0
-                    ? { path: b.digest.arg }
+                    ? // An excerpt read's arg carries its range
+                      // ("viewer-demo.txt:2-8") — parse it like a cite so
+                      // the click opens the REAL file anchored at those
+                      // lines instead of asking the jail for a path with a
+                      // colon in it (found live, 2026-08-31). `name` stays
+                      // the verbatim arg — it is what the row displays.
+                      opTarget(b.digest.arg)
                     : b.digest?.kind === "attachment" &&
                         b.digest.path.length > 0 &&
                         b.digest.image === undefined &&
@@ -646,9 +657,43 @@ export const ActivityBlock = memo(function ActivityBlock(
                             ? { name: fileTarget.name }
                             : {}),
                           onOpen: () =>
-                            openFile(fileTarget.path, fileTarget.label),
+                            openFile(fileTarget.path, {
+                              ...(fileTarget.label !== undefined
+                                ? { label: fileTarget.label }
+                                : {}),
+                              ...(fileTarget.anchor !== undefined
+                                ? { anchor: fileTarget.anchor }
+                                : {}),
+                            }),
                           ariaLabel: `${t("activity.file.openAria")} ${fileTarget.name ?? fileTarget.path}`,
                         },
+                      }
+                    : {})}
+                  // A finding's cites open the viewer AT the cited lines
+                  // (ADR 0050 v1.5) — each cite in the row becomes its own
+                  // target; unparseable ones stay plain text.
+                  {...(openFile !== null &&
+                  b.digest?.kind === "finding" &&
+                  b.digest.cites.length > 0
+                    ? {
+                        links: b.digest.cites.flatMap(
+                          (cite): FileLinkTarget[] => {
+                            const parsed = parseCite(cite);
+                            if (parsed === null) return [];
+                            return [
+                              {
+                                text: cite,
+                                onOpen: () =>
+                                  openFile(parsed.path, {
+                                    ...(parsed.anchor !== undefined
+                                      ? { anchor: parsed.anchor }
+                                      : {}),
+                                  }),
+                                ariaLabel: `${t("activity.file.openAria")} ${cite}`,
+                              },
+                            ];
+                          },
+                        ),
                       }
                     : {})}
                 />
@@ -661,6 +706,25 @@ export const ActivityBlock = memo(function ActivityBlock(
                 icon="result"
                 active={false}
                 detail={markerDetail}
+                // The marker's ↳ 改动文件 list as viewer targets (ADR 0050
+                // v1.5) — from the STRUCTURED evidence sections, never by
+                // parsing the detail string; the paths appear verbatim in
+                // it, so the wrap lands on what is shown.
+                {...(openFile !== null
+                  ? {
+                      detailLinks: (markerBlock?.evidence ?? [])
+                        .filter((s) => s.kind === "files")
+                        .flatMap((s) =>
+                          s.paths.map(
+                            (p): FileLinkTarget => ({
+                              text: p,
+                              onOpen: () => openFile(p, {}),
+                              ariaLabel: `${t("activity.file.openAria")} ${p}`,
+                            }),
+                          ),
+                        ),
+                    }
+                  : {})}
               />
             )}
           </div>

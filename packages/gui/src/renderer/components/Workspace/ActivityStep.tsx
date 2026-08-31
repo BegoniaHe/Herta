@@ -1,11 +1,17 @@
-import { type RefObject, useLayoutEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  type RefObject,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { TFn } from "../../i18n/LocaleProvider.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import { CollapsibleBody } from "./CollapsibleBody.js";
 import { useUnpinConversation } from "./ConversationPin.js";
 import { DiffBody } from "./DiffBody.js";
 import { DiffStat, type DiffStatValue } from "./DiffStat.js";
-import { splitBodyAtPath } from "./file-name-target.js";
+import { segmentByTargets, splitBodyAtPath } from "./file-name-target.js";
 import { StepIcon, type StepIconKey, stepIcon } from "./step-icon.js";
 
 export interface ActivityStepProps {
@@ -92,6 +98,72 @@ export interface ActivityStepProps {
     /** Localized aria label ("查看文件 x"), session-language like the row. */
     readonly ariaLabel: string;
   };
+  /**
+   * MULTIPLE click targets inside the body (ADR 0050 v1.5) — a finding
+   * row's cites (`claim — src/x.ts:12-30, src/y.ts:5`), each opening the
+   * viewer at its lines. First occurrence of each, in order; a target the
+   * body no longer carries degrades to plain text. Ignored when `file`
+   * (the single-target form) is set.
+   */
+  readonly links?: readonly FileLinkTarget[];
+  /** Click targets inside the DETAIL pane (the done-marker's
+   *  `↳ 改动文件:` list). Same contract as `links`. */
+  readonly detailLinks?: readonly FileLinkTarget[];
+}
+
+export interface FileLinkTarget {
+  /** The exact substring to make clickable. */
+  readonly text: string;
+  readonly onOpen: () => void;
+  readonly ariaLabel: string;
+}
+
+/** The body (or detail) with each link target wrapped as a click span —
+ *  the same `.file-open-name` affordance as the single-target form. */
+function textWithLinks(
+  text: string,
+  links: readonly FileLinkTarget[],
+): JSX.Element | string {
+  const segments = segmentByTargets(
+    text,
+    links.map((l) => l.text),
+  );
+  if (!segments.some((s) => s.kind === "target")) return text;
+  return (
+    <>
+      {segments.map((s, i) => {
+        if (s.kind === "text")
+          // biome-ignore lint/suspicious/noArrayIndexKey: segments are a stable split of one string
+          return <span key={i}>{s.text}</span>;
+        const link = links[s.index];
+        return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: segments are a stable split of one string
+          <Fragment key={i}>
+            {/* biome-ignore lint/a11y/useSemanticElements: rendered inside a <pre>; a span keeps the text flow intact. */}
+            <span
+              role="button"
+              tabIndex={0}
+              className="file-open-name"
+              aria-label={link?.ariaLabel}
+              onClick={(e) => {
+                e.stopPropagation();
+                link?.onOpen();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  link?.onOpen();
+                }
+              }}
+            >
+              {s.text}
+            </span>
+          </Fragment>
+        );
+      })}
+    </>
+  );
 }
 
 /**
@@ -240,9 +312,13 @@ export function ActivityStep(props: ActivityStepProps): JSX.Element {
               body={body}
               preClassName="activity-step__body"
               t={props.t}
-              {...(props.file !== undefined && props.stat === undefined
-                ? { bodyNode: bodyWithFileName(body, props.file) }
-                : {})}
+              {...(props.stat !== undefined
+                ? {}
+                : props.file !== undefined
+                  ? { bodyNode: bodyWithFileName(body, props.file) }
+                  : props.links !== undefined && props.links.length > 0
+                    ? { bodyNode: textWithLinks(body, props.links) }
+                    : {})}
               {...(props.stat !== undefined
                 ? {
                     headline: (
@@ -335,7 +411,11 @@ export function ActivityStep(props: ActivityStepProps): JSX.Element {
             className={`activity-step__fold${detailOpen ? " is-open" : ""}`}
           >
             {detailMounted && (
-              <pre className="activity-step__detail">{props.detail}</pre>
+              <pre className="activity-step__detail">
+                {props.detailLinks !== undefined && props.detailLinks.length > 0
+                  ? textWithLinks(props.detail ?? "", props.detailLinks)
+                  : props.detail}
+              </pre>
             )}
           </div>
         )}

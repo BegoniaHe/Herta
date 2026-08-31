@@ -324,6 +324,7 @@ export const zh = {
   "activity.attachment.removeFailed": "移除附件失败",
   "activity.file.openAria": "查看文件",
   "viewer.close": "关闭",
+  "viewer.closeTab": "关闭文件",
   "viewer.copyPath": "复制路径",
   "viewer.copied": "已复制",
   "viewer.openExternal": "用系统应用打开",

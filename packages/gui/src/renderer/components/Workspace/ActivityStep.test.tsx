@@ -100,6 +100,54 @@ describe("ActivityStep", () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
+  it("a finding row's cites each become their own target (ADR 0050 v1.5)", () => {
+    const openA = vi.fn();
+    const openB = vi.fn();
+    const { container } = renderWithLocale(
+      <ActivityStep
+        body="↳ 结论: the bug lives here — src/x.ts:12-30, src/y.ts:5"
+        t={tEn}
+        active={false}
+        links={[
+          { text: "src/x.ts:12-30", onOpen: openA, ariaLabel: "View src/x.ts" },
+          { text: "src/y.ts:5", onOpen: openB, ariaLabel: "View src/y.ts" },
+        ]}
+      />,
+    );
+    const spans = container.querySelectorAll(".file-open-name");
+    expect(spans.length).toBe(2);
+    fireEvent.click(spans[1] as Element);
+    expect(openB).toHaveBeenCalledTimes(1);
+    expect(openA).not.toHaveBeenCalled();
+  });
+
+  it("detailLinks make the 改动文件 paths in the detail pane clickable", () => {
+    const onOpen = vi.fn();
+    const { container } = renderWithLocale(
+      <ConversationPinProvider unpin={() => {}}>
+        <ActivityStep
+          body="detail"
+          t={tEn}
+          active={false}
+          detail={"↳ 改动文件: src/a.ts, src/b.ts"}
+          detailLinks={[
+            { text: "src/a.ts", onOpen, ariaLabel: "View src/a.ts" },
+            { text: "src/b.ts", onOpen: vi.fn(), ariaLabel: "View src/b.ts" },
+          ]}
+        />
+      </ConversationPinProvider>,
+    );
+    fireEvent.click(
+      container.querySelector(".activity-step__detail-toggle") as Element,
+    );
+    const spans = container.querySelectorAll(
+      ".activity-step__detail .file-open-name",
+    );
+    expect(spans.length).toBe(2);
+    fireEvent.click(spans[0] as Element);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
   it("a body that no longer carries the path degrades to plain text", () => {
     const { container } = renderWithLocale(
       <ActivityStep

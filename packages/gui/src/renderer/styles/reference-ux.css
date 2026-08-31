@@ -5063,17 +5063,63 @@ button.session-item__badge--dismiss {
   flex: none;
   min-width: 0;
 }
-.file-viewer__crumbs {
+/* The tab strip (ADR 0050 v1.5): bounded chips, active one raised on
+   glass; each chip's × closes that file, the header × closes the panel. */
+.file-viewer__tabs {
   flex: 1;
   min-width: 0;
+  display: flex;
+  gap: 4px;
+  overflow: hidden;
+}
+.file-viewer__tab {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 180px;
+  border-radius: 8px;
+  padding: 0 2px 0 0;
+  transition: background-color 140ms ease;
+}
+.file-viewer__tab.is-active {
+  background: var(--glass-a78);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.file-viewer__tab:not(.is-active):hover { background: var(--ink-a13); }
+.file-viewer__tab-name {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 4px 2px 4px 9px;
   font-size: 12px;
   color: var(--muted-slate);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
 }
-.file-viewer__crumb-sep { margin: 0 3px; opacity: 0.6; }
-.file-viewer__name { color: var(--slate-deep); font-weight: 600; }
+.file-viewer__tab.is-active .file-viewer__tab-name {
+  color: var(--slate-deep);
+  font-weight: 600;
+}
+.file-viewer__tab-x {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted-slate);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 140ms ease, background-color 140ms ease;
+}
+.file-viewer__tab:hover .file-viewer__tab-x,
+.file-viewer__tab.is-active .file-viewer__tab-x,
+.file-viewer__tab-x:focus-visible { opacity: 1; }
+.file-viewer__tab-x:hover { background: var(--ink-a13); color: var(--slate-deep); }
 .file-viewer__actions { display: flex; gap: 2px; flex: none; }
 .file-viewer__action {
   display: grid;
@@ -5098,7 +5144,6 @@ button.session-item__badge--dismiss {
 .file-viewer__code {
   flex: 1;
   min-height: 0;
-  display: flex;
   overflow: auto;
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 12px;
@@ -5126,6 +5171,25 @@ button.session-item__badge--dismiss {
 .file-viewer__code::-webkit-scrollbar-thumb:hover {
   background: var(--ink-a22);
   background-clip: padding-box;
+}
+/* The scroll content: gutter + text side by side over one relative box so
+   the cite-anchor band (absolute, full row width) can sit behind both.
+   width:max-content + min-width:100% keeps the band covering the full
+   scrollable row even when long lines scroll horizontally. */
+.file-viewer__code-inner {
+  position: relative;
+  display: flex;
+  width: max-content;
+  min-width: 100%;
+}
+/* Cite anchor (ADR 0050 v1.5): the cited lines' highlight band. */
+.file-viewer__anchor {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: rgba(37, 99, 235, 0.10);
+  border-left: 2px solid var(--accent-blue);
+  pointer-events: none;
 }
 .file-viewer__gutter {
   margin: 0;

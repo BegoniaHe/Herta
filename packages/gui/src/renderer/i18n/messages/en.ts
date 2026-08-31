@@ -337,6 +337,7 @@ export const en = {
   "activity.attachment.removeFailed": "Removing the attachment failed",
   "activity.file.openAria": "View file",
   "viewer.close": "Close",
+  "viewer.closeTab": "Close file",
   "viewer.copyPath": "Copy path",
   "viewer.copied": "Copied",
   "viewer.openExternal": "Open in default app",

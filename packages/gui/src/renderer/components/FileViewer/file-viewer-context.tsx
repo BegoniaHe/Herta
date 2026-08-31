@@ -22,17 +22,40 @@ import { useSessionScoped } from "../../hooks/useSessionScoped.js";
  *   docked/overlay) for the FEW consumers that must re-render with it:
  *   the panel, the workspace-body shell, and the rail's WebGL gates.
  */
-/** What the panel is showing: the record-spelled path to read, plus an
- *  optional display LABEL — an attachment's real file name, where `path`
- *  is its stored copy under `.herta/attachments/` and would read as
- *  machine internals in the breadcrumb (owner 2026-08-31). */
+/** Line range a cite anchors to (ADR 0050 v1.5): the panel scrolls there
+ *  and highlights the band. 1-based, inclusive. */
+export interface ViewerAnchor {
+  readonly from: number;
+  readonly to: number;
+}
+
+/** One open file: the record-spelled path to read, plus an optional
+ *  display LABEL — an attachment's real file name, where `path` is its
+ *  stored copy under `.herta/attachments/` and would read as machine
+ *  internals in the tab (owner 2026-08-31) — and an optional line anchor
+ *  from a finding cite. */
 export interface FileViewerTarget {
   readonly path: string;
   readonly label?: string;
+  readonly anchor?: ViewerAnchor;
 }
 
+/** Options the opener takes beside the path. */
+export interface OpenFileOpts {
+  readonly label?: string;
+  readonly anchor?: ViewerAnchor;
+}
+
+/** Tab cap (ADR 0050 v1.5): opening past it evicts the oldest inactive
+ *  tab — a strip that scrolls is worse than a bounded one. */
+export const MAX_VIEWER_TABS = 6;
+
 export interface FileViewerState {
-  /** The open file, or null when closed. */
+  /** Open files, in open order. Empty = panel closed. */
+  readonly tabs: readonly FileViewerTarget[];
+  /** Index of the shown tab; 0 when none. */
+  readonly active: number;
+  /** The shown tab, or null when closed. */
   readonly target: FileViewerTarget | null;
   /** Panel width in px (docked track / overlay sheet alike). */
   readonly widthPx: number;
@@ -43,13 +66,18 @@ export interface FileViewerState {
   readonly docked: boolean;
   /** Open in any mode. */
   readonly open: boolean;
+  /** Close the whole panel (all tabs). */
   readonly close: () => void;
+  /** Show an already-open tab. */
+  readonly activateTab: (index: number) => void;
+  /** Close one tab; closing the last closes the panel. */
+  readonly closeTab: (index: number) => void;
   readonly setWidthPx: (w: number) => void;
   readonly setBodyWidth: (w: number) => void;
 }
 
 const OpenContext = createContext<
-  ((path: string, label?: string) => void) | null
+  ((path: string, opts?: OpenFileOpts) => void) | null
 >(null);
 const StateContext = createContext<FileViewerState | null>(null);
 
@@ -57,7 +85,7 @@ const StateContext = createContext<FileViewerState | null>(null);
  *  method — the demo) or no provider is mounted (bare component tests).
  *  Rows render a plain, non-clickable name on null. */
 export function useFileViewerOpen():
-  | ((path: string, label?: string) => void)
+  | ((path: string, opts?: OpenFileOpts) => void)
   | null {
   return useContext(OpenContext);
 }
@@ -123,8 +151,12 @@ export function FileViewerProvider({
   // Session-scoped, deliberately (the transient-state audit class): a file
   // belongs to the session whose record named it — a switch, delete, or
   // disconnect closes the panel rather than pointing it at another
-  // session's workspace.
-  const [target, setTarget] = useSessionScoped<FileViewerTarget | null>(null);
+  // session's workspace. Tabs + active index travel as ONE value so a
+  // session boundary can never strand an index into another session's list.
+  const [tabState, setTabState] = useSessionScoped<{
+    readonly tabs: readonly FileViewerTarget[];
+    readonly active: number;
+  }>({ tabs: [], active: 0 });
   const [widthPx, setWidthState] = useState<number>(
     () => readStoredWidth() ?? 0,
   );
@@ -138,11 +170,62 @@ export function FileViewerProvider({
   const available = bridge.readWorkspaceFile !== undefined;
 
   const openRef = useCallback(
-    (path: string, label?: string) =>
-      setTarget(label !== undefined ? { path, label } : { path }),
-    [setTarget],
+    (path: string, opts?: OpenFileOpts) => {
+      const next: FileViewerTarget = {
+        path,
+        ...(opts?.label !== undefined ? { label: opts.label } : {}),
+        ...(opts?.anchor !== undefined ? { anchor: opts.anchor } : {}),
+      };
+      setTabState((s) => {
+        const existing = s.tabs.findIndex((t) => t.path === path);
+        if (existing >= 0) {
+          // Same file: refresh its target (a new cite re-anchors it) and
+          // bring it forward.
+          const tabs = s.tabs.map((t, i) => (i === existing ? next : t));
+          return { tabs, active: existing };
+        }
+        let tabs = [...s.tabs, next];
+        let active = tabs.length - 1;
+        if (tabs.length > MAX_VIEWER_TABS) {
+          // Evict the OLDEST tab (index 0 — never the one just opened).
+          tabs = tabs.slice(1);
+          active -= 1;
+        }
+        return { tabs, active };
+      });
+    },
+    [setTabState],
   );
-  const close = useCallback(() => setTarget(null), [setTarget]);
+  const close = useCallback(
+    () => setTabState({ tabs: [], active: 0 }),
+    [setTabState],
+  );
+  const activateTab = useCallback(
+    (index: number) =>
+      // Guard shape mirrors closeTab below — also keeps the comparison out
+      // of the `>text<` window the no-hardcoded-english scanner reads as a
+      // JSX text node.
+      setTabState((s) =>
+        index < 0 || index >= s.tabs.length ? s : { ...s, active: index },
+      ),
+    [setTabState],
+  );
+  const closeTab = useCallback(
+    (index: number) =>
+      setTabState((s) => {
+        if (index < 0 || index >= s.tabs.length) return s;
+        const tabs = s.tabs.filter((_, i) => i !== index);
+        const active =
+          tabs.length === 0
+            ? 0
+            : Math.min(
+                s.active > index ? s.active - 1 : s.active,
+                tabs.length - 1,
+              );
+        return { tabs, active };
+      }),
+    [setTabState],
+  );
   const setWidthPx = useCallback((w: number) => {
     setWidthState(w);
     try {
@@ -152,7 +235,9 @@ export function FileViewerProvider({
     }
   }, []);
 
-  const open = target !== null;
+  const { tabs, active } = tabState;
+  const target = tabs[active] ?? null;
+  const open = tabs.length > 0;
   // Width resolves lazily against the measured body: stored value if sane,
   // else the 40% default — re-clamped every render so a window resize or
   // sidebar toggle can never leave a stale overwide panel.
@@ -167,16 +252,32 @@ export function FileViewerProvider({
 
   const state = useMemo<FileViewerState>(
     () => ({
+      tabs,
+      active,
       target,
       widthPx: effectiveWidth,
       bodyWidth,
       docked,
       open,
       close,
+      activateTab,
+      closeTab,
       setWidthPx,
       setBodyWidth,
     }),
-    [target, effectiveWidth, bodyWidth, docked, open, close, setWidthPx],
+    [
+      tabs,
+      active,
+      target,
+      effectiveWidth,
+      bodyWidth,
+      docked,
+      open,
+      close,
+      activateTab,
+      closeTab,
+      setWidthPx,
+    ],
   );
 
   return (

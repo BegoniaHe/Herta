@@ -1,4 +1,4 @@
-import type { RiskLevel } from "../permission-engine.js";
+import type { CommandConsequence, RiskLevel } from "../permission-engine.js";
 
 /**
  * Ephemeral user-only UI state for in-flight approval prompts. Per D7,
@@ -29,6 +29,9 @@ export interface PendingPermissionApproval {
    *  label ("另含：结束进程"), so a line labelled by its highest-risk
    *  segment does not hide what the rest of it does. */
   readonly codes?: readonly string[];
+  /** request.consequence — one-sentence consequence note (ADR 0049 §5),
+   *  localized by the GUI. Display-only; absent for most asks. */
+  readonly consequence?: CommandConsequence;
   /** run_command / bash: the command as it will run (argv joined, or the
    *  shell string verbatim). Undefined for other tools. */
   readonly command?: string;

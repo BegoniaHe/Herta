@@ -2909,6 +2909,11 @@ button.agent-preview:active {
 /* The other ask classes of a chained shell line (2026-08-17) — a dim line
    under the top label, same register as the project-rule note below. */
 .approval-panel__also { margin: 0; font-size: 12px; color: var(--muted-slate); }
+/* Consequence note (ADR 0049 §5): what this command does to work that cannot
+   be recovered. One quiet warning line — informational, the tier enforces.
+   Same amber register as the armed-switch warning badge. */
+.approval-panel__consequence { margin: 0; font-size: 12px; color: #b45309; }
+:root[data-theme="dark"] .approval-panel__consequence { color: #ffc46b; }
 .approval-panel__command {
   margin: 0;
   padding: 8px 10px;

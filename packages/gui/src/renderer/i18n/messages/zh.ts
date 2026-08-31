@@ -178,6 +178,18 @@ export const zh = {
   "approval.reason.commandUnresolved": "这条命令有未解析部分",
   // A chained line with more than one ask class: the other classes, named.
   "approval.alsoClasses": "另含：{list}",
+  // Consequence notes (ADR 0049 §5) — one sentence on what the command will
+  // do to work that cannot be recovered. Display-only; the tier enforces.
+  "approval.consequence.discardsUncommitted":
+    "注意：会丢弃未提交的改动，无法找回。",
+  "approval.consequence.deletesUntracked":
+    "注意：会删除未跟踪的文件，无法找回。",
+  "approval.consequence.deletesStash":
+    "注意：会删除 stash 里的工作，无法找回。",
+  "approval.consequence.rewritesLocalHistory": "注意：会改写本地提交历史。",
+  "approval.consequence.rewritesRemoteHistory": "注意：会覆盖远端分支的历史。",
+  "approval.consequence.concludesInProgressOperation":
+    "注意：仓库正在合并/变基中途，这一步会把它收尾。",
   "app.fanNotice":
     "黑塔是《崩坏：星穹铁道》的角色，版权归米哈游所有。本项目为非官方同人作品，与米哈游无关，亦未获其认可。",
   "approval.diffShowAria": "展开差分：{n} 行改动，新增 {add} 行，删除 {del} 行",

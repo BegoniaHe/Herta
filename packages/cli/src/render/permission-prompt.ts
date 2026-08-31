@@ -1,6 +1,23 @@
 import type { Readable } from "node:stream";
-import type { AskResolver, PermissionRequest } from "@herta/core";
+import type {
+  AskResolver,
+  CommandConsequence,
+  PermissionRequest,
+} from "@herta/core";
 import type { Style } from "./style.js";
+
+/** One-line consequence copy (ADR 0049 §5) — the CLI prompt's register is
+ *  terse machine-English (`risk: workspace_destructive`), so the note stays
+ *  in it too. Display-only; the tier already enforced. */
+const CONSEQUENCE_NOTE: Record<CommandConsequence, string> = {
+  discards_uncommitted: "discards uncommitted changes (unrecoverable)",
+  deletes_untracked: "deletes untracked files (unrecoverable)",
+  deletes_stash: "deletes stashed work (unrecoverable)",
+  rewrites_local_history: "rewrites local commit history",
+  rewrites_remote_history: "overwrites the remote branch's history",
+  concludes_in_progress_operation:
+    "a merge/rebase is mid-flight — this step concludes it",
+};
 
 type StdinLike = Readable & {
   setRawMode?: (mode: boolean) => unknown;
@@ -80,6 +97,11 @@ export class CliAskResolver implements AskResolver {
     // inline with prior output (N3 fix, 2026-05-23).
     this.stdout.write("\n");
     this.stdout.write(this.style.dim(`  risk: ${request.risk}\n`));
+    if (request.consequence !== undefined) {
+      this.stdout.write(
+        this.style.dim(`  note: ${CONSEQUENCE_NOTE[request.consequence]}\n`),
+      );
+    }
     // The minimal contract's `bash` (ADR 0040): the record's Running row shows
     // the header form (cd-prefix dropped, first line); the whole command is
     // what is being approved, so print it here — bounded, like the GUI's

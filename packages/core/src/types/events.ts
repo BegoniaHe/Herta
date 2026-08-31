@@ -1,5 +1,5 @@
 import type { AgentExecutionReport } from "../bridge/types.js";
-import type { RiskLevel } from "../permission-engine.js";
+import type { CommandConsequence, RiskLevel } from "../permission-engine.js";
 import type { AgentError } from "./errors.js";
 import type { TodoItem } from "./todo.js";
 import type { ToolCallRequest, ToolResult } from "./tool.js";
@@ -25,6 +25,9 @@ export interface PermissionRequest {
   /** Every distinct ask class of a chained shell line, `code` first; the
    *  approval surface names the ones beyond the top label. */
   codes?: readonly string[];
+  /** Consequence note code (ADR 0049 §5) — display-only; see
+   *  `CommandConsequence` in permission-engine. */
+  consequence?: CommandConsequence;
 }
 
 // Opaque in slice B; real shape lives in tools / dialogue specs.

@@ -6,7 +6,12 @@ import { useT } from "../../i18n/LocaleProvider.js";
 import { OVERLAY_Z, useModalOverlay } from "../../lib/overlay-stack.js";
 import { DiffBody } from "../Workspace/DiffBody.js";
 import { countHeredocs, foldHeredocs } from "./fold-heredocs.js";
-import { isDangerRisk, REASON_KEY, RISK_KEY } from "./risk-label.js";
+import {
+  CONSEQUENCE_KEY,
+  isDangerRisk,
+  REASON_KEY,
+  RISK_KEY,
+} from "./risk-label.js";
 
 /** Exit-animation duration; must match .approval-panel.is-out in reference-ux.css. */
 const EXIT_MS = 200;
@@ -295,6 +300,13 @@ export function ApprovalPanel(): JSX.Element | null {
       </div>
       <div id="approval-panel-desc" className="approval-panel__desc">
         <p className="approval-panel__summary">{summary}</p>
+        {shown.consequence !== undefined && (
+          // Consequence note (ADR 0049 §5): what this command will do to work
+          // that cannot be recovered — informational, the tier enforces.
+          <p className="approval-panel__consequence">
+            {t(CONSEQUENCE_KEY[shown.consequence])}
+          </p>
+        )}
         {alsoLabels.length > 0 && (
           <p className="approval-panel__also">
             {t("approval.alsoClasses", { list: alsoLabels.join("；") })}

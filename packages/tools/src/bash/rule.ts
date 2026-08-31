@@ -118,6 +118,9 @@ export function makeBashRule(deps: BashRuleDeps): PermissionRule {
           files: preview.files,
           ...(argv !== null ? { argv } : {}),
           ...(programs !== null && programs.length > 0 ? { programs } : {}),
+          ...(verdict.consequence !== undefined
+            ? { consequence: verdict.consequence }
+            : {}),
         };
       }
       return {
@@ -128,6 +131,9 @@ export function makeBashRule(deps: BashRuleDeps): PermissionRule {
         ...(codes !== undefined && codes.length > 1 ? { codes } : {}),
         ...(argv !== null ? { argv } : {}),
         ...(programs !== null && programs.length > 0 ? { programs } : {}),
+        ...(verdict.consequence !== undefined
+          ? { consequence: verdict.consequence }
+          : {}),
       };
     }
     // allow → realpath the reader operands of every segment (async guard).

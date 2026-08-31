@@ -198,6 +198,18 @@ export const en = {
     "This command leaves the workspace directory — later relative paths are unguarded",
   "approval.reason.commandUnresolved": "This command has unresolved parts",
   "approval.alsoClasses": "Also: {list}",
+  "approval.consequence.discardsUncommitted":
+    "Note: discards uncommitted changes — they cannot be recovered.",
+  "approval.consequence.deletesUntracked":
+    "Note: deletes untracked files — they cannot be recovered.",
+  "approval.consequence.deletesStash":
+    "Note: deletes stashed work — it cannot be recovered.",
+  "approval.consequence.rewritesLocalHistory":
+    "Note: rewrites local commit history.",
+  "approval.consequence.rewritesRemoteHistory":
+    "Note: overwrites the remote branch's history.",
+  "approval.consequence.concludesInProgressOperation":
+    "Note: a merge/rebase is mid-flight — this step concludes it.",
   "app.fanNotice":
     "Herta is a character from Honkai: Star Rail, © HoYoverse. Unofficial fan project, unaffiliated with and not endorsed by HoYoverse.",
   "approval.diffShowAria":

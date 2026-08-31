@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import type { RiskLevel } from "@herta/core";
 import { isCredentialPath } from "../credential-denylist.js";
+import { detectInProgressState, resolveGitDir } from "../git/repo-probe.js";
 import {
   classifyCommand,
   classifyShellBody,
@@ -356,12 +357,17 @@ export function classifyShellCommandDetailed(
   // The promoted code of each segment FIRST (highest risk leads), then any
   // other class raised inside a segment that `combine` did not promote.
   const codes = [...new Set([...asks.map((a) => a.code), ...segmentCodes])];
+  // Same preference as `combine`: the highest-risk segment's note, else any.
+  const consequence = asks.find(
+    (a) => a.consequence !== undefined,
+  )?.consequence;
   return {
     verdict: {
       kind: "ask",
       risk: top.risk,
       code: top.code,
       reason: reasons.join("; "),
+      ...(consequence !== undefined ? { consequence } : {}),
     },
     segments: classified,
     codes,
@@ -1110,6 +1116,12 @@ function classifySegment(
   const v = classifyCommand(argv, {
     shell: true,
     unresolved: hasLiveExpansion(seg),
+    // Lazy in-progress probe at the segment's effective cwd (ADR 0049 §5) —
+    // consulted only for commit-concluding git shapes.
+    repoInProgress: () => {
+      const gitDir = resolveGitDir(opts.cwd ?? opts.workspaceRoot);
+      return gitDir === null ? null : detectInProgressState(gitDir);
+    },
   });
   if (v.kind === "block") return { verdict: v };
   if (v.kind === "ask") asks.push(v);
@@ -1359,11 +1371,18 @@ function combine(asks: Array<Extract<Verdict, { kind: "ask" }>>): Verdict {
   if (asks.length === 0) return { kind: "allow" };
   asks.sort((a, b) => RISK_RANK[b.risk] - RISK_RANK[a.risk]);
   const top = asks[0] as Extract<Verdict, { kind: "ask" }>;
+  // Highest-risk ask's consequence preferred; any ask's as fallback — a note
+  // is information, and dropping it because a louder ask had none would be
+  // the same loss the `codes` channel exists to prevent.
+  const consequence = asks.find(
+    (a) => a.consequence !== undefined,
+  )?.consequence;
   return {
     kind: "ask",
     risk: top.risk,
     code: top.code,
     reason: [...new Set(asks.map((a) => a.reason))].join("; "),
+    ...(consequence !== undefined ? { consequence } : {}),
   };
 }
 

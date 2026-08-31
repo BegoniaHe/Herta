@@ -1,9 +1,22 @@
-import { type RiskLevel, SCRIPT_INTERPRETERS } from "@herta/core";
+import {
+  type CommandConsequence,
+  type RepoInProgressState,
+  type RiskLevel,
+  SCRIPT_INTERPRETERS,
+} from "@herta/core";
 import { isCredentialPath } from "../credential-denylist.js";
 
 export type Verdict =
   | { kind: "allow" }
-  | { kind: "ask"; risk: RiskLevel; reason: string; code: string }
+  | {
+      kind: "ask";
+      risk: RiskLevel;
+      reason: string;
+      code: string;
+      /** Consequence note for the card (ADR 0049 §5) — display-only, never
+       *  part of the tier decision. */
+      consequence?: CommandConsequence;
+    }
   | { kind: "block"; reason: string; code: "command_blocked" };
 
 const ROOT_PATHS = new Set(["/", "//", "/*"]);
@@ -878,7 +891,9 @@ function hasShortFlag(args: readonly string[], letter: string): boolean {
  * everyday `add`/`commit`/`merge`/`fetch`/`pull`/`mv`/`rm`/`checkout -b`,
  * so ADR 0030's `git commit:*` rules still derive exactly as before.
  */
-function destructiveGitShape(argv: readonly string[]): string | null {
+function destructiveGitShape(
+  argv: readonly string[],
+): { reason: string; consequence: CommandConsequence } | null {
   const at = gitSubcommandIndex(argv);
   if (at === null) return null;
   const sub = argv[at] as string;
@@ -902,7 +917,10 @@ function destructiveGitShape(argv: readonly string[]): string | null {
       (!creating &&
         (operands.length >= 2 || rest.some((a) => a === "." || a === "*")));
     if (pathMode) {
-      return `git ${sub} in path mode overwrites uncommitted changes in those paths`;
+      return {
+        reason: `git ${sub} in path mode overwrites uncommitted changes in those paths`,
+        consequence: "discards_uncommitted",
+      };
     }
     // A SINGLE operand stays ordinary, deliberately: `git checkout main` and
     // `git checkout main.ts` are the same string shape, and git itself decides
@@ -916,25 +934,44 @@ function destructiveGitShape(argv: readonly string[]): string | null {
   if (sub === "restore") {
     // `--staged` alone only unstages; anything else rewrites the worktree.
     const stagedOnly = has("--staged", "-S") && !has("--worktree", "-W");
-    if (!stagedOnly) return "git restore overwrites uncommitted changes";
+    if (!stagedOnly)
+      return {
+        reason: "git restore overwrites uncommitted changes",
+        consequence: "discards_uncommitted",
+      };
     return null;
   }
   if (sub === "stash" && (rest[0] === "drop" || rest[0] === "clear")) {
-    return `git stash ${rest[0]} deletes stashed work`;
+    return {
+      reason: `git stash ${rest[0]} deletes stashed work`,
+      consequence: "deletes_stash",
+    };
   }
 
   // ── rewrites history or a ref ──
   if (sub === "commit" && has("--amend")) {
-    return "git commit --amend rewrites the last commit";
+    return {
+      reason: "git commit --amend rewrites the last commit",
+      consequence: "rewrites_local_history",
+    };
   }
   if (sub === "rebase" && rest[0] !== "--abort" && rest[0] !== "--quit") {
-    return "git rebase rewrites history";
+    return {
+      reason: "git rebase rewrites history",
+      consequence: "rewrites_local_history",
+    };
   }
   if (sub === "push" && has("-f", "--force")) {
-    return "git push --force overwrites the remote branch";
+    return {
+      reason: "git push --force overwrites the remote branch",
+      consequence: "rewrites_remote_history",
+    };
   }
   if (sub === "push" && rest.some((a) => a.startsWith("--force-with-lease"))) {
-    return "git push --force-with-lease overwrites the remote branch";
+    return {
+      reason: "git push --force-with-lease overwrites the remote branch",
+      consequence: "rewrites_remote_history",
+    };
   }
   if (
     // NOT `--delete`/`-d`: that refuses an unmerged branch, and the 2026-08-25
@@ -945,7 +982,11 @@ function destructiveGitShape(argv: readonly string[]): string | null {
       hasShortFlag(rest, "M") ||
       hasShortFlag(rest, "f"))
   ) {
-    return "git branch -D/-M/-f force-deletes, force-renames or moves a branch";
+    return {
+      reason:
+        "git branch -D/-M/-f force-deletes, force-renames or moves a branch",
+      consequence: "rewrites_local_history",
+    };
   }
   if (
     sub === "tag" &&
@@ -953,18 +994,61 @@ function destructiveGitShape(argv: readonly string[]): string | null {
       hasShortFlag(rest, "d") ||
       hasShortFlag(rest, "f"))
   ) {
-    return "git tag -d/-f deletes or moves a tag";
+    return {
+      reason: "git tag -d/-f deletes or moves a tag",
+      consequence: "rewrites_local_history",
+    };
   }
   if (sub === "update-ref" && has("-d", "--delete")) {
-    return "git update-ref -d deletes a ref";
+    return {
+      reason: "git update-ref -d deletes a ref",
+      consequence: "rewrites_local_history",
+    };
   }
   if (sub === "reflog" && rest[0] === "expire") {
-    return "git reflog expire discards the recovery log";
+    return {
+      reason: "git reflog expire discards the recovery log",
+      consequence: "rewrites_local_history",
+    };
   }
   if (sub === "filter-branch" || sub === "filter-repo") {
-    return `git ${sub} rewrites the whole history`;
+    return {
+      reason: `git ${sub} rewrites the whole history`,
+      consequence: "rewrites_local_history",
+    };
   }
   return null;
+}
+
+/**
+ * A commit-concluding git shape while a merge/rebase/cherry-pick/revert is
+ * mid-flight CONCLUDES that operation — an ordinary-looking `git commit`
+ * card can close out the user's half-finished merge with the backend's
+ * edits inside (ADR 0049 §5). The probe is LAZY and supplied by the caller
+ * (only rules know the effective cwd); no caller, no note. Display-only.
+ */
+function concludesInProgressOperation(
+  argv: readonly string[],
+  opts: ClassifyCommandOpts | undefined,
+): boolean {
+  if (opts?.repoInProgress === undefined) return false;
+  const at = gitSubcommandIndex(argv);
+  if (at === null) return false;
+  const sub = argv[at];
+  const rest = argv.slice(at + 1);
+  const concluding =
+    sub === "commit" ||
+    ((sub === "merge" ||
+      sub === "rebase" ||
+      sub === "cherry-pick" ||
+      sub === "revert") &&
+      rest.includes("--continue"));
+  if (!concluding) return false;
+  try {
+    return opts.repoInProgress() !== null;
+  } catch {
+    return false;
+  }
 }
 
 /** How many interpreter layers the block scan will unwrap before it refuses
@@ -1252,6 +1336,12 @@ export interface ClassifyCommandOpts {
    *  has the raw text (`sed -n '$p'` expands nothing). Defaults to false, so
    *  `run_command`'s literal argv is never treated as expanding. */
   unresolved?: boolean;
+  /** LAZY probe for a repo operation mid-flight at the command's effective
+   *  cwd (ADR 0049 §5) — supplied by callers that know the cwd, called only
+   *  when the argv is a commit-concluding git shape, so non-git commands pay
+   *  nothing. Feeds the `concludes_in_progress_operation` consequence note;
+   *  absent → the note is simply never attached. */
+  repoInProgress?: () => RepoInProgressState | null;
 }
 
 export function classifyCommand(
@@ -1323,6 +1413,7 @@ export function classifyCommand(
       risk: "workspace_destructive",
       code: "command_ask_destructive",
       reason: "git reset --hard",
+      consequence: "discards_uncommitted",
     };
   }
   if (
@@ -1334,6 +1425,7 @@ export function classifyCommand(
       risk: "workspace_destructive",
       code: "command_ask_destructive",
       reason: "git clean -f deletes untracked files",
+      consequence: "deletes_untracked",
     };
   }
   if (id === "git") {
@@ -1343,7 +1435,8 @@ export function classifyCommand(
         kind: "ask",
         risk: "workspace_destructive",
         code: "command_ask_destructive",
-        reason: destructiveGit,
+        reason: destructiveGit.reason,
+        consequence: destructiveGit.consequence,
       };
     }
   }
@@ -1684,6 +1777,12 @@ export function classifyCommand(
       risk: "workspace_write",
       code: "command_ask_vcs",
       reason: `git ${argv[1]} changes the repository`,
+      // A plain `git commit` (or `--continue`) mid-merge/rebase concludes
+      // the user's half-finished operation — the card should say so
+      // (ADR 0049 §5; note only, the tier is unchanged).
+      ...(concludesInProgressOperation(argv, opts)
+        ? { consequence: "concludes_in_progress_operation" as const }
+        : {}),
     };
   }
   if (a0 === "grep" || a0 === "rg" || a0 === "ripgrep") {

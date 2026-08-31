@@ -46,6 +46,66 @@ function ctxFor(workspaceRoot: string) {
   };
 }
 
+describe("run_command permission rule — in-progress consequence (ADR 0049 §5)", () => {
+  it("a mid-merge `git commit` ask carries the note; a clean repo's does not", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const gitAvailable = (() => {
+      try {
+        return (
+          spawnSync("git", ["--version"], { stdio: "ignore" }).status === 0
+        );
+      } catch {
+        return false;
+      }
+    })();
+    if (!gitAvailable) return;
+    ws = await mkTmpWorkspace({});
+    const git = (...a: string[]) =>
+      spawnSync("git", a, { cwd: ws.root, encoding: "utf8" });
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "t@t");
+    git("config", "user.name", "T");
+    git("config", "commit.gpgsign", "false");
+    await writeFile(join(ws.root, "a.ts"), "base\n");
+    git("add", "-A");
+    git("commit", "-qm", "init");
+
+    const engine = new RulePermissionEngine({ ask: new FakeAskResolver() });
+    registerRunCommandRule(engine);
+    const commit = {
+      id: "1",
+      tool: "run_command",
+      input: { argv: ["git", "commit", "-m", "x"] },
+    };
+
+    // Clean repo: ordinary vcs ask, no note.
+    const calm = await engine.check(commit, ctxFor(ws.root));
+    expect(calm.kind).toBe("ask");
+    if (calm.kind === "ask") {
+      expect(calm.request.consequence).toBeUndefined();
+    }
+
+    // Manufacture a conflicted merge, mid-flight.
+    git("checkout", "-qb", "side");
+    await writeFile(join(ws.root, "a.ts"), "side\n");
+    git("add", "-A");
+    git("commit", "-qm", "side");
+    git("checkout", "-q", "main");
+    await writeFile(join(ws.root, "a.ts"), "main\n");
+    git("add", "-A");
+    git("commit", "-qm", "main");
+    expect(git("merge", "side").status).not.toBe(0);
+
+    const mid = await engine.check(commit, ctxFor(ws.root));
+    expect(mid.kind).toBe("ask");
+    if (mid.kind === "ask") {
+      expect(mid.request.consequence).toBe("concludes_in_progress_operation");
+      // Note only — the class is unchanged.
+      expect(mid.request.code).toBe("command_ask_vcs");
+    }
+  });
+});
+
 describe("run_command permission rule", () => {
   it("allows allow-list commands", async () => {
     ws = await mkTmpWorkspace({});

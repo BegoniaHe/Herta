@@ -8,6 +8,22 @@ export type RiskLevel =
   | "workspace_destructive"
   | "network";
 
+/**
+ * What a command will do to work the harness cannot get back (ADR 0049 §5)
+ * — a neutral machine code (D2) the display surfaces map to one localized
+ * sentence on the approval card. INFORMATIONAL ONLY: never consulted by
+ * verdicts, the approval cache, or rule derivation (the CC
+ * destructive-command-warning pattern — the note explains, the tier
+ * enforces).
+ */
+export type CommandConsequence =
+  | "discards_uncommitted"
+  | "deletes_untracked"
+  | "deletes_stash"
+  | "rewrites_local_history"
+  | "rewrites_remote_history"
+  | "concludes_in_progress_operation";
+
 export type RuleVerdict =
   | { kind: "allow" }
   | {
@@ -40,6 +56,9 @@ export type RuleVerdict =
        *  names the rest — `kill 574; curl localhost` is "network" AND
        *  "ends processes". Absent or length 1 → nothing extra to say. */
       codes?: readonly string[];
+      /** One-sentence consequence note for the card (ADR 0049 §5); see
+       *  {@link CommandConsequence}. Display-only, absent for most asks. */
+      consequence?: CommandConsequence;
     }
   | {
       kind: "deny";
@@ -154,6 +173,9 @@ export class RulePermissionEngine implements PermissionEngine {
       ...(verdict.argv !== undefined ? { argv: verdict.argv } : {}),
       ...(verdict.programs !== undefined ? { programs: verdict.programs } : {}),
       ...(verdict.codes !== undefined ? { codes: verdict.codes } : {}),
+      ...(verdict.consequence !== undefined
+        ? { consequence: verdict.consequence }
+        : {}),
     };
     const decision = this.ask.present(request, ctx.signal);
     return { kind: "ask", request, decision };

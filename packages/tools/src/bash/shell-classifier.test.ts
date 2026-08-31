@@ -33,6 +33,23 @@ const ask = (cmd: string) => {
   return v;
 };
 
+describe("classifyShellCommand — consequence notes (ADR 0049 §5)", () => {
+  it("the note survives aggregation across a chained line", () => {
+    // A read-allow segment plus a destructive one: the promoted ask carries
+    // the destructive segment's consequence, not silence.
+    expect(ask("git status && git push --force origin main").consequence).toBe(
+      "rewrites_remote_history",
+    );
+    expect(ask("git reset --hard HEAD~1").consequence).toBe(
+      "discards_uncommitted",
+    );
+  });
+
+  it("an ordinary line carries none", () => {
+    expect(ask("git add -A && git commit -m x").consequence).toBeUndefined();
+  });
+});
+
 describe("classifyShellCommand — block tier (no override)", () => {
   it("blocks catastrophic commands anywhere in the line", () => {
     expect(kind("rm -rf /")).toBe("block");

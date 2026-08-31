@@ -856,6 +856,79 @@ describe("git shapes that discard work or rewrite history (2026-08-25)", () => {
     }
   });
 
+  it("each destructive git shape carries its consequence note (ADR 0049 §5)", () => {
+    const consequence = (argv: string[]) => {
+      const v = classifyCommand(argv);
+      return v.kind === "ask" ? v.consequence : v.kind;
+    };
+    expect(consequence(["git", "reset", "--hard"])).toBe(
+      "discards_uncommitted",
+    );
+    expect(consequence(["git", "checkout", "--", "."])).toBe(
+      "discards_uncommitted",
+    );
+    expect(consequence(["git", "restore", "."])).toBe("discards_uncommitted");
+    expect(consequence(["git", "clean", "-fdx"])).toBe("deletes_untracked");
+    expect(consequence(["git", "stash", "drop"])).toBe("deletes_stash");
+    expect(consequence(["git", "commit", "--amend", "-m", "x"])).toBe(
+      "rewrites_local_history",
+    );
+    expect(consequence(["git", "rebase", "-i", "HEAD~2"])).toBe(
+      "rewrites_local_history",
+    );
+    expect(consequence(["git", "push", "--force"])).toBe(
+      "rewrites_remote_history",
+    );
+    expect(
+      consequence(["git", "push", "--force-with-lease", "origin", "main"]),
+    ).toBe("rewrites_remote_history");
+    // Ordinary vcs asks carry none.
+    expect(consequence(["git", "add", "-A"])).toBeUndefined();
+    expect(consequence(["git", "push", "origin", "main"])).toBeUndefined();
+  });
+
+  it("a commit-concluding shape mid-merge carries the note; the tier is unchanged (ADR 0049 §5)", () => {
+    const midMerge = { repoInProgress: () => "merge" as const };
+    const clean = { repoInProgress: () => null };
+    for (const argv of [
+      ["git", "commit", "-m", "x"],
+      ["git", "merge", "--continue"],
+      ["git", "cherry-pick", "--continue"],
+      ["git", "revert", "--continue"],
+    ]) {
+      const v = classifyCommand(argv, midMerge);
+      expect(v.kind, argv.join(" ")).toBe("ask");
+      if (v.kind !== "ask") continue;
+      expect(v.consequence, argv.join(" ")).toBe(
+        "concludes_in_progress_operation",
+      );
+      // Note only — the class and risk stay exactly what they were.
+      expect(v.code, argv.join(" ")).toBe("command_ask_vcs");
+      expect(v.risk, argv.join(" ")).toBe("workspace_write");
+      const calm = classifyCommand(argv, clean);
+      expect(
+        calm.kind === "ask" ? calm.consequence : calm.kind,
+        argv.join(" "),
+      ).toBeUndefined();
+    }
+  });
+
+  it("the in-progress probe is LAZY — never consulted for non-concluding shapes", () => {
+    let called = 0;
+    const spy = {
+      repoInProgress: () => {
+        called += 1;
+        return "merge" as const;
+      },
+    };
+    classifyCommand(["npm", "test"], spy);
+    classifyCommand(["git", "status"], spy);
+    classifyCommand(["git", "add", "-A"], spy);
+    expect(called).toBe(0);
+    classifyCommand(["git", "commit", "-m", "x"], spy);
+    expect(called).toBe(1);
+  });
+
   it("`git clean` force is a BUNDLED short flag, not the exact token `-f`", () => {
     // Bare `-f` will not remove a directory, so the only spelling the exact
     // match caught was the one nobody types; `-fd` and `-fdx` classified as an

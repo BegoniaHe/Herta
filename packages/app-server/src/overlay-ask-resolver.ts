@@ -143,6 +143,9 @@ export class OverlayAskResolver implements AskResolver {
         ...(request.codes !== undefined && request.codes.length > 1
           ? { codes: request.codes }
           : {}),
+        ...(request.consequence !== undefined
+          ? { consequence: request.consequence }
+          : {}),
         command: extractCommand(request),
         diff: request.diff,
         files: request.files,

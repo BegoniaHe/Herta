@@ -76,6 +76,7 @@ export type {
 export { MEMORY_KINDS, NoopMemoryManager } from "./memory-manager.js";
 export type {
   AskResolver,
+  CommandConsequence,
   PermissionDecision,
   PermissionEngine,
   PermissionRule,

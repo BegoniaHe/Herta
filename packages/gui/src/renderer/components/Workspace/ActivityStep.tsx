@@ -5,6 +5,7 @@ import { CollapsibleBody } from "./CollapsibleBody.js";
 import { useUnpinConversation } from "./ConversationPin.js";
 import { DiffBody } from "./DiffBody.js";
 import { DiffStat, type DiffStatValue } from "./DiffStat.js";
+import { splitBodyAtPath } from "./file-name-target.js";
 import { StepIcon, type StepIconKey, stepIcon } from "./step-icon.js";
 
 export interface ActivityStepProps {
@@ -73,6 +74,60 @@ export interface ActivityStepProps {
    * their magnitude settled.
    */
   readonly at?: string;
+  /**
+   * Makes the file NAME inside the body a click target that opens the
+   * viewer panel (ADR 0050 §1) — the name only, never the row, and only
+   * when the caller (ActivityBlock) has both a path-shaped digest arg and
+   * an available viewer. The name is found by substring in the localized
+   * body; a miss degrades to plain text.
+   */
+  readonly file?: {
+    readonly path: string;
+    readonly onOpen: () => void;
+    /** Localized aria label ("查看文件 x"), session-language like the row. */
+    readonly ariaLabel: string;
+  };
+}
+
+/**
+ * The body with its file name as the click target — a span, not a link:
+ * ink text, dotted underline, glass pill on hover (owner 2026-08-31: "not
+ * the blue link style"). Inside a patch row this sits WITHIN the fold
+ * button, so activation stops propagation instead of also toggling the
+ * fold; role/tabIndex keep it a first-class keyboard stop either way.
+ */
+function bodyWithFileName(
+  body: string,
+  file: NonNullable<ActivityStepProps["file"]>,
+): JSX.Element | string {
+  const split = splitBodyAtPath(body, file.path);
+  if (split === null) return body;
+  const activate = (e: { stopPropagation: () => void }): void => {
+    e.stopPropagation();
+    file.onOpen();
+  };
+  return (
+    <>
+      {split.before}
+      {/* biome-ignore lint/a11y/useSemanticElements: a real <button> cannot nest inside the patch row's fold <button>; the span keeps valid DOM in both branches. */}
+      <span
+        role="button"
+        tabIndex={0}
+        className="file-open-name"
+        aria-label={file.ariaLabel}
+        onClick={activate}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            activate(e);
+          }
+        }}
+      >
+        {split.name}
+      </span>
+      {split.after}
+    </>
+  );
 }
 
 /**
@@ -150,7 +205,11 @@ export function ActivityStep(props: ActivityStepProps): JSX.Element {
               setPatchOpen((v) => !v);
             }}
           >
-            <span className="activity-step__body">{body}</span>
+            <span className="activity-step__body">
+              {props.file !== undefined
+                ? bodyWithFileName(body, props.file)
+                : body}
+            </span>
             <DiffStat
               value={patch.stat}
               {...(props.at !== undefined ? { at: props.at } : {})}
@@ -176,6 +235,9 @@ export function ActivityStep(props: ActivityStepProps): JSX.Element {
               body={body}
               preClassName="activity-step__body"
               t={props.t}
+              {...(props.file !== undefined && props.stat === undefined
+                ? { bodyNode: bodyWithFileName(body, props.file) }
+                : {})}
               {...(props.stat !== undefined
                 ? {
                     headline: (

@@ -25,6 +25,8 @@ export const CMD = {
   removeAttachment: "session:removeAttachment",
   stageImages: "session:stageImages",
   unstageImage: "session:unstageImage",
+  readWorkspaceFile: "session:readWorkspaceFile",
+  openWorkspaceFile: "session:openWorkspaceFile",
   getDreamConfig: "settings:getDreamConfig",
   setDreamConfig: "settings:setDreamConfig",
   getBackendConfig: "settings:getBackendConfig",

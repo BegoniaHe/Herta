@@ -15,6 +15,7 @@ import {
 } from "../../hooks/useSessionSelector.js";
 import type { MessageKey } from "../../i18n/keys.js";
 import { useT } from "../../i18n/LocaleProvider.js";
+import { useRailParked } from "../FileViewer/file-viewer-context.js";
 import { CardMenu } from "./CardMenu.js";
 import { DeviceGlow } from "./DeviceGlow.js";
 import { useDragToLift } from "./useDragToLift.js";
@@ -50,7 +51,10 @@ export function DeviceCard(): JSX.Element {
   const { bridge } = useHertaBridge();
   // While disconnected the rail is off-screen but mounted — same gate the
   // aura uses to keep its shader loop from rendering over the connect screen.
+  // The docked file viewer parks the rail the same way (ADR 0050 §4), so
+  // the glow loop stops for as long as the panel stays open.
   const disconnected = useDisconnected();
+  const railParked = useRailParked();
   // Easter egg: a successful upward lift may play a voice clip. The active
   // session owns the 50% roll + per-session hourly throttle (fire-and-forget).
   const { onMouseDown, transform, shadowStyle } = useDragToLift({
@@ -170,7 +174,7 @@ export function DeviceCard(): JSX.Element {
             alt=""
             aria-hidden="true"
           />
-          <DeviceGlow state={state} paused={disconnected} />
+          <DeviceGlow state={state} paused={disconnected || railParked} />
         </div>
       </button>
     </section>

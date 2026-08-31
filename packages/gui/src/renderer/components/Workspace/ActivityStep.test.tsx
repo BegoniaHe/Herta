@@ -59,6 +59,59 @@ describe("ActivityStep", () => {
     );
   });
 
+  it("the file NAME — not the row — becomes the viewer's click target (ADR 0050)", () => {
+    const onOpen = vi.fn();
+    const { container } = renderWithLocale(
+      <ActivityStep
+        body="Writing src/a.ts"
+        t={tEn}
+        active={false}
+        file={{ path: "src/a.ts", onOpen, ariaLabel: "View file src/a.ts" }}
+      />,
+    );
+    const name = container.querySelector(".file-open-name");
+    expect(name?.textContent).toBe("src/a.ts");
+    // The verb stays outside the control.
+    expect(container.querySelector(".activity-step__body")?.textContent).toBe(
+      "Writing src/a.ts",
+    );
+    fireEvent.click(name as Element);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("a body that no longer carries the path degrades to plain text", () => {
+    const { container } = renderWithLocale(
+      <ActivityStep
+        body="Writing something else entirely"
+        t={tEn}
+        active={false}
+        file={{ path: "src/a.ts", onOpen: vi.fn(), ariaLabel: "View file" }}
+      />,
+    );
+    expect(container.querySelector(".file-open-name")).toBeNull();
+  });
+
+  it("inside a patch row, clicking the name opens the viewer WITHOUT toggling the fold", () => {
+    const onOpen = vi.fn();
+    const { container } = renderWithLocale(
+      <ConversationPinProvider unpin={() => {}}>
+        <ActivityStep
+          body="已编辑 src/a.ts"
+          t={tEn}
+          active={false}
+          patch={{ stat: { add: 2, del: 0 }, diff: "-a\n+b" }}
+          file={{ path: "src/a.ts", onOpen, ariaLabel: "View file src/a.ts" }}
+        />
+      </ConversationPinProvider>,
+    );
+    const head = container.querySelector(".activity-step__fold-head");
+    expect(head?.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(container.querySelector(".file-open-name") as Element);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    // stopPropagation held: the fold did not open on the name click.
+    expect(head?.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("marks failure rows with is-failure and the ✗ icon (2026-07-23)", () => {
     const { container } = renderWithLocale(
       <ActivityStep

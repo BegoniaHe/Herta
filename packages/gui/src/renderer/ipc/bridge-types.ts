@@ -188,6 +188,31 @@ export interface StagedImageInfo {
   readonly height?: number;
 }
 
+/**
+ * Reply from `readWorkspaceFile` (ADR 0050 §2): the viewer panel's one
+ * bounded, workspace-jailed read. `truncated` means `content` is a prefix
+ * of a file whose whole size is `size` — the panel says so and offers 打开.
+ */
+export type ReadWorkspaceFileReply =
+  | {
+      readonly ok: true;
+      readonly content: string;
+      readonly truncated: boolean;
+      readonly size: number;
+      /** Workspace-relative, forward slashes — the breadcrumb's text. */
+      readonly relative: string;
+    }
+  | {
+      readonly ok: false;
+      readonly reason:
+        | "not_found"
+        | "not_a_file"
+        | "outside_workspace"
+        | "binary"
+        | "unreadable"
+        | "no_session";
+    };
+
 /** Reply from `stageImages`. Per-file refusals ride `rejected` so one bad
  *  item never discards its siblings; only whole-action failures use `ok:
  *  false` with a message, like every other command here. */
@@ -330,6 +355,16 @@ export interface HertaBridge {
   ): Promise<StageImagesReply>;
   /** Drop a staged picture and delete its stored copy. */
   unstageImage(sessionId: string, id: string): Promise<boolean>;
+  /** The file-viewer panel's read (ADR 0050): bounded, jailed to the
+   *  session's effective workspace. OPTIONAL so existing bridge fakes keep
+   *  compiling — the file names simply aren't clickable without it. */
+  readWorkspaceFile?(
+    sessionId: string,
+    path: string,
+  ): Promise<ReadWorkspaceFileReply>;
+  /** The viewer's 打开 button: open the jailed path with the OS default
+   *  application (shell.openPath). False when refused/missing. */
+  openWorkspaceFile?(sessionId: string, path: string): Promise<boolean>;
   /** The real filesystem path of a dropped `File`. Electron 43 removed
    *  `File.path`, so only the preload can answer this — the renderer never
    *  holds a File beyond the drop handler. */

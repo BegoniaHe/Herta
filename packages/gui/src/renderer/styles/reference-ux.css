@@ -599,15 +599,35 @@ body:after{
 .workspace-body{
   min-height:0;
   display:grid;
-  grid-template-columns:minmax(560px,1fr) 338px;
+  /* THREE tracks since ADR 0050: conversation | rail | file viewer. The
+     viewer track rests at 0 and the old 24px column gap moved onto the
+     conversation's margin-right (gap:0 below) — an explicit gap beside a
+     0-width third track would shove the rail 24px off its resting spot.
+     The conversation minimum is 584 = the 560px content floor + its own
+     24px margin, so the CONTENT floor is unchanged. Same-count templates
+     interpolate, which is what the open/close slide rides. */
+  grid-template-columns:minmax(584px,1fr) 338px 0px;
   /* Explicit definite row: without it the implicit auto row is sized by the
      utility rail's fixed card stack (~680px), .workspace{height:100%} can't
      resolve, and the footer + approval panel overflow past the .app clip on
      short viewports (the rail cards flex-shrink gracefully instead). */
   grid-template-rows:minmax(0,1fr);
-  gap:24px;
+  gap:0;
   padding:0 24px 26px 28px;
+  /* The overlay-mode sheet anchors here (ADR 0050 thresholds). */
+  position:relative;
 }
+/* Mode A — the rail yields (ADR 0050, owner-picked): the rail track
+   collapses while the viewer track opens to the dragged width; the same
+   track interpolation the disconnect slide already animates. */
+.workspace-body.viewer-docked{
+  grid-template-columns:minmax(584px,1fr) 0px var(--viewer-w,480px);
+}
+/* Divider drag: every frame writes --viewer-w; an eased track would lag
+   the pointer, so the drag suppresses the slide transitions. */
+.workspace-body.is-resizing,
+.workspace-body.is-resizing .workspace,
+.workspace-body.is-resizing .utility-rail{transition:none}
 .conversation{position:relative;min-height:0;padding:4px 10px var(--approval-reserve,0px) 0;overflow-y:auto;overflow-x:hidden;overflow-anchor:none}
 /* --approval-reserve (2026-07-27): the approval panel is absolute at the
    footer's bottom and TALLER than the footer, so its top reaches over the
@@ -636,7 +656,15 @@ body:after{
    changes (100% width, auto margins collapse), so the sidebar-open layout
    is untouched. The approval panel is absolute inside the footer
    (left/right 0), so it inherits the same measure. */
-.workspace{--flow-measure:880px}
+.workspace{
+  --flow-measure:880px;
+  /* The old grid gap, as this item's own margin (ADR 0050 — see the
+     three-track note on .workspace-body). Transitioned because the
+     disconnect state zeroes it where it used to zero the gap. */
+  margin-right:24px;
+  min-width:0;
+  transition:margin-right var(--dur-morph) var(--ease-signature);
+}
 .workspace-footer{width:100%;max-width:var(--flow-measure);margin:0 auto}
 /* Turn headroom (2026-07-29): room reserved under the newest turn so a reply
    arrives into a region instead of crawling along the bottom edge. Sized
@@ -1004,8 +1032,8 @@ body:after{
 .app:has(.workspace.is-morphing) .device-card {
   backdrop-filter: none;
 }
-@media(max-width:1200px){.app{grid-template-columns:230px 1fr}.sidebar{--sidebar-content-w:176px}.workspace-body{grid-template-columns:1fr 300px;gap:18px;padding:18px}.assistant-turn{margin-left:0}.status-row{width:90%}.device-card{height:300px}.composer{height:104px}}
-@media(max-width:900px){.utility-rail{display:none}.workspace-body{grid-template-columns:1fr}.app{grid-template-columns:210px 1fr}.sidebar{--sidebar-content-w:156px}}
+@media(max-width:1200px){.app{grid-template-columns:230px 1fr}.sidebar{--sidebar-content-w:176px}.workspace-body{grid-template-columns:minmax(0,1fr) 300px 0px;gap:0;padding:18px}.workspace{margin-right:18px}.workspace-body.viewer-docked{grid-template-columns:minmax(0,1fr) 0px var(--viewer-w,420px)}.assistant-turn{margin-left:0}.status-row{width:90%}.device-card{height:300px}.composer{height:104px}}
+@media(max-width:900px){.utility-rail{display:none}.workspace-body{grid-template-columns:minmax(0,1fr) 0px 0px}.workspace{margin-right:0}.app{grid-template-columns:210px 1fr}.sidebar{--sidebar-content-w:156px}}
 /* Slice 3 additions — Conversation message rows and bubbles */
 .message-row {
   position: relative; /* anchor for the hover-reveal timestamp below the bubble */
@@ -4883,11 +4911,18 @@ button.session-item__badge--dismiss {
     gap var(--dur-morph) var(--ease-signature);
 }
 .app.is-disconnected .workspace-body {
-  grid-template-columns: minmax(0, 1fr) 0;
+  /* Three tracks since ADR 0050 — counts must match the base template or
+     the collapse JUMPS instead of interpolating. */
+  grid-template-columns: minmax(0, 1fr) 0 0;
   gap: 0;
   transition:
     grid-template-columns var(--dur-morph) var(--ease-signature) 400ms,
     gap var(--dur-morph) var(--ease-signature) 400ms;
+}
+/* The old gap-to-zero reclaim, now on the margin that replaced the gap. */
+.app.is-disconnected .workspace {
+  margin-right: 0;
+  transition: margin-right var(--dur-morph) var(--ease-signature) 400ms;
 }
 .utility-rail {
   transition:
@@ -4917,9 +4952,195 @@ button.session-item__badge--dismiss {
 }
 @media (prefers-reduced-motion: reduce) {
   .workspace-body,
-  .utility-rail {
+  .workspace,
+  .utility-rail,
+  .file-viewer {
     transition: none;
   }
+}
+
+/* ── File viewer (ADR 0050): the rail parks behind the docked panel ──────
+   The disconnect choreography, reused verbatim for viewer-open: content
+   translates right + fades 120ms behind the track slide (the owner's
+   stagger), and content-visibility flips once the fade lands so the parked
+   subtree stops costing layout/paint — the WebGL loops are gated in JS on
+   the same signal (useRailParked). Closing reverts to the base transition
+   list: contents lay out again instantly, before the slide-in, exactly
+   like reconnect. */
+.workspace-body.viewer-docked .utility-rail {
+  transform: translateX(130%);
+  opacity: 0;
+  pointer-events: none;
+  content-visibility: hidden;
+  transition-property: transform, opacity, content-visibility;
+  transition-duration: var(--dur-morph), 360ms, 0s;
+  transition-timing-function: var(--ease-signature), ease, linear;
+  transition-delay: 120ms, 120ms, 500ms;
+  transition-behavior: normal, normal, allow-discrete;
+}
+
+/* The panel itself: a glass card in the rail cards' family. No
+   backdrop-filter — it MOVES during the slide, and a moving blur
+   re-samples its backdrop every frame (the device-card morph lesson). */
+.file-viewer {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--glass-a72);
+  border-radius: 18px;
+  box-shadow:
+    0 12px 32px rgba(32, 45, 58, 0.045),
+    inset 0 1px 0 var(--glass-a72);
+  opacity: 0;
+  transition: opacity 360ms ease;
+}
+/* The panel takes programmatic focus on open (so Escape lands); the
+   focus is functional, not navigational — no ring. */
+.file-viewer:focus,
+.file-viewer:focus-visible {
+  outline: none;
+}
+.workspace-body.viewer-docked .file-viewer {
+  opacity: 1;
+  transition-delay: 180ms;
+}
+/* Threshold fallback (ADR 0050): the sheet floats over the right side —
+   nothing reflows, the rail stays live. */
+.workspace-body.viewer-overlay .file-viewer {
+  position: absolute;
+  top: 0;
+  bottom: 26px;
+  right: 24px;
+  width: min(var(--viewer-w, 420px), calc(100% - 160px));
+  z-index: 40;
+  opacity: 1;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.22);
+  animation: fileViewerSheetIn 280ms var(--ease-signature) both;
+}
+@keyframes fileViewerSheetIn {
+  from { transform: translateX(18px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-body.viewer-overlay .file-viewer { animation: none; }
+}
+
+.file-viewer__divider {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  cursor: col-resize;
+  z-index: 3;
+}
+.file-viewer__divider::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background-color 140ms ease;
+}
+.file-viewer__divider:hover::after { background: var(--ink-a22); }
+
+.file-viewer__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px 9px 16px;
+  border-bottom: 1px solid var(--hairline);
+  flex: none;
+  min-width: 0;
+}
+.file-viewer__crumbs {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted-slate);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-viewer__crumb-sep { margin: 0 3px; opacity: 0.6; }
+.file-viewer__name { color: var(--slate-deep); font-weight: 600; }
+.file-viewer__actions { display: flex; gap: 2px; flex: none; }
+.file-viewer__action {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-slate);
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.file-viewer__action:hover { background: var(--ink-a13); color: var(--slate-deep); }
+
+.file-viewer__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.file-viewer__code {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: auto;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.file-viewer__gutter {
+  margin: 0;
+  padding: 10px 8px 18px 14px;
+  text-align: right;
+  color: var(--muted-slate);
+  opacity: 0.55;
+  user-select: none;
+  flex: none;
+}
+.file-viewer__text {
+  margin: 0;
+  padding: 10px 18px 18px 10px;
+  white-space: pre;
+  color: var(--slate-deep);
+  flex: 1;
+}
+.file-viewer__notice {
+  margin: 0;
+  padding: 10px 16px 14px;
+  font-size: 12px;
+  color: var(--muted-slate);
+}
+
+/* ── The clickable file NAME in a record row (ADR 0050 §1) ────────────────
+   The name, not the row, and not a blue link: ink text with a faint dotted
+   underline; hover firms the underline and raises a soft glass pill. */
+.file-open-name {
+  cursor: pointer;
+  border-radius: 5px;
+  padding: 0 2px;
+  margin: 0 -2px;
+  text-decoration: underline dotted;
+  text-decoration-color: var(--ink-a22);
+  text-underline-offset: 3px;
+  transition: background-color 140ms ease, text-decoration-color 140ms ease;
+}
+.file-open-name:hover,
+.file-open-name:focus-visible {
+  background: var(--ink-a13);
+  text-decoration-color: var(--muted-slate);
+  outline: none;
 }
 
 /* ── Launch-disconnected: static (no connect transition) ──────────────────

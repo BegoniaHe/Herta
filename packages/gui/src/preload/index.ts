@@ -52,6 +52,10 @@ const bridge: HertaBridge = {
     ipcRenderer.invoke(CMD.stageImages, sessionId, inputs),
   unstageImage: (sessionId, id) =>
     ipcRenderer.invoke(CMD.unstageImage, sessionId, id),
+  readWorkspaceFile: (sessionId, path) =>
+    ipcRenderer.invoke(CMD.readWorkspaceFile, sessionId, path),
+  openWorkspaceFile: (sessionId, path) =>
+    ipcRenderer.invoke(CMD.openWorkspaceFile, sessionId, path),
   // Electron 43 removed `File.path`, and this preload is CJS + sandboxed
   // (main/index.ts:266 records why it must stay that way), so a dropped
   // file's real path is only reachable through webUtils here. The renderer

@@ -1,5 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
+import { FileViewerProvider } from "./components/FileViewer/file-viewer-context.js";
+import { WorkspaceBodyShell } from "./components/FileViewer/WorkspaceBodyShell.js";
 import { OpeningAscii } from "./components/Opening/OpeningAscii.js";
 import { KeyPrompt } from "./components/Settings/KeyPrompt.js";
 import { SettingsModal } from "./components/Settings/SettingsModal.js";
@@ -161,10 +163,12 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
         onCloseSearch={closeSearch}
         onOpenSettings={() => setSettingsOpen(true)}
       />
-      <div className="workspace-body">
-        <Workspace />
-        <UtilityRail />
-      </div>
+      <FileViewerProvider>
+        <WorkspaceBodyShell>
+          <Workspace />
+          <UtilityRail />
+        </WorkspaceBodyShell>
+      </FileViewerProvider>
       <SettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}

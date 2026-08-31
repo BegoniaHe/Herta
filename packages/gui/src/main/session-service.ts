@@ -22,6 +22,7 @@ import {
   type BrowserWindow,
   dialog,
   ipcMain,
+  shell,
   type WebContents,
 } from "electron";
 import { CMD, EVT } from "../preload/channels.js";
@@ -53,6 +54,10 @@ import {
   readDeepSeekKeyPlain,
   setDeepSeekKey,
 } from "./key-store.js";
+import {
+  readWorkspaceFileBounded,
+  resolveInsideWorkspace,
+} from "./read-workspace-file.js";
 import { resolveVoiceRoot } from "./voice-path.js";
 
 type Send = (channel: string, payload: unknown) => void;
@@ -748,6 +753,32 @@ export function createSessionService(
       if (s === null || s.sessionId !== sessionId) return false;
       return (await s.unstageImage?.(id)) ?? false;
     });
+    // The file-viewer panel (ADR 0050): a bounded read jailed to the
+    // session's EFFECTIVE backend workspace — the tree the record's file
+    // names actually live in. Session-bound like every other command.
+    handle(
+      CMD.readWorkspaceFile,
+      async (_e, sessionId: string, path: string) => {
+        const s = host?.activeSession ?? null;
+        if (s === null || s.sessionId !== sessionId) {
+          return { ok: false as const, reason: "no_session" as const };
+        }
+        return readWorkspaceFileBounded(s.backendWorkspace, path);
+      },
+    );
+    // The viewer's 打开: hand the jailed path to the OS default app. The
+    // same resolution as the read — an outside-resolving name never
+    // reaches shell.openPath.
+    handle(
+      CMD.openWorkspaceFile,
+      async (_e, sessionId: string, path: string) => {
+        const s = host?.activeSession ?? null;
+        if (s === null || s.sessionId !== sessionId) return false;
+        const r = await resolveInsideWorkspace(s.backendWorkspace, path);
+        if (r.kind !== "ok") return false;
+        return (await shell.openPath(r.abs)) === "";
+      },
+    );
     handle(
       CMD.removeAttachment,
       async (_e, sessionId: string, path: string) => {

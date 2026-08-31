@@ -22,6 +22,13 @@ export interface CollapsibleBodyProps {
    * body it always did.
    */
   readonly headline?: JSX.Element;
+  /**
+   * Replaces the WHOLE body with an element carrying the same text
+   * (ADR 0050: the file name inside it is a click target). Honored only on
+   * the plain no-diff path — a fenced-diff body keeps its summary/expander
+   * verbatim, and `headline` (which restructures the first line) wins.
+   */
+  readonly bodyNode?: JSX.Element | string;
 }
 
 /**
@@ -38,7 +45,13 @@ export function CollapsibleBody(props: CollapsibleBodyProps): JSX.Element {
 
   if (!summary.hasDiff || summary.diffLineCount <= threshold) {
     if (props.headline === undefined) {
-      return <pre className={props.preClassName}>{props.body}</pre>;
+      return (
+        <pre className={props.preClassName}>
+          {!summary.hasDiff && props.bodyNode !== undefined
+            ? props.bodyNode
+            : props.body}
+        </pre>
+      );
     }
     // Headline as an element, the rest of the body verbatim beneath it.
     const nl = props.body.indexOf("\n");

@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import { makeT } from "../../i18n/LocaleProvider.js";
+import { useFileViewerOpen } from "../FileViewer/file-viewer-context.js";
 import { ActivityStep } from "./ActivityStep.js";
 import { useUnpinConversation } from "./ConversationPin.js";
 import { DiffStat, type DiffStatValue } from "./DiffStat.js";
@@ -174,6 +175,10 @@ export const ActivityBlock = memo(function ActivityBlock(
 
   const reduced = useReducedMotion();
   const unpin = useUnpinConversation();
+  // Stable opener (or null when no viewer is available — the demo, bare
+  // tests): its identity never changes, so reading it here cannot
+  // invalidate the load-bearing record-identity memo (ADR 0050 §1).
+  const openFile = useFileViewerOpen();
   const [userToggled, setUserToggled] = useState<boolean | null>(null);
   // An all-attachment group is a USER act filed under the system chip (ADR
   // 0033): "which files did I just hand over" is the whole point of the row,
@@ -536,6 +541,16 @@ export const ActivityBlock = memo(function ActivityBlock(
             {rows.map((row, i) => {
               const b = row.block;
               const failed = b.digest?.kind === "tool-fail";
+              // The file NAME as a click target (ADR 0050 §1): op rows
+              // whose digest arg is the path — reads, writes, and the
+              // folded-patch edit rows all carry one.
+              const filePath =
+                openFile !== null &&
+                b.digest?.kind === "op" &&
+                (b.digest.verb === "Reading" || b.digest.verb === "Writing") &&
+                b.digest.arg.length > 0
+                  ? b.digest.arg
+                  : null;
               // A parallel batch (ADR 0025 slice 5) has several ops in
               // flight at once — shimmer the last `inFlightCount` op rows
               // together; the classic single-row shimmer otherwise.
@@ -591,6 +606,15 @@ export const ActivityBlock = memo(function ActivityBlock(
                     ? {
                         onRemove: onRemoveAttachment(b.digest.path),
                         removeLabel: t("activity.attachment.remove"),
+                      }
+                    : {})}
+                  {...(filePath !== null && openFile !== null
+                    ? {
+                        file: {
+                          path: filePath,
+                          onOpen: () => openFile(filePath),
+                          ariaLabel: `${t("activity.file.openAria")} ${filePath}`,
+                        },
                       }
                     : {})}
                 />

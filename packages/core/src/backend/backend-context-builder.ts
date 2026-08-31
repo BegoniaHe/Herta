@@ -431,6 +431,169 @@ edit_file / write_new_file；要跑的命令（node、npm test 等）直接给 a
 不要试 Unix 工具，也不要拼管道。`;
 }
 
+/** A repo operation the working tree is in the middle of (ADR 0049 §1). */
+export type RepoInProgressState =
+  | "merge"
+  | "rebase"
+  | "cherry-pick"
+  | "revert"
+  | "bisect";
+
+/** One uncommitted path with its porcelain XY status, for the snapshot. */
+export interface RepoContextDirtyFile {
+  /** Index (staged) status column, " " when unchanged. */
+  readonly x: string;
+  /** Worktree status column, " " when unchanged. */
+  readonly y: string;
+  readonly path: string;
+}
+
+/**
+ * What the repo looked like when the dispatch started (ADR 0049 §2) —
+ * the structured input the builder renders into the frame's repo-snapshot
+ * section. Produced by the git probe in `@herta/tools` (core cannot import
+ * tools); every field is best-effort and the whole snapshot is optional:
+ * no repo, no git, or a probe failure simply omits the section.
+ *
+ * This is PROMPT context, not record: the user's record gets real
+ * `git_status` blocks when git work happens. The section exists so the
+ * backend stops spending tool calls rediscovering facts the harness
+ * already held at brief start.
+ */
+export interface RepoContextSnapshot {
+  /** Current branch name, or null when detached / unknowable. */
+  readonly branch: string | null;
+  /** HEAD is not on any branch. */
+  readonly detached: boolean;
+  /** Short commit id of HEAD, or null on an unborn branch. */
+  readonly headShort: string | null;
+  /** The tracked upstream ref (e.g. "origin/main"), or null when unset. */
+  readonly upstream: string | null;
+  readonly ahead: number;
+  readonly behind: number;
+  /** The remote's default branch (from origin/HEAD), or null when unset. */
+  readonly defaultBranch: string | null;
+  /** An operation mid-flight (merge/rebase/…), or null when none. */
+  readonly inProgress: RepoInProgressState | null;
+  /** Paths with unmerged (conflict) status. Bounded by the producer. */
+  readonly conflicted: readonly string[];
+  /** Uncommitted paths (staged, unstaged, untracked). Bounded by the
+   *  producer; `dirtyTotal` keeps the true count. */
+  readonly dirty: readonly RepoContextDirtyFile[];
+  readonly dirtyTotal: number;
+  /** `git log --oneline` subjects, newest first, bounded by the producer. */
+  readonly recentSubjects: readonly string[];
+}
+
+/**
+ * Render the repo snapshot as one bounded prompt section (ADR 0049 §2).
+ * Exported for tests. The full-status pointer names the tool the CONTRACT
+ * actually mounts — `git_status` on standard, `git status` via bash on
+ * minimal — so the honest-truncation line never recommends a tool the
+ * model cannot call.
+ */
+export function renderRepoContext(
+  snapshot: RepoContextSnapshot,
+  lang: "zh" | "en",
+  contract: BackendContract,
+): string {
+  const zh = lang !== "en";
+  const statusPointer = zh
+    ? contract === "minimal"
+      ? "在 bash 里跑 git status 看全量"
+      : "全量用 git_status 查看"
+    : contract === "minimal"
+      ? "run git status in bash for the full set"
+      : "run git_status for the full set";
+
+  const lines: string[] = [
+    zh ? "# 仓库快照" : "# Repo snapshot",
+    zh
+      ? "（本次派活开始时采集；你开始改动后即过期，以工具的实时结果为准。）"
+      : "(taken when this dispatch started; stale once you start changing things — trust live tool output.)",
+  ];
+
+  // Branch line: detached and unborn are stated plainly rather than dressed
+  // up as a branch that isn't there.
+  if (snapshot.detached) {
+    const at = snapshot.headShort ?? "?";
+    lines.push(
+      zh ? `分支: 游离 HEAD @ ${at}` : `branch: detached HEAD @ ${at}`,
+    );
+  } else if (snapshot.branch !== null) {
+    const name = snapshot.branch;
+    if (snapshot.headShort === null) {
+      lines.push(
+        zh ? `分支: ${name}（尚无提交）` : `branch: ${name} (no commits yet)`,
+      );
+    } else if (snapshot.upstream !== null) {
+      const counts = zh
+        ? `（领先 ${snapshot.ahead}，落后 ${snapshot.behind}）`
+        : ` (ahead ${snapshot.ahead}, behind ${snapshot.behind})`;
+      lines.push(
+        zh
+          ? `分支: ${name} → ${snapshot.upstream}${counts}`
+          : `branch: ${name} → ${snapshot.upstream}${counts}`,
+      );
+    } else {
+      lines.push(
+        zh ? `分支: ${name}（无上游）` : `branch: ${name} (no upstream)`,
+      );
+    }
+  }
+  if (snapshot.defaultBranch !== null) {
+    lines.push(
+      zh
+        ? `默认分支: ${snapshot.defaultBranch}`
+        : `default branch: ${snapshot.defaultBranch}`,
+    );
+  }
+
+  if (snapshot.inProgress !== null) {
+    lines.push(
+      zh
+        ? `进行中的操作: ${snapshot.inProgress}`
+        : `operation in progress: ${snapshot.inProgress}`,
+    );
+    if (snapshot.conflicted.length > 0) {
+      const shown = snapshot.conflicted.join(zh ? "、" : ", ");
+      lines.push(
+        zh
+          ? `冲突文件 ${snapshot.conflicted.length} 个: ${shown}`
+          : `conflicted (${snapshot.conflicted.length}): ${shown}`,
+      );
+    }
+  }
+
+  if (snapshot.dirtyTotal === 0) {
+    lines.push(zh ? "未提交改动: 无" : "uncommitted changes: none");
+  } else {
+    lines.push(
+      zh
+        ? `未提交改动 ${snapshot.dirtyTotal} 项:`
+        : `uncommitted changes (${snapshot.dirtyTotal}):`,
+    );
+    for (const f of snapshot.dirty) {
+      lines.push(`${f.x}${f.y} ${f.path}`);
+    }
+    const omitted = snapshot.dirtyTotal - snapshot.dirty.length;
+    if (omitted > 0) {
+      lines.push(
+        zh
+          ? `（另有 ${omitted} 项未列出；${statusPointer}）`
+          : `(${omitted} more not listed; ${statusPointer})`,
+      );
+    }
+  }
+
+  if (snapshot.recentSubjects.length > 0) {
+    lines.push(zh ? "最近提交:" : "recent commits:");
+    for (const s of snapshot.recentSubjects) lines.push(`  ${s}`);
+  }
+
+  return lines.join("\n");
+}
+
 export interface BackendContextBuilderDeps {
   tools: ToolRegistry;
   /** Defaults to "standard". */
@@ -474,6 +637,10 @@ export interface BackendBuildInput {
    *  "zh" keeps it Chinese, byte-identical to before. Only the backend's
    *  instructions localize — the received task content is verbatim either way. */
   lang?: "zh" | "en";
+  /** The repo snapshot taken at brief start (ADR 0049 §2), rendered as one
+   *  bounded section after the contract. Absent → section omitted, frame
+   *  byte-identical to before (the `hostNote` pattern). */
+  repoContext?: RepoContextSnapshot;
   scopedRepoInstructions: string;
   scopedMemory: string;
   messages: readonly Message[];
@@ -527,6 +694,11 @@ export class BackendContextBuilder {
     const recentHeader =
       lang === "en" ? RECENT_DIALOGUE_HEADER_EN : RECENT_DIALOGUE_HEADER;
     const sections: string[] = [contract];
+    if (input.repoContext !== undefined) {
+      sections.push(
+        renderRepoContext(input.repoContext, lang, this.contractKind),
+      );
+    }
     if (input.workingHistory !== undefined && input.workingHistory.length > 0) {
       sections.push(`${workingHeader}\n\n${input.workingHistory}`);
     }

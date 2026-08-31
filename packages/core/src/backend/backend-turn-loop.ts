@@ -15,7 +15,10 @@ import type {
   ToolContext,
   ToolResult,
 } from "../types/tool.js";
-import type { BackendContextBuilder } from "./backend-context-builder.js";
+import type {
+  BackendContextBuilder,
+  RepoContextSnapshot,
+} from "./backend-context-builder.js";
 import {
   BackendRetryState,
   classifyBackendInferenceError,
@@ -118,6 +121,9 @@ export interface BackendTurnHandle {
   /** The session's interaction language (ADR 0016). Selects the backend prompt
    *  language in the context builder; absent → "zh". */
   lang?: "zh" | "en";
+  /** The repo snapshot taken at brief start (ADR 0049 §2). Threaded into the
+   *  frame's repo-snapshot section; absent → section omitted. */
+  repoContext?: RepoContextSnapshot;
 }
 
 export async function* runBackendTurnLoop(
@@ -171,6 +177,9 @@ export async function* runBackendTurnLoop(
       recentDialogue: handle.recentDialogue,
       workingHistory: handle.workingHistory,
       lang: handle.lang,
+      ...(handle.repoContext !== undefined
+        ? { repoContext: handle.repoContext }
+        : {}),
     });
 
     let iterations = 0;

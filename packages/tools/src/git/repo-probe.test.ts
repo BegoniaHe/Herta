@@ -1,9 +1,21 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { diffCommittedRange, probeRepoState } from "./repo-probe.js";
+import {
+  describeRepoContext,
+  detectInProgressState,
+  diffCommittedRange,
+  probeRepoState,
+  resolveGitDir,
+} from "./repo-probe.js";
 
 const GIT_AVAILABLE = (() => {
   try {
@@ -99,6 +111,184 @@ describe.skipIf(!GIT_AVAILABLE)("probeRepoState", { timeout: 20_000 }, () => {
     expect(attributed.sort()).toEqual(["a.ts", "renamed.ts"]);
   });
 });
+
+describe("detectInProgressState (fs only, no git needed)", () => {
+  it("names each transient state, rebase first, and null when clean", () => {
+    const gitDir = mkDir("state-");
+    expect(detectInProgressState(gitDir)).toBeNull();
+    writeFileSync(join(gitDir, "MERGE_HEAD"), "abc\n");
+    expect(detectInProgressState(gitDir)).toBe("merge");
+    // A conflicted rebase stop can leave other heads around too — rebase wins.
+    mkdirSync(join(gitDir, "rebase-merge"));
+    expect(detectInProgressState(gitDir)).toBe("rebase");
+    rmSync(join(gitDir, "rebase-merge"), { recursive: true });
+    rmSync(join(gitDir, "MERGE_HEAD"));
+    writeFileSync(join(gitDir, "CHERRY_PICK_HEAD"), "abc\n");
+    expect(detectInProgressState(gitDir)).toBe("cherry-pick");
+    rmSync(join(gitDir, "CHERRY_PICK_HEAD"));
+    writeFileSync(join(gitDir, "BISECT_LOG"), "log\n");
+    expect(detectInProgressState(gitDir)).toBe("bisect");
+  });
+
+  it("returns null (not a throw) on a nonexistent dir", () => {
+    expect(detectInProgressState(join(mkDir("state-gone-"), "nope"))).toBe(
+      null,
+    );
+  });
+});
+
+describe.skipIf(!GIT_AVAILABLE)("resolveGitDir", { timeout: 20_000 }, () => {
+  const git = (dir: string, ...a: string[]) =>
+    spawnSync("git", a, { cwd: dir, encoding: "utf8" });
+
+  it("finds the .git dir from the root and from a subdirectory", () => {
+    const dir = mkDir("gitdir-");
+    git(dir, "init", "-q", "-b", "main");
+    const sub = join(dir, "src");
+    mkdirSync(sub);
+    expect(resolveGitDir(dir)).toBe(join(dir, ".git"));
+    expect(resolveGitDir(sub)).toBe(join(dir, ".git"));
+  });
+
+  it("follows a worktree's gitdir pointer file", () => {
+    const dir = mkDir("gitdir-wt-");
+    git(dir, "init", "-q", "-b", "main");
+    git(dir, "config", "user.email", "t@t");
+    git(dir, "config", "user.name", "T");
+    git(dir, "config", "commit.gpgsign", "false");
+    writeFileSync(join(dir, "a.ts"), "one\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-qm", "init");
+    const wt = join(dir, "wt");
+    git(dir, "worktree", "add", "-q", wt, "-b", "side");
+    const resolved = resolveGitDir(wt);
+    // The linked worktree's private git dir, where its own transient state
+    // (MERGE_HEAD, rebase-merge) lives. Git writes the pointer with forward
+    // slashes even on Windows — compare separator-agnostically.
+    expect(resolved?.replaceAll("\\", "/")).toContain(".git/worktrees");
+  });
+
+  it("returns null outside any repo", () => {
+    expect(resolveGitDir(mkDir("gitdir-plain-"))).toBeNull();
+  });
+});
+
+describe.skipIf(!GIT_AVAILABLE)(
+  "describeRepoContext",
+  { timeout: 20_000 },
+  () => {
+    const git = (dir: string, ...a: string[]) =>
+      spawnSync("git", a, { cwd: dir, encoding: "utf8" });
+
+    function seeded(): string {
+      const dir = mkDir("ctx-");
+      git(dir, "init", "-q", "-b", "main");
+      git(dir, "config", "user.email", "t@t");
+      git(dir, "config", "user.name", "T");
+      git(dir, "config", "commit.gpgsign", "false");
+      writeFileSync(join(dir, "a.ts"), "one\n");
+      git(dir, "add", "-A");
+      git(dir, "commit", "-qm", "init: seed");
+      return dir;
+    }
+
+    it("describes a clean seeded repo", async () => {
+      const ctx = await describeRepoContext(seeded());
+      expect(ctx).not.toBeNull();
+      expect(ctx?.branch).toBe("main");
+      expect(ctx?.detached).toBe(false);
+      expect(ctx?.headShort).toMatch(/^[0-9a-f]{4,}$/);
+      expect(ctx?.upstream).toBeNull();
+      expect(ctx?.defaultBranch).toBeNull();
+      expect(ctx?.inProgress).toBeNull();
+      expect(ctx?.dirty).toEqual([]);
+      expect(ctx?.dirtyTotal).toBe(0);
+      expect(ctx?.recentSubjects).toHaveLength(1);
+      expect(ctx?.recentSubjects[0]).toContain("init: seed");
+    });
+
+    it("carries the dirty set with porcelain codes and an honest total", async () => {
+      const dir = seeded();
+      writeFileSync(join(dir, "a.ts"), "one\nedited\n");
+      writeFileSync(join(dir, "new.ts"), "created\n");
+      const ctx = await describeRepoContext(dir);
+      expect(ctx?.dirtyTotal).toBe(2);
+      const byPath = new Map(ctx?.dirty.map((f) => [f.path, f]));
+      expect(byPath.get("a.ts")?.y).toBe("M");
+      expect(byPath.get("new.ts")?.x).toBe("?");
+    });
+
+    it("reports upstream, ahead/behind, and the default branch when set", async () => {
+      const dir = seeded();
+      const origin = mkDir("ctx-origin-");
+      git(origin, "init", "-q", "--bare");
+      git(dir, "remote", "add", "origin", origin);
+      git(dir, "push", "-q", "-u", "origin", "main");
+      // Set origin/HEAD locally — what a clone gets for free.
+      git(
+        dir,
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+      );
+      writeFileSync(join(dir, "b.ts"), "two\n");
+      git(dir, "add", "-A");
+      git(dir, "commit", "-qm", "ahead work");
+      const ctx = await describeRepoContext(dir);
+      expect(ctx?.upstream).toBe("origin/main");
+      expect(ctx?.ahead).toBe(1);
+      expect(ctx?.behind).toBe(0);
+      expect(ctx?.defaultBranch).toBe("main");
+    });
+
+    it("reports an unborn branch honestly", async () => {
+      const dir = mkDir("ctx-unborn-");
+      git(dir, "init", "-q", "-b", "main");
+      const ctx = await describeRepoContext(dir);
+      expect(ctx?.branch).toBe("main");
+      expect(ctx?.headShort).toBeNull();
+      expect(ctx?.detached).toBe(false);
+      expect(ctx?.recentSubjects).toEqual([]);
+    });
+
+    it("reports a detached HEAD as detached, not as a branch", async () => {
+      const dir = seeded();
+      git(dir, "checkout", "-q", "--detach");
+      const ctx = await describeRepoContext(dir);
+      expect(ctx?.detached).toBe(true);
+      expect(ctx?.branch).toBeNull();
+      expect(ctx?.headShort).not.toBeNull();
+    });
+
+    it("sees a merge in progress with its conflict set", async () => {
+      const dir = seeded();
+      git(dir, "checkout", "-qb", "side");
+      writeFileSync(join(dir, "a.ts"), "side version\n");
+      git(dir, "add", "-A");
+      git(dir, "commit", "-qm", "side edit");
+      git(dir, "checkout", "-q", "main");
+      writeFileSync(join(dir, "a.ts"), "main version\n");
+      git(dir, "add", "-A");
+      git(dir, "commit", "-qm", "main edit");
+      const merge = git(dir, "merge", "side");
+      expect(merge.status).not.toBe(0); // conflicted, mid-flight
+      const ctx = await describeRepoContext(dir);
+      expect(ctx?.inProgress).toBe("merge");
+      expect(ctx?.conflicted).toEqual(["a.ts"]);
+    });
+
+    it("returns null outside a repo and on abort, never throwing", async () => {
+      await expect(
+        describeRepoContext(mkDir("ctx-plain-")),
+      ).resolves.toBeNull();
+      const ac = new AbortController();
+      ac.abort();
+      await expect(
+        describeRepoContext(seeded(), ac.signal),
+      ).resolves.toBeNull();
+    });
+  },
+);
 
 describe.skipIf(!GIT_AVAILABLE)(
   "diffCommittedRange",

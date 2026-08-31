@@ -16,7 +16,10 @@ import type { ToolRegistry } from "../tool-registry.js";
 import { TranscriptStore } from "../transcript-store.js";
 import type { AgentEvent } from "../types/events.js";
 import type { ProviderAdapter } from "../types/provider.js";
-import type { BackendContextBuilder } from "./backend-context-builder.js";
+import type {
+  BackendContextBuilder,
+  RepoContextSnapshot,
+} from "./backend-context-builder.js";
 import { runBackendTurnLoop } from "./backend-turn-loop.js";
 import { BackgroundHost } from "./background-host.js";
 import type { BackendPromptBudget } from "./context-budget.js";
@@ -90,6 +93,15 @@ export interface CodingAgentRuntimeDeps {
     toHead: string,
     signal?: AbortSignal,
   ) => Promise<readonly RepoRangeFile[] | null>;
+  /**
+   * The richer repo description rendered into the backend frame's repo-
+   * snapshot section (ADR 0049 §2): branch, upstream ±counts, in-progress
+   * state, bounded dirty set, recent subjects. Injected for the same reason
+   * as `repoProbe`; gathered once at brief START in parallel with the
+   * baseline. Absent, or returning null, and the frame simply omits the
+   * section — byte-identical to before.
+   */
+  repoContext?: (signal?: AbortSignal) => Promise<RepoContextSnapshot | null>;
 }
 
 /** What the workspace's VCS looked like at one instant. */
@@ -157,6 +169,20 @@ export class CodingAgentRuntime {
     if (this.deps.repoProbe === undefined) return null;
     try {
       return await this.deps.repoProbe(signal);
+    } catch {
+      return null;
+    }
+  }
+
+  /** The frame's repo snapshot, or null when there is no describer, no repo,
+   *  or the probe failed. Same never-throws contract as `probeRepo`: prompt
+   *  context is a nicety and must not fail a brief. */
+  private async describeRepo(
+    signal?: AbortSignal,
+  ): Promise<RepoContextSnapshot | null> {
+    if (this.deps.repoContext === undefined) return null;
+    try {
+      return await this.deps.repoContext(signal);
     } catch {
       return null;
     }
@@ -250,7 +276,12 @@ export class CodingAgentRuntime {
       // dispatch is credited with. Without the start snapshot an end-only
       // status would report the USER's own pre-existing uncommitted work as
       // 板砖's — the same lie inverted.
-      const baseline = await this.probeRepo(opts.signal);
+      // The frame's repo snapshot (ADR 0049 §2) rides the same instant —
+      // gathered in parallel; both wrappers swallow their own failures.
+      const [baseline, repoContext] = await Promise.all([
+        this.probeRepo(opts.signal),
+        this.describeRepo(opts.signal),
+      ]);
 
       const absorb = (event: AgentEvent): void => {
         // Backend-layer only (audit 2026-07-10 §6): the per-session bus is
@@ -435,6 +466,7 @@ export class CodingAgentRuntime {
         recentDialogue: opts.recentDialogue ?? "",
         workingHistory: opts.workingHistory ?? "",
         lang: opts.lang ?? "zh",
+        ...(repoContext !== null ? { repoContext } : {}),
       };
 
       let stoppedBackground = 0;

@@ -121,4 +121,17 @@ describe("parseStatusPorcelainZ — machine format (2026-08-25)", () => {
     const r = parseStatusPorcelainZ("## main\0?? we\nird.txt\0");
     expect(r.files[0]?.path).toBe("we\nird.txt");
   });
+
+  it("keeps the upstream NAME, with tracking info and in-sync alike (ADR 0049)", () => {
+    expect(
+      parseStatusPorcelainZ("## main...origin/main [ahead 2]\0").upstream,
+    ).toBe("origin/main");
+    expect(parseStatusPorcelainZ("## main...origin/main\0").upstream).toBe(
+      "origin/main",
+    );
+    expect(parseStatusPorcelainZ("## main\0").upstream).toBeUndefined();
+    expect(
+      parseStatusPorcelainZ("## HEAD (no branch)\0").upstream,
+    ).toBeUndefined();
+  });
 });

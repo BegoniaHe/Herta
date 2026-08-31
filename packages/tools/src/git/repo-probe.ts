@@ -1,4 +1,11 @@
-import type { RepoSnapshot } from "@herta/core";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import type {
+  RepoContextDirtyFile,
+  RepoContextSnapshot,
+  RepoInProgressState,
+  RepoSnapshot,
+} from "@herta/core";
 import { parseStatusPorcelainZ } from "./parse-status.js";
 import { hardenedGitArgs, spawnGit } from "./spawn-git.js";
 
@@ -121,6 +128,213 @@ async function rangeDiff(
     });
   }
   return out;
+}
+
+/**
+ * Locate the git dir governing `startDir` without spawning git: walk up
+ * looking for `.git` — a directory IS the git dir; a file (worktree,
+ * submodule) points at it via `gitdir: <path>`. Null when no repo, on any
+ * fs error, or on a malformed `.git` file. Sync and cheap on purpose: the
+ * shell classifier calls this at ask time (ADR 0049 §5), where a spawn
+ * per ask is not acceptable.
+ */
+export function resolveGitDir(startDir: string): string | null {
+  try {
+    let dir = resolve(startDir);
+    for (;;) {
+      const dotGit = join(dir, ".git");
+      if (existsSync(dotGit)) {
+        const st = statSync(dotGit);
+        if (st.isDirectory()) return dotGit;
+        if (st.isFile()) {
+          const text = readFileSync(dotGit, "utf8");
+          const m = /^gitdir:\s*(.+)\s*$/m.exec(text);
+          if (m?.[1] === undefined) return null;
+          const target = m[1].trim();
+          return isAbsolute(target) ? target : resolve(dir, target);
+        }
+      }
+      const parent = dirname(dir);
+      if (parent === dir) return null;
+      dir = parent;
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Which operation the repo at `gitDir` is in the middle of, from the
+ * transient files git itself keys on — existence checks only, no spawn
+ * (per-worktree state lives in the resolved git dir, so a linked worktree
+ * answers for itself). Rebase is checked first: a conflicted rebase stop
+ * can also leave e.g. CHERRY_PICK_HEAD around, and "rebase" is the answer
+ * a person would give. Null when nothing is mid-flight or on fs errors.
+ */
+export function detectInProgressState(
+  gitDir: string,
+): RepoInProgressState | null {
+  try {
+    if (
+      existsSync(join(gitDir, "rebase-merge")) ||
+      existsSync(join(gitDir, "rebase-apply"))
+    )
+      return "rebase";
+    if (existsSync(join(gitDir, "MERGE_HEAD"))) return "merge";
+    if (existsSync(join(gitDir, "CHERRY_PICK_HEAD"))) return "cherry-pick";
+    if (existsSync(join(gitDir, "REVERT_HEAD"))) return "revert";
+    if (existsSync(join(gitDir, "BISECT_LOG"))) return "bisect";
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Unmerged porcelain XY pairs — the conflict set for the snapshot. */
+function isUnmerged(x: string, y: string): boolean {
+  return (
+    x === "U" ||
+    y === "U" ||
+    (x === "A" && y === "A") ||
+    (x === "D" && y === "D")
+  );
+}
+
+/** Bounds for the snapshot's lists — the prompt section must stay small;
+ *  `dirtyTotal` keeps the honest count for the truncation line. */
+const MAX_CONTEXT_DIRTY = 40;
+const MAX_CONTEXT_CONFLICTED = 20;
+const MAX_SUBJECT_CHARS = 120;
+
+/**
+ * The richer repo description the backend frame renders as its repo-snapshot
+ * section (ADR 0049 §§1–2): branch, upstream ±counts, default branch,
+ * in-progress state, conflict set, bounded dirty list, recent subjects.
+ *
+ * Same contract as {@link probeRepoState}: null (never a throw) for every
+ * "cannot tell" case — prompt context is a nicety and must not fail a brief.
+ * Runs once per dispatch at brief start, beside the baseline probe.
+ */
+export async function describeRepoContext(
+  workspaceRoot: string,
+  signal?: AbortSignal,
+): Promise<RepoContextSnapshot | null> {
+  try {
+    return await describe(workspaceRoot, signal);
+  } catch {
+    return null;
+  }
+}
+
+async function describe(
+  workspaceRoot: string,
+  signal?: AbortSignal,
+): Promise<RepoContextSnapshot | null> {
+  const sig = signal ?? new AbortController().signal;
+  const opts = { timeoutMs: 5_000 } as const;
+
+  // All four queries are independent; `log` on an unborn HEAD exits 128,
+  // which is an answer (no commits → no subjects), not a failure — so the
+  // whole set can run concurrently.
+  const [head, status, log, originHead] = await Promise.all([
+    spawnGit(
+      workspaceRoot,
+      hardenedGitArgs(["rev-parse", "--short", "HEAD"]),
+      sig,
+      { ...opts, allowExitCodes: [128] },
+    ),
+    spawnGit(
+      workspaceRoot,
+      hardenedGitArgs([
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--branch",
+        "--untracked-files=all",
+      ]),
+      sig,
+      opts,
+    ),
+    spawnGit(
+      workspaceRoot,
+      hardenedGitArgs(["log", "--oneline", "-n", "5"]),
+      sig,
+      { ...opts, allowExitCodes: [128] },
+    ),
+    // Exit 1 = origin/HEAD is simply unset (fresh remote, no clone default).
+    spawnGit(
+      workspaceRoot,
+      hardenedGitArgs([
+        "symbolic-ref",
+        "--quiet",
+        "--short",
+        "refs/remotes/origin/HEAD",
+      ]),
+      sig,
+      { ...opts, allowExitCodes: [1] },
+    ),
+  ]);
+  if (!head.ok || !status.ok) return null;
+
+  const parsed = parseStatusPorcelainZ(status.stdout);
+  const shortSha = head.stdout.trim();
+  const headShort =
+    head.exitCode === 0 && shortSha.length > 0 ? shortSha : null;
+
+  const dirty: RepoContextDirtyFile[] = [];
+  const conflicted: string[] = [];
+  for (const f of parsed.files) {
+    if (dirty.length < MAX_CONTEXT_DIRTY) {
+      dirty.push({ x: f.indexStatus, y: f.worktreeStatus, path: f.path });
+    }
+    if (
+      conflicted.length < MAX_CONTEXT_CONFLICTED &&
+      isUnmerged(f.indexStatus, f.worktreeStatus)
+    ) {
+      conflicted.push(f.path);
+    }
+  }
+
+  const recentSubjects =
+    log.ok && log.exitCode === 0
+      ? log.stdout
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0)
+          .slice(0, 5)
+          .map((l) =>
+            l.length > MAX_SUBJECT_CHARS
+              ? `${l.slice(0, MAX_SUBJECT_CHARS)}…`
+              : l,
+          )
+      : [];
+
+  // `--short` yields "origin/main"; the branch name is what the model wants.
+  let defaultBranch: string | null = null;
+  if (originHead.ok && originHead.exitCode === 0) {
+    const ref = originHead.stdout.trim();
+    const slash = ref.indexOf("/");
+    if (slash > 0 && slash < ref.length - 1)
+      defaultBranch = ref.slice(slash + 1);
+  }
+
+  const gitDir = resolveGitDir(workspaceRoot);
+  const inProgress = gitDir !== null ? detectInProgressState(gitDir) : null;
+
+  return {
+    branch: parsed.branch,
+    detached: parsed.branch === null && headShort !== null,
+    headShort,
+    upstream: parsed.upstream ?? null,
+    ahead: parsed.ahead,
+    behind: parsed.behind,
+    defaultBranch,
+    inProgress,
+    conflicted,
+    dirty,
+    dirtyTotal: parsed.files.length,
+    recentSubjects,
+  };
 }
 
 async function probe(

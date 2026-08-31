@@ -7,6 +7,9 @@ export interface GitStatusFile {
 
 export interface GitStatusData {
   branch: string | null;
+  /** The tracked upstream ref (e.g. "origin/main"). Absent when the branch
+   *  has no upstream. Only the `-z` parser fills it (ADR 0049 §1). */
+  upstream?: string;
   ahead: number;
   behind: number;
   files: readonly GitStatusFile[];
@@ -32,6 +35,7 @@ export interface GitStatusData {
  */
 export function parseStatusPorcelainZ(text: string): GitStatusData {
   let branch: string | null = null;
+  let upstream: string | undefined;
   let ahead = 0;
   let behind = 0;
   const files: GitStatusFile[] = [];
@@ -58,6 +62,16 @@ export function parseStatusPorcelainZ(text: string): GitStatusData {
       const trackingIdx = branchPart.indexOf("...");
       const nameEnd = trackingIdx >= 0 ? trackingIdx : branchPart.length;
       branch = branchPart.slice(0, nameEnd).trim();
+      if (trackingIdx >= 0) {
+        // `main...origin/main [ahead 1]` → the upstream name runs to the
+        // ` [`-delimited tracking info, or to the end when in sync.
+        const afterDots = branchPart.slice(trackingIdx + 3);
+        const bracket = afterDots.indexOf(" [");
+        const name = (
+          bracket >= 0 ? afterDots.slice(0, bracket) : afterDots
+        ).trim();
+        if (name.length > 0) upstream = name;
+      }
       const trackInfo = branchPart.match(/\[([^\]]+)\]/)?.[1];
       if (trackInfo) {
         const aheadMatch = trackInfo.match(/ahead (\d+)/);
@@ -90,7 +104,14 @@ export function parseStatusPorcelainZ(text: string): GitStatusData {
     i += 1;
   }
 
-  return { branch, ahead, behind, files, clean: files.length === 0 };
+  return {
+    branch,
+    ...(upstream !== undefined ? { upstream } : {}),
+    ahead,
+    behind,
+    files,
+    clean: files.length === 0,
+  };
 }
 
 /** @deprecated the newline form C-quotes non-ASCII paths; see

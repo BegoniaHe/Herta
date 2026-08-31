@@ -13,6 +13,10 @@ export {
   type BackendContextBuilderDeps,
   type BackendContract,
   minimalBackendContract,
+  type RepoContextDirtyFile,
+  type RepoContextSnapshot,
+  type RepoInProgressState,
+  renderRepoContext,
   serializeUserHistory,
   windowsBackendHostNote,
 } from "./backend/backend-context-builder.js";

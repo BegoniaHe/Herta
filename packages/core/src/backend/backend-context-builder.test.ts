@@ -8,6 +8,8 @@ import {
   minimalBackendContract,
   RECENT_DIALOGUE_HEADER,
   RECENT_DIALOGUE_HEADER_EN,
+  type RepoContextSnapshot,
+  renderRepoContext,
   serializeUserHistory,
   WORKING_HISTORY_HEADER,
   WORKING_HISTORY_HEADER_EN,
@@ -620,5 +622,131 @@ describe("host note (ADR 0044)", () => {
       hostNote: windowsBackendHostNote("zh"),
     });
     expect(builder.build(common).backendSystem).not.toContain("# 主机环境");
+  });
+});
+
+describe("repo snapshot section (ADR 0049)", () => {
+  const common = {
+    brief: sampleBrief,
+    userMessages: sampleUserMessages,
+    scopedRepoInstructions: "",
+    scopedMemory: "",
+    messages: [],
+  };
+  const snapshot: RepoContextSnapshot = {
+    branch: "main",
+    detached: false,
+    headShort: "abc1234",
+    upstream: "origin/main",
+    ahead: 2,
+    behind: 1,
+    defaultBranch: "main",
+    inProgress: null,
+    conflicted: [],
+    dirty: [
+      { x: " ", y: "M", path: "packages/foo.ts" },
+      { x: "?", y: "?", path: "scratch.txt" },
+    ],
+    dirtyTotal: 2,
+    recentSubjects: ["abc1234 fix: cursor reset"],
+  };
+
+  it("renders branch, upstream counts, default branch, dirty set and log", () => {
+    const zh = renderRepoContext(snapshot, "zh", "standard");
+    expect(zh).toContain("# 仓库快照");
+    expect(zh).toContain("分支: main → origin/main（领先 2，落后 1）");
+    expect(zh).toContain("默认分支: main");
+    expect(zh).toContain("未提交改动 2 项:");
+    expect(zh).toContain(" M packages/foo.ts");
+    expect(zh).toContain("?? scratch.txt");
+    expect(zh).toContain("abc1234 fix: cursor reset");
+    expect(zh).not.toContain("进行中的操作");
+    const en = renderRepoContext(snapshot, "en", "standard");
+    expect(en).toContain("# Repo snapshot");
+    expect(en).toContain("branch: main → origin/main (ahead 2, behind 1)");
+  });
+
+  it("states detached / unborn / no-upstream / clean plainly", () => {
+    expect(
+      renderRepoContext(
+        { ...snapshot, branch: null, detached: true },
+        "zh",
+        "standard",
+      ),
+    ).toContain("分支: 游离 HEAD @ abc1234");
+    expect(
+      renderRepoContext(
+        { ...snapshot, headShort: null, upstream: null },
+        "zh",
+        "standard",
+      ),
+    ).toContain("分支: main（尚无提交）");
+    expect(
+      renderRepoContext({ ...snapshot, upstream: null }, "zh", "standard"),
+    ).toContain("分支: main（无上游）");
+    expect(
+      renderRepoContext(
+        { ...snapshot, dirty: [], dirtyTotal: 0 },
+        "zh",
+        "standard",
+      ),
+    ).toContain("未提交改动: 无");
+  });
+
+  it("shows the in-progress operation with its conflict set", () => {
+    const mid = renderRepoContext(
+      {
+        ...snapshot,
+        inProgress: "merge",
+        conflicted: ["a.ts", "b.ts"],
+      },
+      "zh",
+      "standard",
+    );
+    expect(mid).toContain("进行中的操作: merge");
+    expect(mid).toContain("冲突文件 2 个: a.ts、b.ts");
+  });
+
+  it("the honest-truncation line names the tool the CONTRACT mounts", () => {
+    const truncated = { ...snapshot, dirtyTotal: 45 };
+    expect(renderRepoContext(truncated, "zh", "standard")).toContain(
+      "另有 43 项未列出；全量用 git_status 查看",
+    );
+    expect(renderRepoContext(truncated, "zh", "minimal")).toContain(
+      "在 bash 里跑 git status 看全量",
+    );
+    expect(renderRepoContext(truncated, "en", "minimal")).toContain(
+      "run git status in bash for the full set",
+    );
+  });
+
+  it("build() splices the section right after the contract; absent → byte-identical", () => {
+    const tools = new InMemoryToolRegistry();
+    const builder = new BackendContextBuilder({ tools });
+    const withSnap = builder.build({ ...common, repoContext: snapshot });
+    const without = builder.build(common);
+    const sys = withSnap.backendSystem;
+    expect(sys.indexOf("# 仓库快照")).toBeGreaterThan(
+      sys.indexOf("# 分寸"), // after the contract's last section
+    );
+    expect(sys.indexOf("# 仓库快照")).toBeLessThan(
+      sys.indexOf("--- 开拓者请求 1 ---"),
+    );
+    expect(without.backendSystem).not.toContain("# 仓库快照");
+    expect(without.backendSystem).toBe(
+      `${BACKEND_EXECUTION_CONTRACT}\n\n${serializeUserHistory(sampleUserMessages)}`,
+    );
+  });
+
+  it("rides the minimal contract too, in the session's language", () => {
+    const tools = new InMemoryToolRegistry();
+    const builder = new BackendContextBuilder({ tools, contract: "minimal" });
+    const sys = builder.build({
+      ...common,
+      lang: "en" as const,
+      repoContext: snapshot,
+    }).backendSystem;
+    expect(sys).toContain("# Repo snapshot");
+    expect(sys).toContain("branch: main → origin/main (ahead 2, behind 1)");
   });
 });

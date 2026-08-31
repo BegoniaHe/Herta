@@ -78,6 +78,7 @@ import {
   createMinimalTools,
   createMvpTools,
   type DigestModel,
+  describeRepoContext,
   diffCommittedRange,
   findBash,
   PersistentShell,
@@ -296,6 +297,10 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
       // attribution on every brief that ends in a commit.
       repoRangeDiff: (from, to, signal) =>
         diffCommittedRange(wsHolder.current, from, to, signal),
+      // The frame's repo-snapshot section (ADR 0049 §2): gathered once at
+      // brief start beside the baseline, so the backend stops spending tool
+      // calls rediscovering branch/state the harness already held.
+      repoContext: (signal) => describeRepoContext(wsHolder.current, signal),
     });
 
   return {

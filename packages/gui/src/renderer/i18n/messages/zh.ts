@@ -368,6 +368,8 @@ export const zh = {
   "record.marker.risk": "{n} 风险",
   "record.marker.risks": "{n} 风险",
   "record.marker.aborted": "运行异常中止",
+  "record.marker.commit": "提交 {sha}",
+  "record.marker.pushed": "推送 {ref}",
   "record.marker.noop": "无产出",
   "card.workspace": "工作区",
   "card.workspaceDefault": "工作区 · 默认",

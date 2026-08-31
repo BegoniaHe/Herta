@@ -32,6 +32,7 @@ import {
 import type { BeatPolicy, TriggerSpec } from "./beat-policy.js";
 import { boundedTail } from "./bounded-tail.js";
 import { sanitizeActorText } from "./escape.js";
+import { detectGitOutcome, type GitOutcome } from "./git-outcome.js";
 import type { PromptLang } from "./prompt-lang.js";
 import type { ActorStreamingSink } from "./streaming-sink.js";
 
@@ -738,6 +739,10 @@ const CN_MARKER_LABELS = (stateWord: string): MarkerSummaryLabels => ({
       : `测试 ${passed} 通过，${failed} 失败`,
   risk: (n) => `${n} 风险`,
   lines: (add, del) => `+${add} −${del}`,
+  // Git outcome identity (ADR 0049 §4): a commit is remembered by its sha,
+  // a push by where it landed.
+  commit: (sha) => `提交 ${sha}`,
+  pushed: (ref) => `推送 ${ref}`,
   aborted: "运行异常中止",
 });
 
@@ -804,6 +809,7 @@ function buildDoneMarker(
   report: AgentExecutionReport,
   lastCommandTail: string | undefined,
   lastCommandEvidence: readonly EvidenceSection[] | undefined,
+  gitOutcome?: GitOutcome,
 ): SystemBlock {
   const word = STATUS_WORD[report.status] ?? report.status;
   const fileCount = report.changedFiles.length;
@@ -821,12 +827,20 @@ function buildDoneMarker(
   // Structured mirror for localizing renderers (the GUI). The body below stays
   // canonical (D7); this is display-only data, never read by Herta's prompt.
   const changedLines = totalChangedLines(report.changedFiles);
+  // Git outcome identity (ADR 0049 §4): present only when the run actually
+  // landed a commit/push — the field's absence IS the usual case.
+  const git =
+    gitOutcome !== undefined &&
+    (gitOutcome.commit !== undefined || gitOutcome.pushedRef !== undefined)
+      ? gitOutcome
+      : undefined;
   const markerSummary: DoneMarkerSummary = {
     kind: "done",
     state: report.status,
     fileCount,
     ...(changedLines !== null ? { lines: changedLines } : {}),
     ...(testCounts !== undefined ? { tests: testCounts } : {}),
+    ...(git !== undefined ? { git } : {}),
     riskCount,
   };
 
@@ -1188,6 +1202,10 @@ async function invokeBanzhuanBridgeInner(
   // quote a different run than Herta's prompt does.
   let lastCommandTail: string | undefined;
   let lastCommandEvidence: readonly EvidenceSection[] | undefined;
+  // Git outcome identity (ADR 0049 §4): the LAST successful commit/push seen
+  // this dispatch, harvested from finished command results as they project.
+  let gitCommit: string | undefined;
+  let gitPushedRef: string | undefined;
   // First-todo-layout latch + progress-row dedup + background-row state (all
   // reset per backend turn.started): see the PROCESS-phase comments at their
   // use sites.
@@ -1391,6 +1409,37 @@ async function invokeBanzhuanBridgeInner(
             projectedAny = true;
             current = [...current, progressBlock];
             deps.sink?.flushBlocks(current);
+          }
+        }
+
+        // Git outcome identity (ADR 0049 §4): harvest commit/push from every
+        // finished command result — same tool set as the result-row
+        // projection below, data-shape-checked, exit 0 required inside the
+        // detector. Last commit / last push win (bounded on purpose).
+        if (
+          event.type === "tool.call.finished" &&
+          event.layer === "backend" &&
+          event.result.ok &&
+          (event.tool === "run_command" ||
+            event.tool === "bash" ||
+            event.tool === "command_output" ||
+            event.tool === "command_stop")
+        ) {
+          const d = event.result.data as Partial<RunCommandData> | undefined;
+          if (
+            d !== undefined &&
+            Array.isArray(d.argv) &&
+            typeof d.stdout === "string" &&
+            typeof d.stderr === "string"
+          ) {
+            const g = detectGitOutcome({
+              argv: d.argv,
+              exitCode: d.exitCode ?? null,
+              stdout: d.stdout,
+              stderr: d.stderr,
+            });
+            if (g.commit !== undefined) gitCommit = g.commit;
+            if (g.pushedRef !== undefined) gitPushedRef = g.pushedRef;
           }
         }
 
@@ -1601,7 +1650,10 @@ async function invokeBanzhuanBridgeInner(
     const marker = sanitizeSystemBlock(
       trulyNoop
         ? buildNoopMarker()
-        : buildDoneMarker(report, lastCommandTail, lastCommandEvidence),
+        : buildDoneMarker(report, lastCommandTail, lastCommandEvidence, {
+            ...(gitCommit !== undefined ? { commit: gitCommit } : {}),
+            ...(gitPushedRef !== undefined ? { pushedRef: gitPushedRef } : {}),
+          }),
     );
     current = [...current, marker];
     deps.sink?.flushBlocks(current);

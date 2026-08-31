@@ -1622,6 +1622,111 @@ describe("invokeBanzhuanBridge", () => {
     ).toHaveLength(1);
   });
 
+  it("the done marker names the run's commit and push (ADR 0049 §4)", async () => {
+    const bus = new InMemoryEventBus<AgentEvent>();
+    const commandData = {
+      argv: ["bash", "-lc", 'git commit -am "fix" && git push origin main'],
+      cwd: "/ws",
+      exitCode: 0,
+      signal: null,
+      durationMs: 120,
+      stdout: "[main a1b2c34] fix\n 1 file changed, 1 insertion(+)\n",
+      stderr: "To /tmp/origin\n   0e1f2a3..a1b2c34  main -> main\n",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      stdoutBytes: 60,
+      stderrBytes: 50,
+      logPath: ".herta/logs/x.log",
+      timedOut: false,
+    };
+    const runtime: CodingAgentRuntime = {
+      runBrief: async (brief: HertaToAgentBrief) => {
+        publishWithLayer(bus, "backend", {
+          type: "tool.call.finished",
+          id: "t1",
+          tool: "bash",
+          result: { ok: true, data: commandData, summary: "exit 0" },
+        });
+        return {
+          taskId: brief.taskId,
+          status: "completed",
+          evidence: [],
+          changedFiles: [],
+          tests: [],
+          permissions: [],
+          residualRisks: [],
+          nextActions: [],
+        } as AgentExecutionReport;
+      },
+    } as unknown as CodingAgentRuntime;
+    const deps = mkBridgeDeps({ bus, runtime: () => runtime });
+    const out = await invokeBanzhuanBridge([], [], deps);
+    const marker = out.find(
+      (b) =>
+        b.kind === "system" && (b as { role?: string }).role === "done-marker",
+    ) as {
+      body: string;
+      markerSummary?: { git?: { commit?: string; pushedRef?: string } };
+    };
+    // Canonical body carries the identity; the structured mirror matches it.
+    expect(marker.body).toContain("提交 a1b2c34");
+    expect(marker.body).toContain("推送 main");
+    expect(marker.markerSummary?.git).toEqual({
+      commit: "a1b2c34",
+      pushedRef: "main",
+    });
+  });
+
+  it("a failed commit leaves the marker without a git identity", async () => {
+    const bus = new InMemoryEventBus<AgentEvent>();
+    const runtime: CodingAgentRuntime = {
+      runBrief: async (brief: HertaToAgentBrief) => {
+        publishWithLayer(bus, "backend", {
+          type: "tool.call.finished",
+          id: "t1",
+          tool: "bash",
+          result: {
+            ok: true,
+            data: {
+              argv: ["bash", "-lc", "git commit -am wip"],
+              cwd: "/ws",
+              exitCode: 1,
+              signal: null,
+              durationMs: 80,
+              stdout: "[main a1b2c34] wip\n",
+              stderr: "pre-commit hook failed\n",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutBytes: 20,
+              stderrBytes: 24,
+              logPath: ".herta/logs/x.log",
+              timedOut: false,
+            },
+            summary: "exit 1",
+          },
+        });
+        return {
+          taskId: brief.taskId,
+          status: "partial",
+          evidence: [],
+          changedFiles: [],
+          tests: [],
+          permissions: [],
+          residualRisks: [],
+          nextActions: [],
+        } as AgentExecutionReport;
+      },
+    } as unknown as CodingAgentRuntime;
+    const deps = mkBridgeDeps({ bus, runtime: () => runtime });
+    const out = await invokeBanzhuanBridge([], [], deps);
+    const marker = out.find(
+      (b) =>
+        b.kind === "system" && (b as { role?: string }).role === "done-marker",
+    ) as { body: string; markerSummary?: { git?: unknown } };
+    expect(marker.body).not.toContain("提交");
+    expect(marker.markerSummary?.git).toBeUndefined();
+  });
+
   it("appends blocks in event-emission order", async () => {
     const bus = new InMemoryEventBus<AgentEvent>();
     const runtime: CodingAgentRuntime = {

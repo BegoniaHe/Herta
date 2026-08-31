@@ -44,6 +44,9 @@ export function composeMarkerSummary(summary: ActivitySummary, t: TFn): string {
     // `+187 −42` as an ELEMENT beside this string (the digits count up), so
     // composing it into the text too would print it twice. The canonical body
     // and the CLI both include it — see CN_MARKER_LABELS and system-localize.
+    // Git outcome identity (ADR 0049 §4): the commit/push the run landed.
+    commit: (sha) => t("record.marker.commit", { sha }),
+    pushed: (ref) => t("record.marker.pushed", { ref }),
     // Abnormal termination (bridge-failure marker): composes the canonical
     // body's 运行异常中止 segment instead of a fabricated risk count.
     aborted: t("record.marker.aborted"),

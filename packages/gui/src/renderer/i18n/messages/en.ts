@@ -372,6 +372,8 @@ export const en = {
   "record.marker.risk": "{n} risk",
   "record.marker.risks": "{n} risks",
   "record.marker.aborted": "run aborted",
+  "record.marker.commit": "committed {sha}",
+  "record.marker.pushed": "pushed {ref}",
   "record.marker.noop": "No output",
   "card.workspace": "Workspace",
   "card.workspaceDefault": "Workspace · default",

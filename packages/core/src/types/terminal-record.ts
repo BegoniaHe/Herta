@@ -117,6 +117,18 @@ export interface DoneMarkerSummary {
    * truth. Absent is the honest answer; the file count still stands.
    */
   readonly lines?: { readonly add: number; readonly del: number };
+  /**
+   * Git outcome identity (ADR 0049 §4): a commit is the one operation whose
+   * IDENTITY is the outcome, and a marker that reports only file counts
+   * drops it. `commit` is the short sha git's own summary line reported for
+   * the run's LAST successful commit; `pushedRef` the destination branch of
+   * its last successful push. Parsed deterministically from command output
+   * by the bridge; absent when the run made no commit/push (the usual case).
+   */
+  readonly git?: {
+    readonly commit?: string;
+    readonly pushedRef?: string;
+  };
   /** Set (only ever `true`) when the run TERMINATED ABNORMALLY — runBrief
    *  itself threw rather than returning a report (the bridge-failure marker,
    *  canonical body `失败 · 运行异常中止`). Neutral machine field (D2):

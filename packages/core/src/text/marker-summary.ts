@@ -19,6 +19,12 @@ export interface MarkerSummaryLabels {
    *  per-file diff (see `DoneMarkerSummary.lines`). Omit the label to leave
    *  the segment out entirely — older callers stay unchanged. */
   readonly lines?: (add: number, del: number) => string;
+  /** Commit-identity segment (ADR 0049 §4), called only when the run's last
+   *  successful commit was detected. Optional — omit to leave it out. */
+  readonly commit?: (sha: string) => string;
+  /** Push-destination segment (ADR 0049 §4), called only when the run's last
+   *  successful push was detected. Optional — omit to leave it out. */
+  readonly pushed?: (ref: string) => string;
   /** Abnormal-termination word (run aborted / 运行异常中止) — appended only
    *  on the bridge-failure marker (`aborted: true`). */
   readonly aborted: string;
@@ -47,6 +53,14 @@ export function composeMarkerSummary(
   }
   if (m.tests !== undefined) {
     parts.push(labels.tests(m.tests.passed, m.tests.failed));
+  }
+  // Git outcome identity (ADR 0049 §4): the commit/push the run landed,
+  // after the work segments they conclude and before the risk tally.
+  if (m.git?.commit !== undefined && labels.commit !== undefined) {
+    parts.push(labels.commit(m.git.commit));
+  }
+  if (m.git?.pushedRef !== undefined && labels.pushed !== undefined) {
+    parts.push(labels.pushed(m.git.pushedRef));
   }
   if (m.riskCount > 0) parts.push(labels.risk(m.riskCount));
   // Abnormal termination (bridge-failure marker): the twin of the canonical

@@ -51,6 +51,9 @@ function composeMarkerSummaryEN(m: DoneMarkerSummary): string {
     // Digits, matching the canonical body. The GUI omits this segment because
     // it renders the same numbers as an animated element instead.
     lines: (add, del) => `+${add} −${del}`,
+    // Git outcome identity (ADR 0049 §4) — the EN twins of 提交/推送.
+    commit: (sha) => `committed ${sha}`,
+    pushed: (ref) => `pushed ${ref}`,
     aborted: "run aborted",
   });
 }

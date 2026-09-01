@@ -117,20 +117,31 @@ const WIDTH_STORE_KEY = "herta.fileViewer.widthPx";
 
 /** Clamp a requested panel width so the conversation keeps its minimum.
  *  When even the panel minimum cannot fit beside it, the caller degrades
- *  to overlay mode — this function only answers with a usable number. */
+ *  to overlay mode — this function only answers with a usable number.
+ *  floor, not round: the measured body width is fractional during the
+ *  sidebar slide, and rounding UP handed the panel a half-pixel the
+ *  conversation didn't have (2026-09-01 flash bug — see below). */
 export function clampViewerWidth(requested: number, bodyWidth: number): number {
   const max = bodyWidth - CONVERSATION_MIN_PX - VIEWER_GAP_PX;
-  return Math.round(
+  return Math.floor(
     Math.min(Math.max(requested, VIEWER_MIN_PX), Math.max(max, VIEWER_MIN_PX)),
   );
 }
 
-/** Column mode fits only when the panel minimum leaves the conversation
- *  its minimum; otherwise the panel overlays (ADR 0050 thresholds). */
-export function viewerFitsDocked(widthPx: number, bodyWidth: number): boolean {
-  return (
-    bodyWidth > 0 && bodyWidth - widthPx - VIEWER_GAP_PX >= CONVERSATION_MIN_PX
-  );
+/** Column mode fits only when the panel MINIMUM leaves the conversation
+ *  its minimum; otherwise the panel overlays (ADR 0050 thresholds).
+ *
+ *  Deliberately independent of the panel's current width: the old test
+ *  (`bodyWidth - clampedWidth - gap >= conversation min`) sits at EXACT
+ *  equality on every frame of a sidebar slide once the clamp binds, so
+ *  sub-pixel measurement noise flipped docked↔overlay repeatedly — each
+ *  overlay entry restarts the sheet animation from opacity 0, which the
+ *  user sees as the panel flashing (2026-09-01, window mode + wide
+ *  panel). The clamp already guarantees a docked panel leaves the
+ *  conversation its floor, so the mode question is only "is the body
+ *  wide enough for the panel minimum at all". */
+export function viewerFitsDocked(bodyWidth: number): boolean {
+  return bodyWidth - VIEWER_MIN_PX - VIEWER_GAP_PX >= CONVERSATION_MIN_PX;
 }
 
 function readStoredWidth(): number | null {
@@ -248,7 +259,7 @@ export function FileViewerProvider({
           bodyWidth,
         )
       : Math.max(widthPx, VIEWER_MIN_PX);
-  const docked = open && viewerFitsDocked(effectiveWidth, bodyWidth);
+  const docked = open && viewerFitsDocked(bodyWidth);
 
   const state = useMemo<FileViewerState>(
     () => ({

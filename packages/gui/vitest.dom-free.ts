@@ -44,6 +44,7 @@ export const DOM_FREE_TESTS = [
   // reading one.
   "src/renderer/components/Approval/fold-heredocs.test.ts",
   "src/renderer/components/Approval/risk-label.test.ts",
+  "src/renderer/components/FileViewer/viewer-layout.test.ts",
   "src/renderer/components/Opening/ascii-renderer.test.ts",
   "src/renderer/components/Opening/pick-opening-segment.test.ts",
   "src/renderer/components/Sidebar/group-sessions.test.ts",

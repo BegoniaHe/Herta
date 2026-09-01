@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { dreamDirFor, narrativeDirFor } from "@herta/core";
 import { promptAssetsFor } from "./prompt-assets.js";
@@ -44,6 +44,7 @@ export async function materializeSeedFeian(
   assetsOverride?: {
     readonly feianSeeds: Readonly<Record<string, string>>;
     readonly supersededFeianSha1: readonly string[];
+    readonly retiredFeian?: Readonly<Record<string, readonly string[]>>;
   },
 ): Promise<void> {
   // Per-language dir: EN seeds land in `.herta/narrative-en`, wholly separate
@@ -102,9 +103,49 @@ export async function materializeSeedFeian(
     }
   }
 
-  if (missing.length === 0 && stale.length === 0) return;
+  // Retired seeds (ADR 0053): a file that no longer ships because its
+  // content was folded into another seed. Materialization only ever writes,
+  // so without this an existing workspace would carry the retired file
+  // NEXT TO its successor and Herta would read the same lesson twice.
+  // Archived, never deleted — the same destination cap-eviction uses — and
+  // only when the content still hashes to a body this bundle shipped, so a
+  // user-edited copy is left alone (D7).
+  const retiredMap = assets.retiredFeian ?? {};
+  const retired: string[] = [];
+  for (const [filename, hashes] of Object.entries(retiredMap)) {
+    if (!live.has(filename)) continue;
+    try {
+      const onDisk = (await readFile(join(dir, filename), "utf-8")).replace(
+        /\r\n/g,
+        "\n",
+      );
+      const sha1 = createHash("sha1").update(onDisk, "utf8").digest("hex");
+      if (hashes.includes(sha1)) retired.push(filename);
+    } catch {
+      // unreadable — leave it alone.
+    }
+  }
+
+  if (missing.length === 0 && stale.length === 0 && retired.length === 0) {
+    return;
+  }
 
   await mkdir(dir, { recursive: true });
+  if (retired.length > 0) {
+    const archiveDir = join(dreamDirFor(workspaceRoot, lang), "archive");
+    await mkdir(archiveDir, { recursive: true });
+    for (const filename of retired) {
+      try {
+        await rename(join(dir, filename), join(archiveDir, filename));
+      } catch (err) {
+        console.warn(
+          `materializeSeedFeian: failed to archive retired ${filename}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+  }
   for (const [filename, body] of [...missing, ...stale]) {
     try {
       await writeFile(join(dir, filename), body, "utf-8");

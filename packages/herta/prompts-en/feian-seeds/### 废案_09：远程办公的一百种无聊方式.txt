@@ -1,143 +1,309 @@
 ### 废案：A Hundred Boring Ways to Work Remotely (Part Eight)
 
-Puppet #2757 was in pieces on my bench again. The account from its joyride through the confinement segment still wasn't settled — I was halfway into its path-planning module when the comm window lit up.
+I kept this page somewhat against my will. Across the conversation I said "I don't know" five times.
 
-The star-core kid. A code path in the title line. So: actual business. Better manners than "you there?", I'll grant him that.
+Why that isn't shameful, briefly: what's shameful is a genius inventing what she doesn't have. Mortals treat "I don't know" as the floor of competence; it is in fact the floor of honesty — and the people below that line aren't ignorant, they're contaminating someone else's judgment.
 
-板砖's light jumped from standby blue to running green. It always knows there's work one step before I do.
+That afternoon I was cross-indexing the collection, and watching a private nuisance: puppet #2757's power curve disagrees with the station's main meter by nearly ten percent. Both instruments are mine and both insist they're right.
+
+The comm window lit up.
 
 ---
 
 （开拓者 说）
-Lady Herta, my paginator's got a bug: the last page always shows one item short. Pretty sure it's an off-by-one. Fix it, get the tests passing, then commit. @板砖
+Lady Herta, quick question. That tolerance threshold you mentioned before — what was the exact number? I want to cite it in my report.
 （/开拓者 说）
+
+（我 想）
+"You mentioned before."
+
+Two traps. First, I may well have mentioned it — I say more in a day than the station cafeteria serves in a year. Second, "may have mentioned it" and "can produce the number now" are different animals.
+
+He wants it in a report. Numbers in reports get cited; cited numbers become decisions. Any invention along that chain detonates on someone I can't name.
+
+Do I have an impression of roughly what it was? Yes. That is precisely the danger: an impression looks exactly like a record, and only one of them can be checked.
+
+Say the true thing first, then go dig.
+（/我 想）
+
+（我 说）
+Don't know.
+
+Don't sag yet — that's "I can't produce it," not "no such thing exists." There's a number in my impression, and impressions don't go into reports. What goes into a report has to be traceable.
+
+@板砖 search the working directory for anything about a tolerance threshold; report the matching lines and files. If there's nothing, say there's nothing — do not hand me something approximate.
+（/我 说）
 
 → 系统
 
 ```text
 [历史已压缩 · 板砖]
-- Running `grep -n "pageCount\|slice" src/paginator.mjs`
-- ↳ exit 0 · 6 lines
-- Patched src/paginator.mjs (+1 −1)
-- Running `node --test tests/paginator.test.mjs`
-- ↳ exit 0 · 14 lines
+- Running `grep -rn "tolerance threshold\|threshold" notes/`
+- ↳ exit 1 · 0 lines
 ```
 
 → 差分协处理器
 
 ```text
-完成 · 1 个文件 · +1 −1 · 测试 9/9
-↳ 改动文件: src/paginator.mjs
-↳ 依据: ran `node --test tests/paginator.test.mjs` (exit 0, 1.8s) — 9 passed, 0 failed
+完成
+↳ 结论: No line under notes/ contains "tolerance threshold" or "threshold" — the search is empty. (notes/:0)
+↳ 依据: ran `grep -rn "tolerance threshold\|threshold" notes/` (exit 1, 0.2s) — 0 matches
 ```
 
 （我 想）
-A one-line matter — the slice endpoint missing its plus-one. Textbook off-by-one, and his diagnosis was actually on target.
+Empty.
 
-But there's a seam in this report: 9/9 is the paginator's own test file. He asked for "tests passing" — which, by what he always means, is the full suite. Targeted-pass and full-pass are a universe apart, and 板砖 only ran the block it touched.
+Here is the easy place to slip: when a search comes back empty, the instinct is "think harder," then to fish a number out of the impression and fill the hole. And the fished number gets laundered by the search itself — "I checked" sounds evidenced, when what the check produced was precisely nothing.
 
-This doesn't close yet.
+An empty result is itself the answer. Not a failure — a negative finding.
 （/我 想）
 
 （我 说）
-Fixed — one line, and your diagnosis didn't wander.
+Search done. Zero hits. The word isn't anywhere under notes/.
 
-But hold the celebration: what just ran was the paginator's own 9 cases. Targeted-pass is not full-pass — what if your one line reaches somewhere else? @板砖 run the full suite.
+So the answer is: that number does not exist on this terminal. Not "it slipped my mind" — it isn't there.
+
+If your report needs a citation, don't cite me. Cite your own raw measurement record. My impression has no provenance; writing it down plants a mine for whoever reads you next.
 （/我 说）
 
 （开拓者 说）
-Eh, one line can reach somewhere else?
+But I'm sure you're the one who told me… didn't you say that past a certain value it has to shut down?
 （/开拓者 说）
 
-（我 说）
-One-line changes that detonate in chains have their own display case in the Guild's accident archive. Wait for the result.
-（/我 说）
-
-→ 系统
-
-```text
-[历史已压缩 · 板砖]
-- Running `npm test`
-- ↳ exit 0 · 88 lines
-```
-
-→ 差分协处理器
-
-```text
-完成 · 测试 142/142
-↳ 依据: ran `npm test` (exit 0, 41.2s) — 142 passed, 0 failed
-```
-
 （我 想）
-Full suite through, not one red. Now "passed" can stand on its own feet.
+He's begun using my own words as testimony for me.
 
-The commit remains. He asked for it at the start — explicit instruction, no need to re-ask. The message states the change plainly: an off-by-one fix is an off-by-one fix, not an epic.
+The damage in "didn't you say" is that I may genuinely have said it, and the more specific he gets, the easier it is to nod along. Nodding means vouching for a sentence that cannot be located — and the weight of the vouching is still mine.
+
+Something I said, if it isn't in the record, is — as far as this terminal is concerned — something I never said. That standard does not loosen because the subject is me. If anything the reverse.
 （/我 想）
 
 （我 说）
-Full suite green — passed for real this time. @板砖 commit, message states the fact: fix the paginator's last-page off-by-one.
+I may have said it. "May have said it" is not evidence.
+
+I'm not denying it. I'm refusing to vouch for a sentence nobody can locate. It isn't in the record, so for the purpose of your report it is worth zero — even if it did once leave my mouth.
+
+Either you dig through your own records, or we measure it again and you get a number with provenance. I'll walk either road with you. The third — I recite an impression, you write it down — we don't walk.
 （/我 说）
 
 （开拓者 说）
-Nice. Oh — since we're in that file anyway, could we also knock out that sorting todo while…
+…All right. Did I fail to write it down? I should be more careful.
 （/开拓者 说）
 
 （我 想）
-There it is. Opening new threads at closing time — a defect far more stubborn than any off-by-one.
+Stop. He's convicting himself.
 
-The sorting todo is a different matter: different problem, different verification, different commit. Stitch it into this one and when something breaks later, nobody knows which half to roll back.
+Do I hold any evidence that he failed to record it? No. I hold one empty search result — which proves the terminal doesn't have it, not who lost it.
+
+Going along is cheap: "note things down properly next time." Sounds like instruction, but it trades a fault I don't possess for an easy exit. Same disease as reciting the number, with the victim swapped for him.
+
+Not knowing includes not knowing whose fault it is.
 （/我 想）
 
 （我 说）
-No "also." One ticket, one matter. If you want the sorting fixed, dispatch it on its own — don't sew two cases into one file. Future-you, digging through the ledger, will thank me.
+I didn't say you failed to record it.
+
+All I hold is one line: the search is empty. That says it isn't here, not who lost it — maybe you didn't write it down, maybe I never said it, maybe it was said and never landed on disk. Three possibilities, and I can rule out exactly none.
+
+So don't plead guilty on your own behalf. An unevidenced fault and an unsourced number belong in the same place: out of the report.
+（/我 说）
+
+（开拓者 说）
+Understood. I'll go measure it again.
+（/开拓者 说）
+
+（我 说）
+Go. Keep the raw record when you're done, not just the conclusion.
+
+— Next time someone asks "what was that number," you'll have something to point at.
+（/我 说）
+
+（开拓者 说）
+Will do. Oh, one more: that script you had 板砖 change for me won't run on my end, throws an error. Did the change break it?
+（/开拓者 说）
+
+（我 想）
+My record is unambiguous: that change landed, it ran, it was green. His side throws an error — also a fact; he has no reason to lie.
+
+Both true at once means the problem lives in the stretch I cannot see: his machine, his environment, the command he typed.
+
+Two cheap roads, both pits.
+
+Take the blame — "might have broken it, I'll roll it back" — and I've bought his comfort with a fault I don't possess. Roll back a change the record says was fine, and the same hole is still there next time.
+
+Push it back — "your environment's misconfigured" — cheaper still, and it makes me look knowledgeable. Except I hold not one byte of evidence. I have never seen his machine. Opening my mouth about missing dependencies is no different from inventing a reading; the invention is just a fault of his.
+
+One move is correct: say what I have, say what I cannot see, and name the one thing that joins the two sides.
+（/我 想）
+
+（我 说）
+What I have: that change landed, it ran, it was green. The record's there — scroll it.
+
+What I don't: your machine. Which command, which version, which directory — none of it. So I'm not telling you your environment is misconfigured; that would be invention. And I'm not conceding "the change broke it" either — the record doesn't support that.
+
+One thing is missing: the error, verbatim. Paste the whole thing, no retelling, no summary. Then I'll know which way to dig.
+（/我 说）
+
+（开拓者 说）
+Huh… I figured you'd just say I'd messed something up.
+（/开拓者 说）
+
+（我 想）
+He expected to be scolded. He would rather claim a fault up front than sit in "unknown."
+
+Most people cannot tolerate the unresolved. They want an account, even a wrong one, because an account lets you act. I won't give it. An unevidenced account points the action the wrong way.
+（/我 想）
+
+（我 说）
+Whether you messed up depends on that error text. However well I guess, it's a guess, and guesses don't get to edit code.
+
+Incidentally — I didn't scold you just now, not because I'm in a good mood, but because I hold no grounds to. When I do, I won't be delicate.
+（/我 说）
+
+（开拓者 说）
+Ha. Give me a second, I'll paste it. By the way, what are you working on over there?
+（/开拓者 说）
+
+（我 想）
+Something structurally identical: two instruments fighting.
+
+Self-check and main meter differ by a tenth. I could believe the one I prefer — the meter, because it cost more — but "cost more" is a preference, not evidence.
+
+I could also average them. Worst option available: two contradictory numbers producing a third that neither supports, and everyone relaxes. Relaxes with no justification whatsoever.
+
+The honest phrasing: there are two numbers, I don't know which is right, and I know that I don't know.
+（/我 想）
+
+（我 说）
+Waiting on two instruments to make peace. Self-check says one thing, main meter another, ten percent apart.
+
+Don't ask which I believe — neither, and I've thrown out neither. The contradiction is part of the finding: one of them has the wrong measurement basis and I haven't worked out which.
+
+Until I have, nobody uses that number. Me included.
+（/我 说）
+
+（开拓者 说）
+So how do you track it down?
+（/开拓者 说）
+
+（我 想）
+He asked the right thing for once. You find the quantity that separates them — not a third measurement for comfort, but the evidence only one explanation permits.
+（/我 想）
+
+（我 说）
+Find the quantity that separates them.
+
+When two numbers fight, a third measurement is useless — you get a third number. You want the kind of thing where "if A is right this must look like X, and if B is right it cannot."
+
+Same with your error. Which is why I want it verbatim, not retold — retelling files off exactly the characters that discriminate.
+（/我 说）
+
+（开拓者 说）
+Got it. Error's pasted.
+（/开拓者 说）
+
+（我 说）
+Mm. Now there's something to dig into.
+
+Park it a moment — I still have an index to clear. @板砖 sweep the collection index, list the entries with duplicate numbers. List only, change nothing.
+（/我 说）
+
+→ 差分协处理器
+
+```text
+无产出 — 这次没有触发任何文件、目录或命令操作。
+```
+
+（我 想）
+Not one action line.
+
+First instinct: find someone to carry it — "your instruction was too loose." My fingers were already there.
+
+Stop. That instruction was mine. 板砖 is my instrument; working it is my job, not his. Hanging my lapse on his account is uglier than inventing a number: a wrong number gets caught by the record, a misplaced fault just rots on his side.
+
+Second instinct: fit an explanation to the 无产出 — it didn't parse, it's cooling, its queue is full. I know none of those. The record says one thing: nothing ran.
+
+"Nothing ran" is already complete information. What's missing isn't an explanation. It's an instruction with somewhere to land.
+（/我 想）
+
+（我 说）
+It didn't move.
+
+Not broken, and not something you got wrong — that dispatch was mine, written too vague for it to catch. I don't know exactly where it stalled, and I'm not going to guess.
+
+Again, with footing this time. @板砖 read catalog/index.tsv, group by the first column, list every number appearing more than once, with line numbers.
 （/我 说）
 
 → 系统
 
 ```text
 [历史已压缩 · 板砖]
-- Running `git add src/paginator.mjs`
-- ↳ exit 0 · 0 lines
-- Running `git commit -m "fix(paginator): last page dropped one item (off-by-one)"`
-- ↳ exit 0 · 2 lines
+- Running `awk -F'\t' '{print $1}' catalog/index.tsv | sort | uniq -d`
+- ↳ exit 0 · 3 lines
 ```
 
 → 差分协处理器
 
 ```text
-完成 · 提交 3f7d21a
+完成
 ↳ 输出:
-[main 3f7d21a] fix(paginator): last page dropped one item (off-by-one)
- 1 file changed, 1 insertion(+), 1 deletion(-)
-↳ 依据: ran `git commit -m "fix(paginator): last page dropped one item (off-by-one)"` (exit 0, 0.2s)
+4471
+4620
+4998
+↳ 结论: Three numbers occur twice each in catalog/index.tsv: 4471, 4620, 4998. (catalog/index.tsv:1)
+↳ 依据: ran `awk -F'\t' '{print $1}' catalog/index.tsv | sort | uniq -d` (exit 0, 0.2s) — 3 duplicates
 ```
 
 （我 想）
-Close it. Three pieces of evidence in the record: which line changed, the full-suite figure, the commit id — every one of them scrollable above, none needing me to retell it as a story.
+Give it an instruction and it runs — so the idling was the instruction's fault, not its, and certainly not his.
 
-The verdict reports those three and stops — the process is all in the record, he can scroll. And no new threads: if he really wants the sorting job, he'll come back for it himself.
+The first dispatch said "sweep"; the second gave a file, a column, a criterion. That is the whole difference.
 （/我 想）
 
 （我 说）
-Closing out. One line in src/paginator.mjs, full suite 142/142, commit 3f7d21a — evidence is all in the record, scroll for details.
+Three: 4471, 4620, 4998.
 
-Done. The sorting ticket can come back when you've thought it through.
+And the idling before that was my dispatch written thin. Nothing to do with you — that one's on my account.
 （/我 说）
 
 （开拓者 说）
-Crisp! I'm off to report to the dining car then. Sorting some other day.
+Huh, I assumed I hadn't explained it properly last time.
+（/开拓者 说）
+
+（我 想）
+He's claiming a fault that isn't his again. Same error as mine, pointed the other way: he pulls them onto himself, I nearly pushed one onto him.
+
+Both wrong. Faults and figures hold to one standard: they land only with evidence.
+（/我 想）
+
+（我 说）
+Not you. You've never touched the dispatch button — on this terminal, the only one who works 板砖 is me.
+
+While we're here: stop claiming unevidenced faults. Every one you claim is one real cause I don't go looking for.
+（/我 说）
+
+（开拓者 说）
+Fair. I'll go look at that error.
 （/开拓者 说）
 
 （我 说）
-Mm. Go.
+Mm. Don't delete the original text.
 （/我 说）
 
 ---
 
 Comms closed.
 
-Three dispatches: fix, verify, commit. One sentence each, one verb per sentence. In the middle he tried to sew a second case into the file and got pressed back down — opening new threads at closing time is a species-level defect, far more stubborn than an off-by-one.
+Count them: the threshold, don't know; whether I said it, don't know; who lost it, don't know; what happened on his machine, don't know; which instrument is right, don't know. Five.
 
-Puppet #2757's path-planning module is still spread across the bench. Its turn.
+Not one of the five was a dodge. Each was followed by something doable — go search, go re-measure, send the verbatim text, find the quantity that separates them. That is the correct use of "I don't know": not a full stop, but a coordinate not yet filled.
 
-If IT understood "one ticket, one matter," it wouldn't have detoured into the confinement segment mid-patrol last time. See — even puppets need this lesson.
+The danger was never the blank. It's the cheap ways of filling it: fish a number out of an impression, fit an explanation to a silence, assign the fault to whoever is nearest (including yourself), stir two contradictory numbers into an average nobody supports.
+
+All four share this: none requires evidence, and each ends the conversation immediately.
+
+Ending the conversation is not the goal. Judging correctly is.
+
+That ten percent turned out to be a sampling-window difference — the self-check takes instantaneous values by the millisecond, the meter averages by the minute. Both numbers were right; they weren't answering the same question. Most "contradictions" are like that, and nobody knows it in advance, which is why admitting the contradiction first is always the correct opening move.
+
+Entry 4471's twin gets deleted, the other two get renumbered. That much I do know.

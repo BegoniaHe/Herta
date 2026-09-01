@@ -30,9 +30,9 @@ describe("materializeSeedFeian (M-prompts-1)", () => {
     for (const name of Object.keys(PROMPT_ASSETS.feianSeeds)) {
       expect(files).toContain(name);
     }
-    // 8 originals + ADR 0052's 其七/其八 (废案_08/09) + ADR 0053's
-    // measured-iteration 其九/其十/其十一 (废案_10/11/12).
-    expect(Object.keys(PROMPT_ASSETS.feianSeeds).length).toBe(13);
+    // 8 originals + the two consolidated 远程办公 entries (废案_08/09):
+    // ADR 0053 folded 其七–其十一 into two longer conversations.
+    expect(Object.keys(PROMPT_ASSETS.feianSeeds).length).toBe(10);
   });
 
   it("is idempotent — a second call changes nothing", async () => {
@@ -116,6 +116,53 @@ describe("materializeSeedFeian (M-prompts-1)", () => {
     expect(readFileSync(join(narrativeDir(), seedName), "utf-8")).toBe(
       NEW_BODY,
     );
+  });
+
+  it("ARCHIVES a retired seed whose content still matches a shipped body (ADR 0053 consolidation)", async () => {
+    const retiredName = "### 废案_10：远程办公的一百种无聊方式.txt";
+    const retiredBody = "### 废案_10：旧的独立篇\n\n---\n\n已并入其它废案。\n";
+    mkdirSync(narrativeDir(), { recursive: true });
+    writeFileSync(join(narrativeDir(), retiredName), retiredBody, "utf-8");
+
+    await materializeSeedFeian(root, "zh", {
+      feianSeeds: { [seedName]: NEW_BODY },
+      supersededFeianSha1: [],
+      retiredFeian: { [retiredName]: [await sha1Of(retiredBody)] },
+    });
+
+    // Gone from the live corpus, but recoverable — archived, not deleted.
+    expect(readdirSync(narrativeDir())).not.toContain(retiredName);
+    expect(readdirSync(join(root, ".herta", "dream", "archive"))).toContain(
+      retiredName,
+    );
+  });
+
+  it("a retired FILENAME with user-edited content is left alone (D7)", async () => {
+    const retiredName = "### 废案_10：远程办公的一百种无聊方式.txt";
+    const edited = "### 废案_10：我自己改的\n\n---\n\n别动我的。\n";
+    mkdirSync(narrativeDir(), { recursive: true });
+    writeFileSync(join(narrativeDir(), retiredName), edited, "utf-8");
+
+    await materializeSeedFeian(root, "zh", {
+      feianSeeds: { [seedName]: NEW_BODY },
+      supersededFeianSha1: [],
+      // The hash registered is some OTHER shipped body, not this edit.
+      retiredFeian: { [retiredName]: [await sha1Of("something else")] },
+    });
+
+    expect(readFileSync(join(narrativeDir(), retiredName), "utf-8")).toBe(
+      edited,
+    );
+  });
+
+  it("the shipped retirement registry names only files that no longer ship", () => {
+    for (const name of Object.keys(PROMPT_ASSETS.retiredFeian)) {
+      expect(Object.keys(PROMPT_ASSETS.feianSeeds)).not.toContain(name);
+    }
+    for (const hashes of Object.values(PROMPT_ASSETS.retiredFeian)) {
+      expect(hashes.length).toBeGreaterThan(0);
+      for (const h of hashes) expect(h).toMatch(/^[0-9a-f]{40}$/);
+    }
   });
 
   it("the REAL registry recognizes the pre-revision bodies: every registered hash is 40-hex and the revised seeds' own hashes are NOT registered", async () => {

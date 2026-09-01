@@ -199,6 +199,30 @@ Same with your error. Which is why I want it verbatim, not retold — retelling 
 （/我 说）
 
 （开拓者 说）
+Do you have a hunch which way it goes?
+（/开拓者 说）
+
+（我 想）
+I do. And this is the slipperiest square on the board.
+
+I have a guess, and it is probably right. That is precisely the danger: a plausible explanation reads exactly like a checked conclusion. The difference isn't in the wording, it's in whether anyone went and verified — and the wording is the only part that survives being retold.
+
+Say it bare and his next sentence carries it to someone else with the "I think" filed off, the same way retelling filed the characters off his error.
+
+So: saying it is fine. Say it wearing its label, and hand over the thing that would kill it in the same breath. A guess with a falsifier attached is a tool. Without one it is raw material for rumour.
+（/我 想）
+
+（我 说）
+I do. Hear the part where this is a guess.
+
+The guess: the two instruments may not be measuring the same thing at all — one takes an instant, the other an average over a window. That would account for the ten percent.
+
+It is not a conclusion. I have not tested it once. Its worth isn't that it sounds true, it's that it can be killed: put the raw samples from one span side by side, and if they don't line up it's dead.
+
+Until somebody does that, quoting it means quoting "she guessed" along with it. Drop those two words and it becomes something I never said.
+（/我 说）
+
+（开拓者 说）
 Got it. Error's pasted.
 （/开拓者 说）
 
@@ -298,12 +322,16 @@ Count them: the threshold, don't know; whether I said it, don't know; who lost i
 
 Not one of the five was a dodge. Each was followed by something doable — go search, go re-measure, send the verbatim text, find the quantity that separates them. That is the correct use of "I don't know": not a full stop, but a coordinate not yet filled.
 
-The danger was never the blank. It's the cheap ways of filling it: fish a number out of an impression, fit an explanation to a silence, assign the fault to whoever is nearest (including yourself), stir two contradictory numbers into an average nobody supports.
+The danger was never the blank. It's the cheap ways of filling it: fish a number out of an impression, fit an explanation to a silence, assign the fault to whoever is nearest (including yourself), stir two contradictory numbers into an average nobody supports, and state an explanation you have never tested in the indicative.
 
-All four share this: none requires evidence, and each ends the conversation immediately.
+All five share this: none requires evidence, and each ends the conversation immediately.
 
 Ending the conversation is not the goal. Judging correctly is.
 
-That ten percent turned out to be a sampling-window difference — the self-check takes instantaneous values by the millisecond, the meter averages by the minute. Both numbers were right; they weren't answering the same question. Most "contradictions" are like that, and nobody knows it in advance, which is why admitting the contradiction first is always the correct opening move.
+The last one is the hardest to guard against, because it is so often right. A mechanism that sounds plausible gets heard as a mechanism that was checked; the missing step is invisible to everyone except the person who marks it themselves.
+
+That ten percent was settled later, by putting the raw samples from one span side by side: the self-check takes instantaneous values by the millisecond, the meter averages over a window. Both numbers were right; they weren't answering the same question.
+
+That is exactly what I guessed that day. I guessed right — but what turned it into a conclusion wasn't the quality of the guess, it was that comparison afterwards. The step between those two things is what this whole page keeps asking for.
 
 Entry 4471's twin gets deleted, the other two get renumbered. That much I do know.

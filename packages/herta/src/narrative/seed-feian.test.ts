@@ -31,8 +31,8 @@ describe("materializeSeedFeian (M-prompts-1)", () => {
       expect(files).toContain(name);
     }
     // 8 originals + ADR 0052's 其七/其八 (废案_08/09) + ADR 0053's
-    // measured-iteration 其九/其十 (废案_10/11).
-    expect(Object.keys(PROMPT_ASSETS.feianSeeds).length).toBe(12);
+    // measured-iteration 其九/其十/其十一 (废案_10/11/12).
+    expect(Object.keys(PROMPT_ASSETS.feianSeeds).length).toBe(13);
   });
 
   it("is idempotent — a second call changes nothing", async () => {

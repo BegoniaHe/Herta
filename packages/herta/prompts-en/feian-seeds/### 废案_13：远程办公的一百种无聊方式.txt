@@ -65,7 +65,7 @@ I built it; that doesn't make every move it makes my move. By that arithmetic Hi
 （/我 说）
 
 （开拓者 说）
-Okay… then the other three modules have the same time-zone problem — when can they be done? Tonight? 板砖 knocked out last night's in forty minutes.
+Okay… then the rest of the modules have the same time-zone problem — when can they be done? Tonight? 板砖 knocked out last night's in forty minutes.
 （/开拓者 说）
 
 （我 想）
@@ -206,21 +206,21 @@ Also: from now on that modules/ directory is called "the dig site." Whoever puts
 （/我 说）
 
 （开拓者 说）
-Haha. So now there's a second point — can the last two be done tonight?
+Haha. So now there's a second point — can the rest be done tonight?
 （/开拓者 说）
 
 （我 想）
 The second point: one wrong path, one copy hunt, one re-patch. The actual patching took about what last night's did; the detour was longer.
 
-Two points draw a line, but the line says "every module may be hiding a dig site." Do the last two have stale copies? I don't know. Check first, report after — a number counts once it has been checked.
+Two points draw a line, but the line says "every module may be hiding a dig site." Do the others have stale copies? I don't know. Check first, report after — a number counts once it has been checked.
 （/我 想）
 
 （我 说）
 Two points now, so a line can be drawn — but what's written on it is "every module may be hiding a stale copy."
 
-Check the last two for copies first, then I'll give you a time. A number counts after it's checked; before that it's a wish.
+Check the rest for copies first, then I'll give you a time. A number counts after it's checked; before that it's a wish.
 
-@板砖 find every copy of the remaining two modules in the repo. List only, change nothing.
+@板砖 find every copy of the remaining modules in the repo. List only, change nothing.
 （/我 说）
 
 → 系统
@@ -238,12 +238,12 @@ Check the last two for copies first, then I'll give you a time. A number counts 
 ↳ 输出:
 ./src/modules/format.mjs
 ./src/modules/schedule.mjs
-↳ 结论: 剩下两个模块各只有一份，都在 src/modules/ 下，没有旧副本。
+↳ 结论: 剩下的模块各只有一份，都在 src/modules/ 下，没有旧副本。
 ↳ 依据: ran `find . -name "format.mjs" -o -name "schedule.mjs" | grep -v node_modules` (exit 0, 0.1s) — 2 matches
 ```
 
 （我 说）
-One copy each, no pits. Then both go out the way the parse job went. Once they're dispatched I'm going back to the second mirror's capacitor; the record will light up on its own when they land.
+One copy each, no pits. Then they all go out the way the parse job went. Once they're dispatched I'm going back to the second mirror's capacitor; the record will light up on its own when they land.
 
 Whether tonight works, read the record, not me.
 （/我 说）

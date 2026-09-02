@@ -3361,6 +3361,155 @@ describe("Conversation jump-to-latest chip", () => {
     expect(screen.queryByText("Back to bottom")).not.toBeInTheDocument();
     vi.useRealTimers();
   });
+
+  it("melts away when a layout SHRINK lands the reader at the bottom with no scroll event (a disclosure collapsing under them, owner 2026-09-02)", () => {
+    // The scroll handler was the only place the pin was recomputed, so
+    // collapsing a 板砖 detail row while scrolled up — the flow shrinks, no
+    // scroll event, the whole bubble now on screen — left the chip up for
+    // good and the follow off. The scroller's ResizeObserver now watches
+    // the flow wrapper too and re-derives the pin from geometry on a
+    // SHRINK (growth never can bring a reader to the bottom, and it
+    // arrives on every reveal frame).
+    vi.useFakeTimers();
+    const observers: Array<{
+      cb: ResizeObserverCallback;
+      targets: Element[];
+    }> = [];
+    class FakeRO {
+      targets: Element[] = [];
+      cb: ResizeObserverCallback;
+      constructor(cb: ResizeObserverCallback) {
+        this.cb = cb;
+        observers.push(this);
+      }
+      observe(t: Element): void {
+        this.targets.push(t);
+      }
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal("ResizeObserver", FakeRO);
+    try {
+      const mock = createMockHertaBridge();
+      const { pane } = setupUnpinned(mock);
+      const flow = pane.querySelector(".conversation-flow") as HTMLElement;
+      expect(flow).not.toBeNull();
+      /** Deliver a flow-wrapper entry to every observer watching it (the
+       *  scroller's and useScrollEdges'), as a real observer would. */
+      const deliver = (height: number): void => {
+        const entry = {
+          target: flow,
+          contentRect: { height },
+        } as unknown as ResizeObserverEntry;
+        act(() => {
+          for (const o of observers) {
+            if (o.targets.includes(flow))
+              o.cb([entry], o as unknown as ResizeObserver);
+          }
+        });
+      };
+      deliver(1000); // the baseline the shrink test compares against
+      act(() => {
+        mock.emitRecord({
+          kind: "block",
+          blockId: "b2",
+          block: { kind: "herta", surface: "speech", text: "answer" },
+        });
+      });
+      act(() => {
+        vi.advanceTimersByTime(32);
+      });
+      expect(screen.getByText("Back to bottom").className).toContain("is-open");
+      // Growth alone never re-derives: the reader is still 900px up.
+      deliver(1500);
+      expect(screen.getByText("Back to bottom").className).toContain("is-open");
+      // The collapse: the flow shrinks until the pane shows everything
+      // (scrollTop 0 + 100 viewport ≥ 120 − pin threshold) — no scroll
+      // event, no click, and the chip melts away on its own.
+      Object.defineProperty(pane, "scrollHeight", {
+        value: 120,
+        configurable: true,
+      });
+      deliver(120);
+      expect(screen.getByText("Back to bottom").className).not.toContain(
+        "is-open",
+      );
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(screen.queryByText("Back to bottom")).not.toBeInTheDocument();
+      // …and the follow is back on: the next block does not re-light it.
+      act(() => {
+        mock.emitRecord({
+          kind: "block",
+          blockId: "b3",
+          block: { kind: "herta", surface: "speech", text: "more" },
+        });
+      });
+      expect(screen.queryByText("Back to bottom")).not.toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it("a disclosure opened AFTER a real scroll-away leaves the chip armed", () => {
+    // `unpin` marks a DISCLOSURE unpin synthetic so the chip does not light
+    // for a reader who never left the bottom (2026-07-24). It did so even
+    // when the reader had already scrolled away for real — and from then on
+    // growth below them lit nothing until their next scroll. Scroll-then-
+    // expand is reading history exactly as expand-then-scroll is (the
+    // 2026-08-10 rule), so the unpin is a no-op for an unpinned reader.
+    vi.useFakeTimers();
+    const mock = createMockHertaBridge();
+    const { container } = renderWithLocale(
+      <WorkspaceRefsProvider>
+        <HertaBridgeProvider bridge={mock.bridge}>
+          <Conversation />
+        </HertaBridgeProvider>
+      </WorkspaceRefsProvider>,
+    );
+    act(() => {
+      mock.emitReset({
+        sessionId: "s",
+        workspaceRoot: "/r",
+        record: [
+          { kind: "user", text: "fix it @板砖" },
+          { kind: "system", label: "差分协处理器", body: "Reading scripts" },
+        ],
+        overlay: null,
+        backendWorkspace: "/r",
+        backendWorkspaceIsDefault: true,
+      });
+    });
+    const pane = container.querySelector(".conversation") as HTMLElement;
+    Object.defineProperty(pane, "scrollTop", {
+      value: 0,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(pane, "clientHeight", {
+      value: 100,
+      configurable: true,
+    });
+    Object.defineProperty(pane, "scrollHeight", {
+      value: 1000,
+      configurable: true,
+    });
+    fireEvent.scroll(pane); // the reader scrolls up — a REAL unpin
+    const line = container.querySelector(".activity-line") as HTMLElement;
+    expect(line).not.toBeNull();
+    fireEvent.click(line); // …then opens the 板砖 history
+    act(() => {
+      mock.emitRecord({
+        kind: "block",
+        blockId: "b2",
+        block: { kind: "herta", surface: "speech", text: "answer" },
+      });
+    });
+    expect(screen.getByText("Back to bottom")).toBeInTheDocument();
+    vi.useRealTimers();
+  });
 });
 
 describe("Conversation load-earlier paging (long sessions)", () => {

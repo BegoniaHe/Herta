@@ -9,8 +9,11 @@ import { createContext, type ReactNode, useContext } from "react";
  * (a window resize, the next streamed block, a status row) then yanked the
  * viewport to the conversation's end, past the just-expanded content — the
  * "expands upward" read (user 2026-07-14). Expanding = reading intent →
- * unpin; the pin re-arms the moment the reader scrolls back to the bottom
- * (or sends a message, which re-pins explicitly).
+ * unpin; the pin re-arms the moment the reader is back at the bottom — by
+ * scrolling there, or by the disclosure collapsing under them (the
+ * scroller's `rederivePin`, 2026-09-02) — or sends a message, which re-pins
+ * explicitly. A reader already scrolled away is left exactly as they are:
+ * the unpin is a no-op there, so the chip keeps lighting for growth below.
  */
 const Ctx = createContext<(() => void) | null>(null);
 

@@ -63,9 +63,10 @@ export function useConversationScroll(opts: {
   // The old unconditional scrollIntoView fired on every reveal frame, so
   // scrolling up to reread during a streaming reply was impossible — the
   // pane snapped back to the bottom ~60×/s. `pinned` flips false when the
-  // user scrolls away from the bottom and true when they return; sending a
-  // message and switching sessions re-pin explicitly (your own actions
-  // always land you at the bottom).
+  // user scrolls away from the bottom and true when they return — by
+  // scrolling, or by a layout change that lands them there with no scroll
+  // event (`rederivePin` below); sending a message and switching sessions
+  // re-pin explicitly (your own actions always land you at the bottom).
   const pinnedRef = useRef(true);
   // Jump-to-latest chip (2026-07-11): `pinnedRef` mirrored as STATE plus
   // "new content arrived below" together mount the 回到底部 chip. The ref
@@ -201,11 +202,40 @@ export function useConversationScroll(opts: {
   // the conversation's end, past the just-expanded content — the "expands
   // upward" read (user 2026-07-14). See ConversationPin.tsx.
   const unpin = useCallback((): void => {
+    // Already away from the bottom by their own doing (a scroll, a topic
+    // jump, load-earlier): the disclosure changes nothing about where they
+    // are, and marking THIS unpin synthetic would silence the chip for
+    // growth below a reader who genuinely left — the 2026-08-10 rule in
+    // reverse (expand-then-scroll keeps the chip; so must scroll-then-expand).
+    if (!pinnedRef.current) return;
     pinnedRef.current = false;
     setPinnedState(false);
     // Disclosure unpin, not a user scroll — suppress the jump chip until a
     // real scroll event hands control back to geometry (see syntheticUnpinRef).
     syntheticUnpinRef.current = true;
+  }, []);
+  /** Re-derive the pin from GEOMETRY after a layout change that fires no
+   *  scroll event. The scroll handler was the only place `pinned` was ever
+   *  recomputed, so a change that put an unpinned reader at the bottom
+   *  without scrolling — a disclosure collapsing under them, the pane
+   *  growing on a maximize, the approval reserve going away — left
+   *  `pinnedRef` stale-false and the chip's `newBelow` stale-true: the
+   *  回到底部 chip stayed up over a bubble that was entirely on screen, and
+   *  the follow stayed off (owner 2026-09-02: scrolled up while Herta
+   *  speaks, expand a 板砖 detail row, collapse it — the chip never left).
+   *  Only the unpinned→pinned direction: growth cannot bring a reader TO
+   *  the bottom, and pinned→unpinned is the disclosure unpin's job. Stands
+   *  down for a chip glide / jump, which own the pin until they land. */
+  const rederivePin = useCallback((): void => {
+    const el = scrollRef.current;
+    if (el === null || pinnedRef.current) return;
+    if (glidingRef.current || jumpingRef.current) return;
+    if (el.scrollTop + el.clientHeight < el.scrollHeight - PIN_THRESHOLD_PX)
+      return;
+    pinnedRef.current = true;
+    setPinnedState(true);
+    setNewBelow(false);
+    syntheticUnpinRef.current = false;
   }, []);
   // ── Turn headroom (2026-07-29) ─────────────────────────────────────────
   // A send that needs room fixes a target scrollable EXTENT; the spacer
@@ -448,7 +478,38 @@ export function useConversationScroll(opts: {
     const el = scrollRef.current;
     if (el === null || typeof ResizeObserver === "undefined") return;
     let lastHeight = el.clientHeight;
-    const ro = new ResizeObserver(() => {
+    /** Last content-box height per observed child (the flow wrapper), for
+     *  the shrink test below. */
+    const lastChildHeight = new Map<Element, number>();
+    const ro = new ResizeObserver((entries) => {
+      // Two signals share the observer (2026-09-02). The scroller's OWN box
+      // (a viewport resize, the approval reserve) runs the follow below, as
+      // it always has. Its direct children — the flow wrapper, the same
+      // level useScrollEdges watches — report content changes, of which
+      // only a SHRINK matters here: a disclosure collapsing can land an
+      // unpinned reader at the bottom with no scroll event (rederivePin),
+      // while growth never can — and growth arrives on every reveal frame,
+      // so that branch is one number compare and nothing else. A callback
+      // with no entries (the tests' fake observer) is the scroller path.
+      const list: readonly ResizeObserverEntry[] = Array.isArray(entries)
+        ? entries
+        : [];
+      let scroller = list.length === 0;
+      let shrank = false;
+      for (const entry of list) {
+        if (entry.target === el) {
+          scroller = true;
+          continue;
+        }
+        const h = entry.contentRect.height;
+        const prev = lastChildHeight.get(entry.target);
+        lastChildHeight.set(entry.target, h);
+        if (prev !== undefined && h < prev) shrank = true;
+      }
+      // Before the follow, so a resize that lands an unpinned reader at the
+      // bottom is followed in the same frame.
+      if (scroller || shrank) rederivePin();
+      if (!scroller) return;
       // Viewport-delta re-derive (deferred-fix 2026-07-31): an armed extent
       // baked in the send-time viewport — `anchorTop − GAP + viewport` — so
       // a maximize mid-hold left the anchored message viewport-delta below
@@ -468,8 +529,9 @@ export function useConversationScroll(opts: {
       scrollToEndIfPinned();
     });
     ro.observe(el);
+    for (const child of Array.from(el.children)) ro.observe(child);
     return () => ro.disconnect();
-  }, [scrollToEndIfPinned]);
+  }, [scrollToEndIfPinned, rederivePin]);
   morphInFlightRef.current = outgoingClone !== null || incomingClone;
   // Settle catch-up: growth frozen during the flight scrolls into view the
   // moment the last clone lands — or, when the send deferred its climb into the
@@ -514,6 +576,7 @@ export function useConversationScroll(opts: {
     scrollGlideRef,
     rePin,
     unpin,
+    rederivePin,
     headroomRef,
     headroomExtentRef,
     measureAnchorTop,

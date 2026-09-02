@@ -76,8 +76,8 @@ export function AuraVisual(): JSX.Element {
   // A playing voice clip forces the speaking state so audio-only cues (the
   // easter egg) animate the aura even though they stream no text.
   const voicePlaying = useVoicePlaying();
-  // While disconnected the utility rail is off-screen (translateX(130%),
-  // opacity 0) yet still mounted — the shader was rendering full-rate WebGL
+  // While disconnected the utility rail is off-screen (translated past the
+  // right edge, opacity 0) yet still mounted — the shader was rendering full-rate WebGL
   // forever over the connect screen. Gate the loop like document.hidden.
   const disconnected = useDisconnected();
 

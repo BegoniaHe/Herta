@@ -16,6 +16,26 @@ export interface TodoWriteData {
   todos: readonly TodoItem[];
 }
 
+export interface TodoWriteToolOpts {
+  /**
+   * The session's interaction language (ADR 0016 amendment, 2026-09-03).
+   * Names the language the item text must be written in: the list is shown
+   * to the user inside the conversation, and a model reading an English
+   * tool description otherwise writes English items into a Chinese
+   * conversation. Absent = "zh", like every other `lang` seam.
+   */
+  lang?: "zh" | "en";
+}
+
+/** The language sentence of the description — the user-facing text's
+ *  language is the CONVERSATION's, not the tool prose's. Exported for the
+ *  contract-builder test that checks both layers agree. */
+export function todoContentLanguageLine(lang: "zh" | "en"): string {
+  return lang === "en"
+    ? "Write each item's `content` in English: the user reads this list inside an English conversation."
+    : "Write each item's `content` in Chinese (中文): the user reads this list inside a Chinese conversation.";
+}
+
 /**
  * Backend todo tool per ADR 0025 §2 — replaces the removed
  * plan_update / research_update pair. Full-list replacement: every call
@@ -24,7 +44,8 @@ export interface TodoWriteData {
  * (`BackendPromptFrame.todoState`), and unfinished items fold into the
  * report's `nextActions` when the brief ends.
  */
-export function todoWriteTool(): HertaTool {
+export function todoWriteTool(opts: TodoWriteToolOpts = {}): HertaTool {
+  const lang = opts.lang ?? "zh";
   return {
     name: "todo_write",
     schema(): ToolSchema {
@@ -37,7 +58,7 @@ export function todoWriteTool(): HertaTool {
           "list as statuses change. Statuses: pending | in_progress | completed; " +
           "keep at most one item in_progress at a time, and mark an item completed " +
           "as soon as it is done. Skip this tool for single-step jobs. An empty " +
-          "list clears the todos.",
+          `list clears the todos. ${todoContentLanguageLine(lang)}`,
         inputSchema: todoWriteJsonSchema,
       };
     },

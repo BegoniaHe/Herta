@@ -54,10 +54,22 @@ export interface ReportFindingToolOpts {
   /** Translate a cite's path spelling before path safety (ADR 0040; see
    *  show_excerpt's ShowExcerptToolOpts). Absent = identity. */
   mapPath?: (p: string) => string;
+  /** The session's interaction language (ADR 0016 amendment, 2026-09-03):
+   *  names the language `claim` is written in — it is shown to the user
+   *  verbatim, in the conversation. Absent = "zh". */
+  lang?: "zh" | "en";
+}
+
+/** The language sentence of the description; see todo_write's twin. */
+export function findingClaimLanguageLine(lang: "zh" | "en"): string {
+  return lang === "en"
+    ? "Write `claim` in English: the finding is shown to the user inside an English conversation."
+    : "Write `claim` in Chinese (中文): the finding is shown to the user inside a Chinese conversation.";
 }
 
 export function reportFindingTool(opts: ReportFindingToolOpts = {}): HertaTool {
   const mapPath = opts.mapPath ?? ((p: string) => p);
+  const lang = opts.lang ?? "zh";
   return {
     name: "report_finding",
     // NOT readOnly: it appends to the per-brief ledger — harness state, the
@@ -67,7 +79,8 @@ export function reportFindingTool(opts: ReportFindingToolOpts = {}): HertaTool {
       return {
         name: "report_finding",
         description:
-          'Record ONE conclusion of your analysis so it reaches the record and the final report — your final message text is NOT shown to anyone. `claim`: one sentence stating what you found. `cites`: 1–6 FILE locations that support it, each `path`, `path:line` or `path:from-to` (workspace-relative; attachments and .herta/logs allowed); every cite is checked to exist. Example: {claim: "remove() splices by id, not index", cites: ["src/store.mjs:20-22", "README.md"]}. A commit hash, command, or prose is NOT a cite — name those inside the claim and cite the files they concern. Call once per conclusion; consolidate rather than exceed the per-brief cap. Use for explore/analysis briefs; not needed when the deliverable is a file change.',
+          'Record ONE conclusion of your analysis so it reaches the record and the final report — your final message text is NOT shown to anyone. `claim`: one sentence stating what you found. `cites`: 1–6 FILE locations that support it, each `path`, `path:line` or `path:from-to` (workspace-relative; attachments and .herta/logs allowed); every cite is checked to exist. Example: {claim: "remove() splices by id, not index", cites: ["src/store.mjs:20-22", "README.md"]}. A commit hash, command, or prose is NOT a cite — name those inside the claim and cite the files they concern. Call once per conclusion; consolidate rather than exceed the per-brief cap. Use for explore/analysis briefs; not needed when the deliverable is a file change. ' +
+          findingClaimLanguageLine(lang),
         inputSchema: reportFindingJsonSchema,
       };
     },

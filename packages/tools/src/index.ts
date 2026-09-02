@@ -117,10 +117,12 @@ export type { ReadFileData } from "./read-file/index.js";
 export { readFileTool } from "./read-file/index.js";
 export type { ReadFileInput } from "./read-file/schema.js";
 export {
+  findingClaimLanguageLine,
   MAX_FINDING_CITES,
   MAX_FINDING_CLAIM_CHARS,
   type ReportFindingData,
   type ReportFindingInput,
+  type ReportFindingToolOpts,
   reportFindingTool,
 } from "./report-finding/index.js";
 export type { RunCommandData } from "./run-command/index.js";
@@ -160,8 +162,15 @@ export {
 } from "./str-replace-editor/index.js";
 export type { StrReplaceEditorInput } from "./str-replace-editor/schema.js";
 export { looksBinary, SNIFF_BYTES } from "./text-sniff.js";
-export type { TodoWriteData } from "./todo-write/index.js";
-export { MAX_TODO_ITEMS, todoWriteTool } from "./todo-write/index.js";
+export type {
+  TodoWriteData,
+  TodoWriteToolOpts,
+} from "./todo-write/index.js";
+export {
+  MAX_TODO_ITEMS,
+  todoContentLanguageLine,
+  todoWriteTool,
+} from "./todo-write/index.js";
 export type { TodoWriteInput } from "./todo-write/schema.js";
 export {
   canonicalWorkspaceRoot,
@@ -245,9 +254,12 @@ export function createMinimalTools(opts: MinimalToolsOpts): HertaTool[] {
       bashPath: opts.bashPath,
       workspaceShellPath: opts.workspaceShellPath,
     }),
-    reportFindingTool({ mapPath }),
+    reportFindingTool({
+      mapPath,
+      ...(opts.lang !== undefined ? { lang: opts.lang } : {}),
+    }),
     showExcerptTool({ mapPath }),
-    todoWriteTool(),
+    todoWriteTool(opts.lang !== undefined ? { lang: opts.lang } : {}),
     digestDocumentTool({
       model: opts.digestModel,
       mapPath,
@@ -286,13 +298,13 @@ export function createMvpTools(
     commandOutputTool(),
     commandStopTool(),
     writeNewFileTool(),
-    todoWriteTool(),
+    todoWriteTool(opts.lang !== undefined ? { lang: opts.lang } : {}),
     gitStatusTool(),
     gitDiffTool(),
     memorySaveTool(),
     // The backend's channel for CONCLUSIONS (ADR 0039): its final prose has
     // none by design, so an analysis brief needs this or it delivers nothing.
-    reportFindingTool(),
+    reportFindingTool(opts.lang !== undefined ? { lang: opts.lang } : {}),
     // A whole attached document's content in one call (ADR 0043).
     digestDocumentTool({
       model: opts.digestModel,

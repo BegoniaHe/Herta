@@ -197,4 +197,17 @@ describe("report_finding (ADR 0039)", () => {
     expect(r.ok).toBe(true);
     expect((r.data as ReportFindingData).index).toBe(0);
   });
+
+  // ADR 0016 amendment (2026-09-03): `claim` reaches the user verbatim, so
+  // the description names the conversation's language for it (twin of
+  // todo_write's item-text line).
+  it("names the session's language for the claim; zh is the default", () => {
+    const zh = reportFindingTool().schema().description;
+    expect(zh).toContain("Write `claim` in Chinese (中文)");
+    expect(reportFindingTool({ lang: "zh" }).schema().description).toBe(zh);
+    const en = reportFindingTool({ lang: "en" }).schema().description;
+    expect(en).toContain("Write `claim` in English");
+    expect(en).not.toMatch(/[一-鿿]/);
+    expect(en.split("Write `claim`")[0]).toBe(zh.split("Write `claim`")[0]);
+  });
 });

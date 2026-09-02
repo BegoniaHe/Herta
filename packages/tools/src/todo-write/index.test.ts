@@ -155,4 +155,21 @@ describe("todo_write tool", () => {
     todos.replace([]);
     expect(data.todos).toHaveLength(1);
   });
+
+  // ADR 0016 amendment (2026-09-03): the list is shown to the user inside the
+  // conversation, so the description names the CONVERSATION's language for
+  // the item text — without it a Chinese session got an English task list,
+  // the model copying the register of the (English) tool prose.
+  it("names the session's language for the item text; zh is the default", () => {
+    const zh = todoWriteTool().schema().description;
+    expect(zh).toContain("Write each item's `content` in Chinese (中文)");
+    expect(todoWriteTool({ lang: "zh" }).schema().description).toBe(zh);
+    const en = todoWriteTool({ lang: "en" }).schema().description;
+    expect(en).toContain("Write each item's `content` in English");
+    expect(en).not.toMatch(/[一-鿿]/);
+    // The rest of the description is the same either way.
+    expect(en.split("Write each item's")[0]).toBe(
+      zh.split("Write each item's")[0],
+    );
+  });
 });

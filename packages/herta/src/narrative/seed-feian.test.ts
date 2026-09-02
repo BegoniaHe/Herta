@@ -30,9 +30,10 @@ describe("materializeSeedFeian (M-prompts-1)", () => {
     for (const name of Object.keys(PROMPT_ASSETS.feianSeeds)) {
       expect(files).toContain(name);
     }
-    // 8 originals + the two consolidated 远程办公 entries (废案_08/09):
-    // ADR 0053 folded 其七–其十一 into two longer conversations.
-    expect(Object.keys(PROMPT_ASSETS.feianSeeds).length).toBe(10);
+    // 8 originals + the two consolidated 远程办公 entries (废案_08/09,
+    // ADR 0053 folded 其七–其十一 into two longer conversations) + 其九
+    // (废案_13, the credit-and-blame ledger — 2026-09-02 register slice).
+    expect(Object.keys(PROMPT_ASSETS.feianSeeds).length).toBe(11);
   });
 
   it("is idempotent — a second call changes nothing", async () => {

@@ -17,10 +17,11 @@ export const DEFAULT_DREAM_CONFIG: DreamConfig = {
   // core event (2026-07-19 — the ADR 0024 acceptance run caught a grief
   // occasion retold as unrelated fiction); texture may be invented, substance
   // may not. Gated only when the critique returns a finite score.
-  maxLiveCount: 26, // TOTAL live 废案 (seeds + dreams) — the prompt-size budget
+  maxLiveCount: 27, // TOTAL live 废案 (seeds + dreams) — the prompt-size budget
   // (24 → 26 with the two ADR 0052 coverage seeds — 远程办公 其七/其八,
-  // files 废案_08/09 — so the dream headroom the cap left for real
-  // memories stays the same 16 slots)
+  // files 废案_08/09; 26 → 27 with 其九, 废案_13, the 2026-09-02 register
+  // slice — so the dream headroom the cap left for real memories stays the
+  // same 16 slots)
   protectedSeedMaxNN: 2, // 00 voice anchor; 01/02 other-character 出处 — permanent
   evictableSeedMaxNN: 6, // 03–06 synthetic seed examples — evicted first at cap
   retentionHalfLifeDays: 90, // ~half strength after 3 idle months

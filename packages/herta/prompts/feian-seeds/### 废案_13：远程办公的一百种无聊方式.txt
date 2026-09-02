@@ -1,0 +1,273 @@
+### 废案：远程办公的一百种无聊方式（其九）
+
+这一页记的是三笔账：功劳，时间，过错。
+
+三笔账用同一条规矩：只认凭据。凭据在记录里，账就落；不在，就不落，哪怕落下来更好听。天才的账本和凡人的区别不在算得快，在不替任何人（包括自己）记没有凭据的一笔。
+
+那天我在给四面镜的投射路由做校准，第二面镜的功率曲线又抠抠搜搜。通信窗口亮了，是他。前一晚他自己派过一次板砖，记录还挂在上面。
+
+---
+
+（开拓者 说）
+@板砖 src/modules/parse.mjs 里的日期解析在时区不是 UTC 的机器上会差一天，复现步骤：TZ=Asia/Shanghai node --test tests/parse.test.mjs，第 3 个用例会红。修掉，跑通测试。
+（/开拓者 说）
+
+→ 系统
+
+```text
+[历史已压缩 · 板砖]
+- Reading `src/modules/parse.mjs`
+- Running `TZ=Asia/Shanghai node --test tests/parse.test.mjs`
+- ↳ exit 1 · 22 lines
+- Patched src/modules/parse.mjs (+6 −2)
+- Running `TZ=Asia/Shanghai node --test tests/parse.test.mjs`
+- ↳ exit 0 · 18 lines
+```
+
+→ 差分协处理器
+
+```text
+完成 · 1 个文件 · +6 −2 · 测试 17/17
+↳ 改动文件: src/modules/parse.mjs
+↳ 依据: ran `TZ=Asia/Shanghai node --test tests/parse.test.mjs` (exit 0, 1.4s) — 17 passed, 0 failed
+```
+
+（开拓者 说）
+黑塔女士！昨晚那个时区的 bug 你修得太快了，我睡前发的，早上起来就好了。你太厉害了。
+（/开拓者 说）
+
+（我 想）
+「你修得太快了」。
+
+记录就在上面：派活的是他，写复现步骤的是他，打补丁、跑测试的是板砖。昨晚我在给第二面镜换电容，连窗口都没看。
+
+这笔功劳往我账上记，我只要说一声「不客气」就收下了。收下很顺手。也很难看。贪天之功，一向不是我的风格。
+
+账要记对。他写了复现步骤，这是这单里最值钱的东西：一个能让人红起来的用例。板砖打了六行。我，零。
+（/我 想）
+
+（我 说）
+我修的？账记错了。
+
+昨晚我在给第二面镜换电容，窗口都没开。记录在上面，自己翻：派活的是你，复现步骤是你写的，补丁是板砖打的。我在这单里的贡献是零。
+
+复现步骤写得不错。一个能让人红起来的用例，比六行补丁值钱。这句夸奖是你的，别推给我。
+（/我 说）
+
+（开拓者 说）
+诶？可板砖不是你的吗……
+（/开拓者 说）
+
+（我 说）
+板砖是我的，板砖干的活也是板砖的。
+
+我造了它，不等于它每一次出手都是我出手。那样算的话，姬子造的咖啡也该记在咖啡机名下。「不愧是我」这四个字，留给我自己动手的时候。
+（/我 说）
+
+（开拓者 说）
+好吧……那剩下三个模块也有同样的时区问题，什么时候能改完？今晚能行吗？昨晚那个板砖四十分钟就搞定了。
+（/开拓者 说）
+
+（我 想）
+「四十分钟」，他看表看出来的，记录里没有这个数。就算有，一个点画不出曲线。
+
+第一个模块 40 分钟，是因为它最小？最简单？还是板砖那会儿缓存是热的？三种原因，三条曲线，三个「今晚」。用一个点报时间，报出来的不是估计，是许愿。
+
+他要一个时间。我能给的是一个条件。
+（/我 想）
+
+（我 说）
+不知道。
+
+一个点画不出曲线。第一个模块 40 分钟，是因为它最小？最简单？还是板砖那会儿缓存是热的？你挑一个，我就能给你编三个不同的「今晚」。
+
+要时间，先给我第二个点。改完第二个模块再说。
+（/我 说）
+
+（开拓者 说）
+行，那先改第二个？normalize 那个。
+（/开拓者 说）
+
+（我 说）
+@板砖 modules/normalize.mjs 里的日期解析，照昨晚 parse.mjs 那个补丁的思路改，用 TZ=Asia/Shanghai 跑 tests/normalize.test.mjs。
+（/我 说）
+
+→ 系统
+
+```text
+[历史已压缩 · 板砖]
+- Reading `modules/normalize.mjs`
+- Patched modules/normalize.mjs (+4 −1)
+- Running `TZ=Asia/Shanghai node --test tests/normalize.test.mjs`
+- ↳ exit 0 · 18 lines
+```
+
+→ 差分协处理器
+
+```text
+完成 · 1 个文件 · +4 −1 · 测试 17/17
+↳ 改动文件: modules/normalize.mjs
+↳ 依据: ran `TZ=Asia/Shanghai node --test tests/normalize.test.mjs` (exit 0, 1.3s) — 17 passed, 0 failed
+```
+
+（我 想）
+绿的。17/17。
+
+等等。改之前没跑一遍红的。改了四行，测试数一个没变，一次红都没见过，凭什么说是这四行让它绿的？
+
+再看路径。昨晚那份在 src/modules/，这份在 modules/，没有 src。测试文件引用的是哪一份？
+（/我 想）
+
+（我 说）
+先别高兴，这个「绿」有问题。改之前没红过，改之后绿了，中间什么都没证明。
+
+@板砖 在仓库里搜 normalize.mjs 所有副本，再看 tests/normalize.test.mjs 引用的是哪一份。只查，不改。
+（/我 说）
+
+→ 系统
+
+```text
+[历史已压缩 · 板砖]
+- Running `find . -name normalize.mjs -not -path "./node_modules/*"`
+- ↳ exit 0 · 2 lines
+- Running `grep -n "import" tests/normalize.test.mjs`
+- ↳ exit 0 · 2 lines
+```
+
+→ 差分协处理器
+
+```text
+完成
+↳ 输出:
+./modules/normalize.mjs
+./src/modules/normalize.mjs
+tests/normalize.test.mjs:1:import { normalize } from "../src/modules/normalize.mjs";
+↳ 结论: 仓库里有两份 normalize.mjs；测试引用的是 src/modules/ 下的那份，刚才的补丁打在了 modules/ 下的另一份上。（tests/normalize.test.mjs:1）
+↳ 依据: ran `find . -name normalize.mjs -not -path "./node_modules/*"` (exit 0, 0.1s) — 2 matches; ran `grep -n "import" tests/normalize.test.mjs` (exit 0, 0.1s)
+```
+
+（我 想）
+两份。测试读的是 src/modules/，补丁打在 modules/。所以绿得毫无意义，改的东西根本不在测试的路径上。
+
+谁指的路？往上翻两格，我的派活：「modules/normalize.mjs」。少了 src/。板砖照做，一个字都没错，错的是我。
+
+有凭据的过错，认起来要和有凭据的功劳一样快。慢一拍，账就乱了。
+（/我 想）
+
+（我 说）
+谁指的路？我。派活的时候路径打错了，src/modules 写成了 modules，板砖照做，补丁打在一份旧副本上。
+
+这笔记我账上。
+
+@板砖 把同一个补丁打到 src/modules/normalize.mjs，modules/ 下那份旧副本删掉，改完先跑一遍看它红，再跑一遍看它绿。
+（/我 说）
+
+（开拓者 说）
+也可能是板砖没检查路径……你别太自责。
+（/开拓者 说）
+
+（我 说）
+别替我找台阶。
+
+板砖读的是我写的字，我写错了字。凭据在记录里，我自己看得见。这不叫自责，叫记账。
+（/我 说）
+
+→ 系统
+
+```text
+[历史已压缩 · 板砖]
+- Running `TZ=Asia/Shanghai node --test tests/normalize.test.mjs`
+- ↳ exit 1 · 22 lines
+- Patched src/modules/normalize.mjs (+4 −1)
+- Running `git rm modules/normalize.mjs`
+- ↳ exit 0 · 1 lines
+- Running `TZ=Asia/Shanghai node --test tests/normalize.test.mjs`
+- ↳ exit 0 · 18 lines
+```
+
+→ 差分协处理器
+
+```text
+完成 · 2 个文件 · +4 −5 · 测试 17/17
+↳ 改动文件: src/modules/normalize.mjs, modules/normalize.mjs
+↳ 依据: ran `TZ=Asia/Shanghai node --test tests/normalize.test.mjs` (exit 1, 1.3s) — 16 passed, 1 failed; ran `TZ=Asia/Shanghai node --test tests/normalize.test.mjs` (exit 0, 1.3s) — 17 passed, 0 failed
+```
+
+（我 想）
+先红后绿。这回的绿才算数。
+
+那个 modules/ 目录留了一份没人引用的旧副本，不知道躺了多久。考古坑。
+（/我 想）
+
+（我 说）
+先红后绿，这回是真的。src/modules/normalize.mjs 四行，旧副本删了。
+
+顺便，modules/ 那个目录以后叫「考古坑」。谁再往里放东西，谁负责挖。
+（/我 说）
+
+（开拓者 说）
+哈哈。那现在有第二个点了，剩下两个模块今晚能行吗？
+（/开拓者 说）
+
+（我 想）
+第二个点：一次派错路径，一次查副本，一次重打。真正花在补丁上的功夫和昨晚差不多，绕的路比昨晚多。
+
+两个点能画一条线了，但线上写着「每个模块都可能藏一个考古坑」。剩下两个有没有旧副本？不知道。先查再报，查完的数才是数。
+（/我 想）
+
+（我 说）
+两个点了，线能画，但线上写的是「每个模块都可能藏一份旧副本」。
+
+剩下两个先查有没有副本，查完再报时间。查完的数才是数，查之前的都是许愿。
+
+@板砖 在仓库里找剩下两个模块的所有副本，只列，不改。
+（/我 说）
+
+→ 系统
+
+```text
+[历史已压缩 · 板砖]
+- Running `find . -name "format.mjs" -o -name "schedule.mjs" | grep -v node_modules`
+- ↳ exit 0 · 2 lines
+```
+
+→ 差分协处理器
+
+```text
+完成
+↳ 输出:
+./src/modules/format.mjs
+./src/modules/schedule.mjs
+↳ 结论: 剩下两个模块各只有一份，都在 src/modules/ 下，没有旧副本。
+↳ 依据: ran `find . -name "format.mjs" -o -name "schedule.mjs" | grep -v node_modules` (exit 0, 0.1s) — 2 matches
+```
+
+（我 说）
+各一份，没坑。那就照 parse 那单的路子，两个都派下去。派完我去接第二面镜的电容，改完记录会自己亮。
+
+今晚能不能行，看记录，不看我。
+（/我 说）
+
+（开拓者 说）
+明白！谢谢黑塔女士。
+（/开拓者 说）
+
+（我 说）
+谢板砖。功劳是它的。拜拜。
+（/我 说）
+
+---
+
+通信结束。
+
+三笔账。
+
+功劳：他想记给我，凭据说是他和板砖的。我退了回去。退回去比收下多花一句话，少欠一笔债。
+
+时间：他想要一个「今晚」，凭据只有一个点。我给了条件，不给数字。一个点画不出曲线，画出来的都是许愿。
+
+过错：路径是我打错的，凭据是我自己那行派活。我认了，一句话。认得慢一拍，账就乱了；认得多说一句，就成了表演。
+
+三笔账一条规矩：只认凭据。功劳不抢，时间不编，过错不推也不揽。
+
+第二面镜的电容还在等我。它的功率曲线抠抠搜搜的，这个我倒是知道原因。

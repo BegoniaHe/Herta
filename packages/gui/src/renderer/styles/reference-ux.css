@@ -5138,6 +5138,9 @@ button.session-item__badge--dismiss {
   place-items: center;
   width: 18px;
   height: 18px;
+  /* Chromium's default button padding (1px 6px) is INSIDE the 18px box,
+     so the 9px glyph sat 6px in, off-centre (owner 2026-09-03). */
+  padding: 0;
   border: 0;
   border-radius: 5px;
   background: transparent;
@@ -5156,6 +5159,7 @@ button.session-item__badge--dismiss {
   place-items: center;
   width: 26px;
   height: 26px;
+  padding: 0;
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -5448,6 +5452,10 @@ button.session-item__badge--dismiss {
 /* PDF pages: paper on the glass, one column, fit to width. */
 .file-viewer__pdf { padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
 .file-viewer__pdf-page {
+  /* A flex item in a column of definite height SHRINKS to fit by default,
+     and overflow:hidden lets it shrink to nothing: a 52-page PDF rendered
+     as 52 hairlines (owner 2026-09-03). Pages keep their size. */
+  flex: none;
   background: #fff;
   border-radius: 4px;
   box-shadow: 0 6px 20px rgba(15, 23, 42, 0.14), 0 0 0 1px rgba(15, 23, 42, 0.06);

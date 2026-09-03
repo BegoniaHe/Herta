@@ -74,14 +74,23 @@ export function PdfView({
   }, [bytes]);
 
   // Fit-to-width: the scroller's inner width minus the page gutter.
+  // clientWidth excludes the vertical scrollbar, which only appears once
+  // the pages have their height — and a ResizeObserver does not fire for
+  // it (the box itself did not change) — so re-measure when the pages land
+  // too, or the first layout is 10px too wide and scrolls sideways.
   useEffect(() => {
     const el = scrollRef.current;
     if (el === null) return;
-    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
+    const measure = (): void => setWidth(el.clientWidth);
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    setWidth(el.clientWidth);
+    measure();
     return () => ro.disconnect();
   }, []);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el !== null && pages.length > 0) setWidth(el.clientWidth);
+  }, [pages.length]);
 
   if (failed) {
     return (

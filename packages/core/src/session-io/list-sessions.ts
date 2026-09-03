@@ -132,10 +132,13 @@ function parseSessionHeader(firstLine: string): ValidatedSessionHeader | null {
  * degradation. The spec §7 (R4) `.index.json` cache remains the next step
  * if 1000s of sessions ever make even this too hot.
  *
+ * **Bounded to the limit (2026-09-03):** files are stat'd and sorted first,
+ * and only as many are READ as the limit needs — the sidebar's refresh on
+ * every session switch no longer opens every transcript on disk.
+ *
  * **Unlimited results:** pass `limit: Number.POSITIVE_INFINITY` to return
- * every matching session. `slice(0, Infinity)` returns the full array.
- * Used by Task 4's `/resume <prefix>` to collect all candidates before
- * client-side prefix-matching.
+ * every matching session. Used by Task 4's `/resume <prefix>` to collect all
+ * candidates before client-side prefix-matching.
  *
  * SPEC v0.2 Slice 7b §5.
  */
@@ -151,18 +154,31 @@ export function listSessions(opts: ListSessionsOpts): SessionListEntry[] {
     throw err;
   }
 
-  const entries: SessionListEntry[] = [];
+  // Stat every file (cheap), sort newest-first, then READ only until the
+  // limit is met (2026-09-03). Before this the head/tail windows, the JSON
+  // parses and the title-sidecar open ran for every transcript on disk and
+  // the limit was applied to the finished array — 400 transcripts cost 400
+  // × (open + two reads + sidecar) of blocked main thread on every session
+  // switch, for a sidebar that shows the newest 200. A file from another
+  // workspace still has to be read to be recognised (the root is in its
+  // header), so it costs its head and does not count.
+  const stats: { sessionFile: string; mtime: Date; size: number }[] = [];
   for (const filename of files) {
     const sessionFile = join(opts.transcriptDir, filename);
-    let mtime: Date;
-    let size: number;
     try {
       const st = statSync(sessionFile);
-      mtime = st.mtime;
-      size = st.size;
+      stats.push({ sessionFile, mtime: st.mtime, size: st.size });
     } catch {
-      continue; // unreadable; skip
+      // unreadable; skip
     }
+  }
+  // Stable, so equal mtimes keep directory order — the same order the
+  // post-read sort produced before.
+  stats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+
+  const entries: SessionListEntry[] = [];
+  for (const { sessionFile, mtime, size } of stats) {
+    if (entries.length >= limit) break;
     let head: string;
     // null when the head window covers the whole file (small transcript).
     let tailStr: string | null = null;
@@ -260,8 +276,9 @@ export function listSessions(opts: ListSessionsOpts): SessionListEntry[] {
     });
   }
 
-  entries.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-  return entries.slice(0, limit);
+  // Already newest-first and bounded: the read loop walked the sorted stats
+  // and stopped at the limit.
+  return entries;
 }
 
 /** A session reduced to just its header fields + mtime — everything the

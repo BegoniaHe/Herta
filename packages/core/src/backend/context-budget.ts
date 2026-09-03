@@ -48,27 +48,65 @@ function messageText(m: Message): string {
   return toolResultText(m);
 }
 
-export function estimateMessagesTokens(messages: readonly Message[]): number {
-  let t = 0;
-  for (const m of messages) t += estimatePromptTokens(messageText(m)) + 4;
+/**
+ * Per-message estimates, memoized on message IDENTITY (2026-09-03).
+ *
+ * The budget re-derives the projection from the whole transcript on every
+ * tool call (the statelessness `fitMessagesToBudget` documents), which
+ * meant re-stringifying every tool payload and re-walking every character
+ * of an up-to-800K-char transcript per iteration — and, once over budget,
+ * once more per dropped group. Transcript messages are never mutated after
+ * `TranscriptStore` appends them (the phase-1 clear builds a NEW object),
+ * so a message's estimate is a fact about that object: a WeakMap keeps it
+ * for the object's lifetime and costs nothing when the transcript is
+ * discarded. The contract this leans on is pinned by a test.
+ */
+const messageTokenCache = new WeakMap<Message, number>();
+
+function messageTokens(m: Message): number {
+  const cached = messageTokenCache.get(m);
+  if (cached !== undefined) return cached;
+  const t = estimatePromptTokens(messageText(m)) + 4;
+  messageTokenCache.set(m, t);
   return t;
 }
 
-/** Estimated tokens of everything in the frame EXCEPT `messages`. */
-export function estimateFrameBaseTokens(
-  frame: Pick<
-    BackendPromptFrame,
-    "backendSystem" | "scopedRepoInstructions" | "scopedMemory" | "toolSchemas"
-  >,
-  todoState: string,
-): number {
-  return (
+export function estimateMessagesTokens(messages: readonly Message[]): number {
+  let t = 0;
+  for (const m of messages) t += messageTokens(m);
+  return t;
+}
+
+type FrameBase = Pick<
+  BackendPromptFrame,
+  "backendSystem" | "scopedRepoInstructions" | "scopedMemory" | "toolSchemas"
+>;
+
+/** The frame's INVARIANT part, memoized on the frame object: the turn
+ *  loop builds `baseFrame` once per turn and hands the same object to
+ *  every iteration (its L2 fix), so the contract text and the tool
+ *  schemas are walked once per turn rather than once per tool call. */
+const frameBaseTokenCache = new WeakMap<FrameBase, number>();
+
+function frameStaticTokens(frame: FrameBase): number {
+  const cached = frameBaseTokenCache.get(frame);
+  if (cached !== undefined) return cached;
+  const t =
     estimatePromptTokens(frame.backendSystem) +
     estimatePromptTokens(frame.scopedRepoInstructions) +
     estimatePromptTokens(frame.scopedMemory) +
-    estimatePromptTokens(JSON.stringify(frame.toolSchemas)) +
-    estimatePromptTokens(todoState)
-  );
+    estimatePromptTokens(JSON.stringify(frame.toolSchemas));
+  frameBaseTokenCache.set(frame, t);
+  return t;
+}
+
+/** Estimated tokens of everything in the frame EXCEPT `messages`. Only the
+ *  todo state — which changes between iterations — is walked per call. */
+export function estimateFrameBaseTokens(
+  frame: FrameBase,
+  todoState: string,
+): number {
+  return frameStaticTokens(frame) + estimatePromptTokens(todoState);
 }
 
 const CLEARED_NOTE =
@@ -151,7 +189,9 @@ function groupMessages(messages: readonly Message[]): Message[][] {
  * stateless and a group cleared this iteration is naturally "uncleared"
  * if a later, smaller frame fits without trimming (it won't grow back
  * in practice — transcripts only grow — but statelessness keeps the
- * logic trivially predictable).
+ * logic trivially predictable). Re-running is cheap because the
+ * per-message estimates are memoized on identity (above): each `fits()`
+ * is a sum over cached numbers, not a walk over the transcript's text.
  */
 export function fitMessagesToBudget(opts: {
   messages: readonly Message[];

@@ -15,16 +15,28 @@
  * multi-char (Latin-adjacent diacritics) and slightly generous for
  * scripts at >1 token/char (some emoji, Ext-B) — but the error is
  * bounded and mostly in the safe direction.
+ *
+ * An index loop over UTF-16 code units (2026-09-03), not `for…of`: the
+ * string iterator allocated a one-character string per code point, and
+ * the backend budget runs this over its whole transcript every tool
+ * call. A surrogate PAIR is one code point and counts once, exactly as
+ * the iterator form did.
  */
 export function estimatePromptTokens(text: string): number {
   let tokens = 0;
   let asciiRun = 0;
-  for (const ch of text) {
-    const cp = ch.codePointAt(0) ?? 0;
-    if (cp > 0x7f) {
+  const n = text.length;
+  for (let i = 0; i < n; i += 1) {
+    const cu = text.charCodeAt(i);
+    if (cu > 0x7f) {
       tokens += Math.ceil(asciiRun / 4);
       asciiRun = 0;
       tokens += 1;
+      // A high surrogate's low half is the same code point — skip it.
+      if (cu >= 0xd800 && cu <= 0xdbff && i + 1 < n) {
+        const lo = text.charCodeAt(i + 1);
+        if (lo >= 0xdc00 && lo <= 0xdfff) i += 1;
+      }
     } else {
       asciiRun += 1;
     }

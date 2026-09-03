@@ -2,9 +2,49 @@ import { describe, expect, it } from "vitest";
 import type { Message } from "../types/transcript.js";
 import {
   DEFAULT_BACKEND_PROMPT_BUDGET,
+  estimateFrameBaseTokens,
   estimateMessagesTokens,
   fitMessagesToBudget,
 } from "./context-budget.js";
+
+describe("estimate memoization (2026-09-03)", () => {
+  it("a message's estimate is a fact about the OBJECT — the transcript never mutates one after append", () => {
+    // The memo keys on identity. The test pins the contract it leans on:
+    // a mutated message keeps its first estimate, so nothing may mutate
+    // one (TranscriptStore appends; the phase-1 clear builds a new object).
+    const m: Message = {
+      role: "assistant",
+      text: "汉".repeat(100),
+      toolCalls: [],
+      ts,
+    };
+    // 100 CJK + the two "\n" joiners (÷4 → 1) + the 4-token overhead.
+    const first = estimateMessagesTokens([m]);
+    expect(first).toBe(105);
+    (m as { text: string }).text = "汉".repeat(1000);
+    expect(estimateMessagesTokens([m])).toBe(first);
+    // A new object with the same content is estimated afresh.
+    expect(estimateMessagesTokens([{ ...m, text: "汉".repeat(1000) }])).toBe(
+      1005,
+    );
+  });
+
+  it("the frame's invariant part is memoized per frame object; only the todo state is walked per call", () => {
+    const frame = {
+      backendSystem: "x".repeat(400),
+      scopedRepoInstructions: "",
+      scopedMemory: "",
+      toolSchemas: [],
+    };
+    const base = estimateFrameBaseTokens(frame, "");
+    expect(base).toBe(
+      100 + estimateFrameBaseTokens({ ...frame, backendSystem: "" }, ""),
+    );
+    expect(estimateFrameBaseTokens(frame, "汉".repeat(10))).toBe(base + 10);
+    // Same object, same answer — the contract text is not re-walked.
+    expect(estimateFrameBaseTokens(frame, "")).toBe(base);
+  });
+});
 
 const ts = "2026-07-22T00:00:00.000Z";
 

@@ -593,8 +593,10 @@ export function createSessionService(
       () => host?.listSessions({ limit: SIDEBAR_LIST_LIMIT }) ?? [],
     );
     // Transcript content search (sidebar). Bounded + best-effort in the
-    // host; the renderer debounces keystrokes, so a sync scan of this
-    // workspace's transcripts per invoke is fine at chat scale.
+    // host; the renderer debounces keystrokes. Async since 2026-09-03: the
+    // scan reads off the event loop chunk by chunk (a 50 MB transcript set
+    // used to hold this thread ~0.5 s per keystroke), and a query that
+    // extends the previous one reads only its hits.
     handle(CMD.search, (_e, query: string) =>
       typeof query === "string" ? (host?.searchSessions(query) ?? []) : [],
     );

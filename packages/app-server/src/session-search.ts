@@ -1,4 +1,4 @@
-import { closeSync, openSync, readSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { TerminalRecordBlock } from "@herta/core";
@@ -37,7 +37,7 @@ const SNIPPET_BEFORE = 12;
 const SNIPPET_LEN = 60;
 /** Cap on returned hits — the sidebar shows a filtered list, not a result
  *  page, so a bounded scan is plenty and keeps the IPC payload small. */
-const DEFAULT_HIT_LIMIT = 50;
+export const DEFAULT_HIT_LIMIT = 50;
 
 /**
  * A short window of `text` centered near the first case-insensitive match of
@@ -136,15 +136,21 @@ function advance(pos: ScanPos, line: string): number {
 
 /** First matching dialogue snippet in one transcript, or null. Streams the
  *  file in chunks, splitting lines across boundaries; stops (and closes the
- *  fd) at the first hit. A block matches when it matches ANY of `queries`
+ *  handle) at the first hit. A block matches when it matches ANY of `queries`
  *  (the raw query and, when it differs, its brick→板砖 variant). Throws on
- *  I/O errors — the caller skips the file. */
-function scanTranscript(
+ *  I/O errors — the caller skips the file.
+ *
+ *  Async reads (2026-09-03): each 64 KB chunk is read off the event loop and
+ *  scanned in well under a millisecond (measured ~105 MB/s), so a large
+ *  corpus no longer holds the Electron main thread for the whole scan — a
+ *  50 MB transcript set used to block it for ~0.5 s per debounced keystroke;
+ *  now every IPC in between gets its turn between chunks. */
+async function scanTranscript(
   path: string,
   queries: readonly string[],
-): ScanHit | null {
+): Promise<ScanHit | null> {
   const needles = queries.map(rawPrefilterNeedle);
-  const fd = openSync(path, "r");
+  const fh = await open(path, "r");
   const pos: ScanPos = { blockIndex: 0, lastUserIndex: -1 };
   const hitAt = (line: string): ScanHit | null => {
     const idx = advance(pos, line);
@@ -175,7 +181,7 @@ function scanTranscript(
     const decoder = new StringDecoder("utf8");
     let carry = "";
     for (;;) {
-      const n = readSync(fd, buf, 0, buf.length, null);
+      const { bytesRead: n } = await fh.read(buf, 0, buf.length, null);
       if (n <= 0) break;
       const lines = (carry + decoder.write(buf.subarray(0, n))).split("\n");
       // The last piece may be a partial line — carry it into the next chunk.
@@ -189,8 +195,71 @@ function scanTranscript(
     // as corrupt and is skipped by matchLine like any other bad line.
     return hitAt(carry + decoder.end());
   } finally {
-    closeSync(fd);
+    await fh.close();
   }
+}
+
+/**
+ * What one completed search leaves behind for the next keystroke
+ * (2026-09-03) — see {@link narrowSearchCandidates}.
+ */
+export interface SearchMemo {
+  /** The query as searched (trimmed). */
+  readonly query: string;
+  readonly hitSessionIds: readonly string[];
+  /** True when the hit cap was NOT reached, so `hitSessionIds` is the
+   *  COMPLETE set of sessions matching `query` among `candidateCount`. */
+  readonly exhaustive: boolean;
+  /** How many sessions the listing had — the memo is only about that set. */
+  readonly candidateCount: number;
+  /** When it completed (ms epoch); a memo older than `maxAgeMs` is dropped. */
+  readonly at: number;
+}
+
+/** A memo older than this is ignored: an open session keeps growing while
+ *  the user types, and a session that did not match a minute ago may now. */
+export const SEARCH_MEMO_MAX_AGE_MS = 60_000;
+
+/**
+ * The sessions worth scanning for `query`, given what the previous search
+ * found (2026-09-03). Typing "parser" one letter at a time used to scan every
+ * transcript on disk on each debounced keystroke; but a query that CONTAINS
+ * the previous one can only match a subset of the sessions the previous one
+ * matched — so when the previous scan was exhaustive (under the hit cap) over
+ * the same listing, only its hits need reading. Full scan otherwise, and in
+ * every case the memo cannot vouch for:
+ * - the listing changed size (a session created or deleted since);
+ * - the memo is stale (see SEARCH_MEMO_MAX_AGE_MS);
+ * - the 板砖 alias (ADR 0015) enters or changes: "bric" → "brick" starts
+ *   matching the stored 板砖 token, which no literal-"bric" session need
+ *   carry, so the containment argument only holds when the MAPPED forms
+ *   contain each other too.
+ * `alwaysInclude` (the open session) is scanned regardless — it is the one
+ * transcript that grows under the user's hands.
+ */
+export function narrowSearchCandidates(
+  memo: SearchMemo | null,
+  query: string,
+  sessions: readonly SessionMetadata[],
+  opts: { readonly alwaysInclude?: string; readonly now?: number } = {},
+): readonly SessionMetadata[] {
+  if (memo === null || !memo.exhaustive) return sessions;
+  const now = opts.now ?? Date.now();
+  if (now - memo.at > SEARCH_MEMO_MAX_AGE_MS) return sessions;
+  if (memo.candidateCount !== sessions.length) return sessions;
+  const q = query.trim().toLowerCase();
+  const prev = memo.query.toLowerCase();
+  if (prev === "" || !q.includes(prev)) return sessions;
+  if (
+    !brickQueryVariant(q)
+      .toLowerCase()
+      .includes(brickQueryVariant(prev).toLowerCase())
+  ) {
+    return sessions;
+  }
+  const keep = new Set(memo.hitSessionIds);
+  if (opts.alwaysInclude !== undefined) keep.add(opts.alwaysInclude);
+  return sessions.filter((s) => keep.has(s.sessionId));
 }
 
 /** Prefilter → parse → dialogue check for one raw JSONL line. The snippet
@@ -245,12 +314,12 @@ function matchLine(
  * caller-given order (newest-first from listSessions), capped at `limit`
  * hits.
  */
-export function searchSessionTranscripts(opts: {
+export async function searchSessionTranscripts(opts: {
   readonly transcriptDir: string;
   readonly sessions: readonly SessionMetadata[];
   readonly query: string;
   readonly limit?: number;
-}): SessionSearchHit[] {
+}): Promise<SessionSearchHit[]> {
   const query = opts.query.trim();
   if (query === "") return [];
   // An EN user searches the alias they see ("brick"/"@brick"); the record
@@ -263,7 +332,7 @@ export function searchSessionTranscripts(opts: {
   for (const meta of opts.sessions) {
     if (hits.length >= limit) break;
     try {
-      const hit = scanTranscript(
+      const hit = await scanTranscript(
         join(opts.transcriptDir, `${meta.sessionId}.jsonl`),
         queries,
       );

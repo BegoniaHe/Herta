@@ -369,8 +369,10 @@ export interface SessionHost {
   /** Content search over this workspace's persisted transcripts — the
    *  DIALOGUE only (user + Herta speech blocks), case-insensitive substring,
    *  first match per session, bounded hits with a preview snippet.
-   *  Best-effort: unreadable transcripts are skipped. See session-search.ts. */
-  searchSessions(query: string): SessionSearchHit[];
+   *  Best-effort: unreadable transcripts are skipped. Async since 2026-09-03:
+   *  the scan reads off the event loop chunk by chunk, and a query that
+   *  extends the previous one reads only its hits. See session-search.ts. */
+  searchSessions(query: string): Promise<SessionSearchHit[]>;
   /** Remove a session's persisted files. If it is the active session it is
    *  closed first (releasing the transcript file handle) and `activeSession`
    *  becomes null. `wasActive` reports whether the deleted session was open. */

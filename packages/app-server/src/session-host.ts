@@ -27,6 +27,9 @@ import {
 import { DreamTrigger } from "./dream-trigger.js";
 import { SessionImpl } from "./session.js";
 import {
+  DEFAULT_HIT_LIMIT,
+  narrowSearchCandidates,
+  type SearchMemo,
   type SessionSearchHit,
   searchSessionTranscripts,
 } from "./session-search.js";
@@ -67,6 +70,9 @@ class SessionHostImpl implements SessionHost {
    *  not this assignment. A promise-chain mutex makes each lifecycle op
    *  observe the previous one's final state. */
   private readonly serializeLifecycle = makeLifecycleSerializer();
+  /** The previous content search's outcome, so a query that extends it
+   *  scans only its hits (see narrowSearchCandidates). */
+  private searchMemo: SearchMemo | null = null;
 
   constructor(private readonly config: AppServerConfig) {
     this.keyHolder = { current: config.providers.deepseekApiKey };
@@ -381,7 +387,7 @@ class SessionHostImpl implements SessionHost {
     return wrapSessionForDreamActivity(session, this.dreamTrigger);
   }
 
-  searchSessions(query: string): SessionSearchHit[] {
+  async searchSessions(query: string): Promise<SessionSearchHit[]> {
     // Content search re-opens each transcript itself and uses only the session
     // id + newest-first order, so it takes the header-only listing — no
     // tail-window or title-sidecar reads per debounced keystroke. Same
@@ -391,17 +397,46 @@ class SessionHostImpl implements SessionHost {
       currentWorkspaceRoot: this.config.workspaceRoot,
       limit: Number.POSITIVE_INFINITY,
     });
-    return searchSessionTranscripts({
+    const sessions = headers.map((h) => ({
+      sessionId: h.sessionId,
+      workspaceRoot: h.workspaceRoot,
+      startedAt: h.startedAt,
+      lastActivityAt: h.mtime.toISOString(),
+      ...(h.lang !== undefined ? { lang: h.lang } : {}),
+    }));
+    // A query that extends the previous one scans only the previous hits
+    // (2026-09-03); the open session is always read — it grows as the user
+    // types. The scan itself reads off the event loop chunk by chunk.
+    const candidates = narrowSearchCandidates(
+      this.searchMemo,
+      query,
+      sessions,
+      {
+        ...(this._active !== null
+          ? { alwaysInclude: this._active.sessionId }
+          : {}),
+      },
+    );
+    const hits = await searchSessionTranscripts({
       transcriptDir: this.config.transcriptDir,
-      sessions: headers.map((h) => ({
-        sessionId: h.sessionId,
-        workspaceRoot: h.workspaceRoot,
-        startedAt: h.startedAt,
-        lastActivityAt: h.mtime.toISOString(),
-        ...(h.lang !== undefined ? { lang: h.lang } : {}),
-      })),
+      sessions: candidates,
       query,
     });
+    const trimmed = query.trim();
+    this.searchMemo =
+      trimmed === ""
+        ? null
+        : {
+            query: trimmed,
+            hitSessionIds: hits.map((h) => h.sessionId),
+            // Under the cap → every candidate was read, and (by the
+            // containment the narrowing relies on) the hits are complete
+            // over the FULL listing, not just the narrowed candidates.
+            exhaustive: hits.length < DEFAULT_HIT_LIMIT,
+            candidateCount: sessions.length,
+            at: Date.now(),
+          };
+    return hits;
   }
 
   listSessions(opts?: ListSessionsOpts): SessionMetadata[] {

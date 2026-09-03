@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ensureHertaGitignore } from "../herta-dir-gitignore.js";
 import type { ToolResult } from "../types/tool.js";
+import { toolResultPayloadJson } from "./tool-message-content.js";
 
 /**
  * Oversized tool-result persistence (ADR 0025 slice 2, CC pattern
@@ -40,24 +41,15 @@ function safeFileStem(id: string): string {
   return cleaned;
 }
 
-/** The payload portion of the translate layer's toolMessageContent. */
-function serializePayload(result: ToolResult): string {
-  const payload: Record<string, unknown> = {};
-  if (result.data !== undefined) payload.data = result.data;
-  if (!result.ok) {
-    if (result.error !== undefined) payload.error = result.error;
-    if (result.suggestion !== undefined) payload.suggestion = result.suggestion;
-  }
-  return Object.keys(payload).length > 0 ? JSON.stringify(payload) : "";
-}
-
 export function persistOversizedResult(opts: {
   result: ToolResult;
   workspaceRoot: string;
   taskId: string;
   callId: string;
 }): PersistOutcome {
-  const serialized = serializePayload(opts.result);
+  // The payload portion of the model's tool message — the one definition
+  // the translate layer sends (tool-message-content.ts, 2026-09-03).
+  const serialized = toolResultPayloadJson(opts.result);
   if (serialized.length <= PERSIST_RESULT_THRESHOLD_CHARS) {
     return { transcriptResult: opts.result };
   }

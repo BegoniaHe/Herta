@@ -347,7 +347,6 @@ export const en = {
   "viewer.unreadable": "Couldn't read this file",
   "viewer.truncatedNote":
     "Long file — showing the head; open externally for the rest",
-  "viewer.dividerAria": "Resize panel",
   "viewer.tooLarge": "Too large to view here — open with the default app",
   "viewer.renderFailed":
     "Couldn't render this file — open with the default app",

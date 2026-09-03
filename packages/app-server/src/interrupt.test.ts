@@ -23,7 +23,6 @@ function mkConfig(): AppServerConfig {
     transcriptDir: join(root, ".herta", "transcript", "v2"),
     projectMemoryDir: join(root, ".herta", "memory"),
     userMemoryDir: join(root, ".herta", "user-memory"),
-    capsulesDir: join(root, ".herta", "capsules"),
     narrativeDir: join(root, ".herta", "narrative"),
     providers: {
       deepseekApiKey: "sk-test",

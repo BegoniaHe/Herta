@@ -9,7 +9,6 @@ export interface DefaultDirs {
   readonly transcriptDir: string;
   readonly projectMemoryDir: string;
   readonly userMemoryDir: string;
-  readonly capsulesDir: string;
   readonly narrativeDir: string;
   /** Dev-default voice root; a packaged GUI overrides this with its bundled
    *  resources copy (see AppServerConfig.voiceAssetsDir). */
@@ -28,7 +27,6 @@ export function defaultDirsFor(opts: DefaultDirsOpts): DefaultDirs {
     transcriptDir: join(opts.workspaceRoot, ".herta", "transcript", "v2"),
     projectMemoryDir: join(opts.workspaceRoot, ".herta", "memory"),
     userMemoryDir: join(opts.homedir, ".herta", "memory"),
-    capsulesDir: join(opts.workspaceRoot, ".herta", "capsules"),
     narrativeDir: join(opts.workspaceRoot, ".herta", "narrative"),
     voiceAssetsDir: join(opts.workspaceRoot, "data", "voice"),
   };

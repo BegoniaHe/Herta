@@ -20,7 +20,6 @@ describe("@herta/app-server — type exports", () => {
       transcriptDir: "/tmp/x/.herta/transcript/v2",
       projectMemoryDir: "/tmp/x/.herta/memory",
       userMemoryDir: "/home/u/.herta/memory",
-      capsulesDir: "/tmp/x/.herta/capsules",
       narrativeDir: "/tmp/x/.herta/narrative",
       providers: {
         deepseekApiKey: "sk-test",
@@ -57,7 +56,9 @@ describe("@herta/app-server — type exports", () => {
     expect(dropped.kind).toBe("dropped");
   });
 
-  it("exports TurnLifecycleEvent with started / finished / failed / artifact_created", () => {
+  it("exports TurnLifecycleEvent with started / finished / failed", () => {
+    // `artifact_created` was retired 2026-09-03: nothing ever emitted it
+    // (the capsule-era evidence store went with ADR 0041).
     const started: TurnLifecycleEvent = { kind: "started", turnId: "t-1" };
     const finished: TurnLifecycleEvent = { kind: "finished", turnId: "t-1" };
     const failed: TurnLifecycleEvent = {
@@ -65,14 +66,9 @@ describe("@herta/app-server — type exports", () => {
       turnId: "t-1",
       error: { code: "boom", message: "x" },
     };
-    const artifact: TurnLifecycleEvent = {
-      kind: "artifact_created",
-      handle: "ev://x",
-    };
     expect(started.kind).toBe("started");
     expect(finished.kind).toBe("finished");
     expect(failed.kind).toBe("failed");
-    expect(artifact.kind).toBe("artifact_created");
   });
 
   // Compile-time smoke (these only need to compile):

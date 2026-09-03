@@ -17,7 +17,6 @@ describe("defaultDirsFor", () => {
     expect(norm(dirs.transcriptDir)).toMatch(/\.herta\/transcript\/v2$/);
     expect(norm(dirs.projectMemoryDir)).toMatch(/\.herta\/memory$/);
     expect(norm(dirs.userMemoryDir)).toMatch(/\.herta\/memory$/);
-    expect(norm(dirs.capsulesDir)).toMatch(/\.herta\/capsules$/);
     expect(norm(dirs.narrativeDir)).toMatch(/\.herta\/narrative$/);
     // Voice clips: dev default under the workspace (packaged GUIs override).
     expect(norm(dirs.voiceAssetsDir)).toMatch(/data\/voice$/);

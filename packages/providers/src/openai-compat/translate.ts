@@ -3,9 +3,9 @@ import type {
   BackendPromptFrame,
   Message,
   ProviderPromptFrame,
-  ToolResult,
   ToolSchema,
 } from "@herta/core";
+import { toolMessageContent } from "@herta/core";
 
 export interface TranslateOpts {
   model: string;
@@ -201,25 +201,6 @@ function toOpenAI(m: Message): OpenAIMessage[] {
       ],
     },
   ];
-}
-
-function toolMessageContent(result: ToolResult): string {
-  // A tool that authored its own model-facing text (ADR 0040) is sent
-  // verbatim — the harness fields below are for the record, not the model.
-  if (result.modelText !== undefined) return result.modelText;
-  const payload: Record<string, unknown> = {};
-  if (result.data !== undefined) payload.data = result.data;
-  if (!result.ok) {
-    if (result.error !== undefined) payload.error = result.error;
-    if (result.suggestion !== undefined) payload.suggestion = result.suggestion;
-  }
-  const hasPayload = Object.keys(payload).length > 0;
-  if (result.summary.length > 0 && hasPayload) {
-    return `${result.summary}\n\n${JSON.stringify(payload)}`;
-  }
-  if (result.summary.length > 0) return result.summary;
-  if (hasPayload) return JSON.stringify(payload);
-  return "{}";
 }
 
 function toTool(s: ToolSchema): OpenAITool {

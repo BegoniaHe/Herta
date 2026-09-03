@@ -1,6 +1,7 @@
 import { estimatePromptTokens } from "../text/estimate-prompt-tokens.js";
 import type { BackendPromptFrame } from "../types/prompt.js";
 import type { Message, ToolMessage } from "../types/transcript.js";
+import { toolMessageContent } from "./tool-message-content.js";
 
 /**
  * Backend prompt budget (ADR 0025 slice 2). DeepSeek V4's window is 1M
@@ -25,18 +26,10 @@ export const DEFAULT_BACKEND_PROMPT_BUDGET: BackendPromptBudget = {
   keepRecentToolPayloads: 8,
 };
 
-/** Mirror of the translate layer's toolMessageContent sizing. */
+/** The wire text itself (2026-09-03): the estimate sizes exactly what the
+ *  translate layer sends, not a hand-kept mirror of it. */
 function toolResultText(m: ToolMessage): string {
-  if (m.result.modelText !== undefined) return m.result.modelText;
-  const payload: Record<string, unknown> = {};
-  if (m.result.data !== undefined) payload.data = m.result.data;
-  if (!m.result.ok) {
-    if (m.result.error !== undefined) payload.error = m.result.error;
-    if (m.result.suggestion !== undefined)
-      payload.suggestion = m.result.suggestion;
-  }
-  const json = Object.keys(payload).length > 0 ? JSON.stringify(payload) : "";
-  return `${m.result.summary}\n${json}`;
+  return toolMessageContent(m.result);
 }
 
 function messageText(m: Message): string {

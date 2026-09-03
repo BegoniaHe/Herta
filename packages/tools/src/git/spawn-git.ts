@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { isAbortError } from "@herta/core";
 
 export interface SpawnGitOk {
   ok: true;
@@ -200,7 +201,7 @@ export async function spawnGit(
       // Checked FIRST: an abort surfaces here as a plain `error` event, and
       // the ENOENT arm below would otherwise be the only branch that even
       // looked at `code` — everything else fell through to spawn_failed.
-      if (signal.aborted || err.name === "AbortError") {
+      if (signal.aborted || isAbortError(err)) {
         settleAborted();
         return;
       }

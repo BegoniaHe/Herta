@@ -7,6 +7,7 @@ import type {
   ToolResult,
   ToolSchema,
 } from "@herta/core";
+import { isAbortError } from "@herta/core";
 import { formatInputIssues } from "../input-issues.js";
 import { resolveSafePath } from "../path-safety.js";
 import { type WalkEntry, walkDir } from "../walker.js";
@@ -145,7 +146,7 @@ export function listFilesTool(): HertaTool {
         // An abort is an interrupt, not a read failure — rethrow so the turn
         // loop classifies it as `interrupted` rather than folding it into a
         // read_failed tool result.
-        if ((err as Error)?.name === "AbortError") throw err;
+        if (isAbortError(err)) throw err;
         return {
           ok: false,
           error: {

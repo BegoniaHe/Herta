@@ -79,12 +79,20 @@ export async function streamModelInference(
   return { text, reasoning, toolCalls, finishReason, deltas };
 }
 
+/**
+ * The ONE abort predicate (2026-09-03). Five sites had their own — this
+ * name-only check, the providers' wider one, two inline `name ===
+ * "AbortError"` tests in the tools — with two definitions between them.
+ * This is the wide one: `name === "AbortError"` (a DOMException, a fetch
+ * abort, the harness's own constructed errors) OR `code === "ABORT_ERR"`
+ * (undici surfaces some interrupts with that code and a different name).
+ * Every seam that asks "was this the user's interrupt?" must answer the
+ * same way, or one layer re-badges an interrupt as a failure.
+ */
 export function isAbortError(err: unknown): boolean {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    (err as { name?: string }).name === "AbortError"
-  );
+  if (typeof err !== "object" || err === null) return false;
+  const e = err as { name?: unknown; code?: unknown };
+  return e.name === "AbortError" || e.code === "ABORT_ERR";
 }
 
 export function toProviderError(err: unknown): AgentError {

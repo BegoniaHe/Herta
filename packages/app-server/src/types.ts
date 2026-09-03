@@ -28,9 +28,6 @@ export interface AppServerConfig {
   readonly projectMemoryDir: string;
   /** Absolute. User-scoped memory dir. Typically `~/.herta/memory`. */
   readonly userMemoryDir: string;
-  /** Absolute. Capsule store root. Typically
-   *  `<workspaceRoot>/.herta/capsules`. */
-  readonly capsulesDir: string;
   /** Absolute. 废案 narrative corpus root. Typically
    *  `<workspaceRoot>/.herta/narrative`. */
   readonly narrativeDir: string;
@@ -323,8 +320,7 @@ export type TurnLifecycleEvent =
         readonly status?: number;
         readonly providerCode?: string;
       };
-    }
-  | { readonly kind: "artifact_created"; readonly handle: string };
+    };
 
 export type TitleEvent =
   | {

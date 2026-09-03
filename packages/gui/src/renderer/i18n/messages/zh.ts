@@ -333,7 +333,6 @@ export const zh = {
   "viewer.outside": "该路径在工作区之外",
   "viewer.unreadable": "无法读取该文件",
   "viewer.truncatedNote": "文件较长，仅显示开头；完整内容用系统应用打开",
-  "viewer.dividerAria": "调整面板宽度",
   /** The rich renderers (ADR 0054). */
   "viewer.tooLarge": "文件太大，面板内无法查看；用系统应用打开",
   "viewer.renderFailed": "无法渲染该文件——用系统应用打开查看",

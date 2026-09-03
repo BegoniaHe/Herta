@@ -52,6 +52,10 @@ export {
   streamModelInference,
 } from "./backend/stream-model-inference.js";
 export {
+  toolMessageContent,
+  toolResultPayloadJson,
+} from "./backend/tool-message-content.js";
+export {
   PERSIST_PREVIEW_CHARS,
   PERSIST_RESULT_THRESHOLD_CHARS,
   type PersistOutcome,

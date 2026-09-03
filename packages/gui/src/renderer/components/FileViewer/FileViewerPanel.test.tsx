@@ -1,5 +1,10 @@
-﻿import { fireEvent, screen, waitFor } from "@testing-library/react";
+﻿import { configure, fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+
+// The rich renderers are lazy chunks (ADR 0054); under full-suite contention
+// the default 1s async timeout is too tight for the first import.
+configure({ asyncUtilTimeout: 5000 });
+
 import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
 import { renderWithSession } from "../../testing/renderWithSession.js";
 import { FileViewerPanel } from "./FileViewerPanel.js";

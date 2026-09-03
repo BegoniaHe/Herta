@@ -1325,38 +1325,45 @@ export class SessionImpl implements Session {
     }
     const record = this.driver.getRecord();
     const targets: Array<{ index: number; block: SystemBlock }> = [];
+    // A block is addressed by its text path, or — for a document whose
+    // original was kept but whose text was not (a scanned PDF, an .xlsx;
+    // ADR 0038 amendment) — by its source path, the only path the row has.
+    const isTarget = (d: { path: string; source?: string }): boolean =>
+      path.length > 0 && (d.path === path || d.source === path);
     record.forEach((b, index) => {
       if (b.kind !== "system") return;
       const d = b.digest;
       if (d?.kind !== "attachment") return;
-      if (d.path !== path || d.path.length === 0) return;
+      if (!isTarget(d)) return;
       if (d.unreadable === "removed") return; // already withdrawn
       targets.push({ index, block: b });
     });
     if (targets.length === 0) return { ok: false, reason: "not_found" };
 
-    // Delete once, from the BLOCK's own path, and only inside this session's
+    // Delete once, from the BLOCK's own paths, and only inside this session's
     // attachment directory — a renderer-supplied path never reaches unlink.
     const prefix = `${attachmentDirFor(this.sessionId)}/`;
     const stored = targets[0]?.block.digest;
-    const relPath =
-      stored?.kind === "attachment" && stored.path.startsWith(prefix)
-        ? stored.path
-        : null;
-    if (relPath === null) return { ok: false, reason: "not_found" };
+    if (stored?.kind !== "attachment")
+      return { ok: false, reason: "not_found" };
+    const under = (p: string | undefined): string | null =>
+      p !== undefined && p.length > 0 && p.startsWith(prefix) ? p : null;
+    const relPath = under(stored.path);
+    // The original's copy (ADR 0038 amendment) goes with the text.
+    const source = under(stored.source);
+    if (relPath === null && source === null)
+      return { ok: false, reason: "not_found" };
     // The outline sidecar (2026-08-23) goes with the text, under the same
     // prefix check — it is the document's own table of contents, and a
     // withdrawn document must not leave its chapter titles behind.
-    const sidecar =
-      stored?.kind === "attachment" &&
-      stored.outline !== undefined &&
-      stored.outline.path.startsWith(prefix)
-        ? stored.outline.path
-        : null;
+    const sidecar = under(stored.outline?.path);
     // …and the digest sidecar (ADR 0043), if 板砖 ever built one: same
     // directory, same prefix, derived from the text's own path.
-    const digest = digestSidecarFor(relPath);
-    const toRemove = [relPath, digest, ...(sidecar === null ? [] : [sidecar])];
+    const toRemove = [
+      ...(relPath === null ? [] : [relPath, digestSidecarFor(relPath)]),
+      ...(source === null ? [] : [source]),
+      ...(sidecar === null ? [] : [sidecar]),
+    ];
     for (const rel of toRemove) {
       try {
         await rm(join(this.wsHolder.current, ...rel.split("/")), {
@@ -1386,8 +1393,9 @@ export class SessionImpl implements Session {
       // they asked for.
       const { evidenceDetail: _d, evidence: _e, ...rest } = block;
       // The outline citation goes too: its sidecar was just unlinked, and a
-      // digest pointing at it would be a path to nothing.
-      const { outline: _o, ...digest } = d;
+      // digest pointing at it would be a path to nothing. Same for the
+      // original's copy.
+      const { outline: _o, source: _s, ...digest } = d;
       this.driver.replaceBlockAt(index, {
         ...rest,
         body: `附件 ${d.name} · 已移除`,

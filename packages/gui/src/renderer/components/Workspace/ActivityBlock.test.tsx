@@ -1,6 +1,10 @@
-import { fireEvent, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { renderWithLocale } from "../../i18n/test-util.js";
+import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
+import { renderWithSession } from "../../testing/renderWithSession.js";
+import { FileViewerPanel } from "../FileViewer/FileViewerPanel.js";
+import { FileViewerProvider } from "../FileViewer/file-viewer-context.js";
 import { ActivityBlock, type ActivityBlockProps } from "./ActivityBlock.js";
 import type { SystemBlock } from "./group-record.js";
 import type { PlanContext, TodoDigestItem } from "./plan-context.js";
@@ -851,6 +855,97 @@ describe("ActivityBlock — attachment groups (ADR 0033, owner 2026-08-10)", () 
     expect(buttons).toHaveLength(1);
     fireEvent.click(buttons[0] as Element);
     expect(removed).toEqual([".herta/attachments/s/spec.md"]);
+  });
+
+  it("a document's row opens the ORIGINAL in the viewer and takes it back by whichever path it has (ADR 0038 amendment / ADR 0054)", async () => {
+    const removed: string[] = [];
+    const mock = createMockHertaBridge();
+    const readWorkspaceFile = vi.fn(async () => ({
+      ok: true as const,
+      content: "",
+      truncated: false,
+      size: 0,
+      relative: "x",
+    }));
+    const readWorkspaceBytes = vi.fn(async (_s: string, p: string) => ({
+      ok: true as const,
+      bytes: new Uint8Array([1]),
+      size: 1,
+      relative: p,
+    }));
+    Object.assign(mock.bridge, { readWorkspaceFile, readWorkspaceBytes });
+    const h = renderWithSession(
+      <FileViewerProvider>
+        <A
+          blocks={[
+            // A PDF with its text extracted: the row names the PDF, the
+            // viewer draws the PDF, the take-back addresses the TEXT path.
+            {
+              ...attach("report.pdf"),
+              digest: {
+                kind: "attachment",
+                name: "report.pdf",
+                path: ".herta/attachments/s/report-ab12cd34.pdf.txt",
+                source: ".herta/attachments/s/report-ab12cd34.pdf",
+                lines: 40,
+                chars: 900,
+                format: "pdf",
+                pages: 2,
+              },
+            },
+            // A spreadsheet: no text for 板砖, the file itself for the
+            // viewer, the take-back addresses the SOURCE path.
+            {
+              ...attach("sheet.xlsx"),
+              digest: {
+                kind: "attachment",
+                name: "sheet.xlsx",
+                path: "",
+                source: ".herta/attachments/s/sheet-ab12cd34.xlsx",
+                lines: 0,
+                chars: 0,
+                unreadable: "unsupported",
+              },
+            },
+          ]}
+          active={false}
+          turnStartedAt={null}
+          backendStartedAt={null}
+          onRemoveAttachment={(p) => () => removed.push(p)}
+        />
+        <FileViewerPanel />
+      </FileViewerProvider>,
+      { mock },
+    );
+    h.openSession("s1");
+    const names = h.container.querySelectorAll(".file-open-name");
+    expect([...names].map((n) => n.textContent)).toEqual([
+      "report.pdf",
+      "sheet.xlsx",
+    ]);
+    fireEvent.click(names[1] as Element);
+    await waitFor(() =>
+      expect(readWorkspaceBytes).toHaveBeenCalledWith(
+        "s1",
+        ".herta/attachments/s/sheet-ab12cd34.xlsx",
+      ),
+    );
+    fireEvent.click(names[0] as Element);
+    await waitFor(() =>
+      expect(readWorkspaceBytes).toHaveBeenCalledWith(
+        "s1",
+        ".herta/attachments/s/report-ab12cd34.pdf",
+      ),
+    );
+    expect(readWorkspaceFile).not.toHaveBeenCalled();
+    const xs = h.container.querySelectorAll(".activity-step__remove");
+    expect(xs).toHaveLength(2);
+    fireEvent.click(xs[0] as Element);
+    fireEvent.click(xs[1] as Element);
+    expect(removed).toEqual([
+      ".herta/attachments/s/report-ab12cd34.pdf.txt",
+      ".herta/attachments/s/sheet-ab12cd34.xlsx",
+    ]);
   });
 
   it("shows no take-back at all when the factory is absent (mid-turn)", () => {

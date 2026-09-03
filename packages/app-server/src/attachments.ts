@@ -222,6 +222,9 @@ export interface IngestedAttachment {
    *  stored (read_error, denied, over the storage ceiling, and every
    *  document-extraction failure — there is no text to store). */
   readonly relPath: string;
+  /** The original document's stored copy, when one was kept (ADR 0038
+   *  amendment, 2026-09-03) — for the viewer, never for 板砖. */
+  readonly source?: string;
   /** Set when no excerpt was taken. */
   readonly unreadable?: AttachmentUnreadable;
 }
@@ -404,7 +407,13 @@ function reasonFor(
 function notStored(
   displayName: string,
   unreadable: AttachmentUnreadable,
-  doc: { readonly format?: DocumentFormat; readonly pages?: number } = {},
+  doc: {
+    readonly format?: DocumentFormat;
+    readonly pages?: number;
+    /** The original was kept even though no text was — the viewer can still
+     *  show a scanned PDF or a spreadsheet (ADR 0038 amendment). */
+    readonly source?: string;
+  } = {},
 ): IngestedAttachment {
   return {
     block: buildBlock({
@@ -416,6 +425,7 @@ function notStored(
       ...doc,
     }),
     relPath: "",
+    ...(doc.source !== undefined ? { source: doc.source } : {}),
     unreadable,
   };
 }
@@ -451,7 +461,13 @@ async function storeBytes(opts: {
  * name keeps the source extension visible (`report-<hash>.pdf.txt`), hashed
  * over the ORIGINAL bytes so re-attaching the same document is idempotent.
  * Every failure is a not-stored block that says which failure — there is no
- * text to store, and storing the binary would cite a file no tool can read.
+ * text to store, and the block never cites a file no tool can read.
+ *
+ * The ORIGINAL is kept too (amendment 2026-09-03), as `report-<hash>.pdf`
+ * beside the text, extraction outcome aside: the file viewer (ADR 0054)
+ * draws the PDF / Word file from it. It rides the digest as `source`, for
+ * the renderer only — the body, the task line and the compaction line
+ * still name the text, so 板砖's world is unchanged.
  */
 async function ingestDocument(opts: {
   readonly format: DocumentFormat;
@@ -462,6 +478,13 @@ async function ingestDocument(opts: {
   readonly lang: PageMarkerLang;
 }): Promise<IngestedAttachment> {
   const { format, displayName } = opts;
+  const baseName = safeStoredName(displayName, opts.bytes);
+  const source = await storeSource({
+    workspaceRoot: opts.workspaceRoot,
+    sessionId: opts.sessionId,
+    storedName: baseName,
+    bytes: opts.bytes,
+  });
   const extracted = await extractDocumentText(format, opts.bytes, {
     lang: opts.lang,
   });
@@ -469,6 +492,7 @@ async function ingestDocument(opts: {
     const doc = {
       format,
       ...(extracted.pages !== undefined ? { pages: extracted.pages } : {}),
+      ...source,
     };
     switch (extracted.reason) {
       case "empty":
@@ -490,8 +514,8 @@ async function ingestDocument(opts: {
     // A PDF's text is opened per page with the marker line (2026-08-23);
     // the digest records the exact shape the file carries.
     ...(format === "pdf" ? { pageMarker: pageMarkerShape(opts.lang) } : {}),
+    ...source,
   };
-  const baseName = safeStoredName(displayName, opts.bytes);
   const storedName = `${baseName}.txt`;
   const relPath = await storeBytes({
     workspaceRoot: opts.workspaceRoot,
@@ -532,6 +556,7 @@ async function ingestDocument(opts: {
         ...(outline !== undefined ? { outline } : {}),
       }),
       relPath,
+      ...source,
       unreadable: "too_large",
     };
   }
@@ -546,7 +571,21 @@ async function ingestDocument(opts: {
       ...(outline !== undefined ? { outline } : {}),
     }),
     relPath,
+    ...source,
   };
+}
+
+/** Keep the original document beside its text (ADR 0038 amendment). Returns
+ *  a spreadable `{source}` or `{}` — a failed write just means the viewer
+ *  has nothing to draw; the text path decides the attachment's fate. */
+async function storeSource(opts: {
+  readonly workspaceRoot: string;
+  readonly sessionId: string;
+  readonly storedName: string;
+  readonly bytes: Uint8Array;
+}): Promise<{ readonly source?: string }> {
+  const rel = await storeBytes(opts);
+  return rel === null ? {} : { source: rel };
 }
 
 /**
@@ -861,7 +900,16 @@ export async function ingestAttachment(opts: {
   // document format gets its own answer; everything else is the text path.
   const sniff = sniffDocumentFormat(displayName, bytes);
   if (sniff.kind === "unsupported") {
-    return notStored(displayName, "unsupported");
+    // No text for 板砖 — but the file itself is kept for the viewer (ADR 0038
+    // amendment): a spreadsheet or a deck is exactly what the user wants to
+    // LOOK at, and ADR 0054 draws both.
+    const source = await storeSource({
+      workspaceRoot: opts.workspaceRoot,
+      sessionId: opts.sessionId,
+      storedName: safeStoredName(displayName, bytes),
+      bytes,
+    });
+    return notStored(displayName, "unsupported", source);
   }
   if (sniff.kind !== "none") {
     return ingestDocument({
@@ -991,6 +1039,9 @@ function buildBlock(a: {
   outline?: StoredOutline;
   image?: ImageInfo;
   caption?: string;
+  /** The original's stored copy — digest only, never the body (the body is
+   *  what 板砖 and Herta read; the viewer is the user's). */
+  source?: string;
 }): SystemBlock {
   const parts = [`附件 ${a.displayName}`];
   // A document is named as such up front, so the `.pdf.txt` path further
@@ -1079,6 +1130,7 @@ function buildBlock(a: {
       kind: "attachment",
       name: a.displayName,
       path: a.relPath ?? "",
+      ...(a.source !== undefined ? { source: a.source } : {}),
       lines: a.lines,
       chars: a.chars,
       ...(a.format !== undefined ? { format: a.format } : {}),

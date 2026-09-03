@@ -1,5 +1,10 @@
-import { render, waitFor } from "@testing-library/react";
+import { configure, render, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+
+// The diagram and highlighter passes wait on lazy chunks; under full-suite
+// contention the default 1s async timeout has flaked (2026-09-03).
+configure({ asyncUtilTimeout: 5000 });
+
 import { LocaleProvider } from "../../../i18n/LocaleProvider.js";
 import { MarkdownView } from "./MarkdownView.js";
 

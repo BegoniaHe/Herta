@@ -1534,6 +1534,40 @@ describe("Session — attachFiles (ADR 0033)", () => {
     await cleanup();
   });
 
+  it("a source-only document (no text — an .xlsx) is removed by its SOURCE path, the only path its row has (ADR 0038 amendment)", async () => {
+    const { makeOleBytes } = await import("./testing/document-fixtures.js");
+    const { session, backendWs, srcDir, cleanup } = await mkAttachSession();
+    writeFileSync(join(srcDir, "sheet.xlsx"), makeOleBytes());
+    const a = await session.attachFiles([join(srcDir, "sheet.xlsx")]);
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    expect(a.files[0]?.path).toBe("");
+    const block = session.record.find(
+      (b) => b.kind === "system" && b.digest?.kind === "attachment",
+    );
+    const digest = block?.kind === "system" ? block.digest : undefined;
+    const source = digest?.kind === "attachment" ? (digest.source ?? "") : "";
+    expect(source).toMatch(/\/sheet-[0-9a-f]{8}\.xlsx$/);
+    expect(existsSync(join(backendWs, ...source.split("/")))).toBe(true);
+    // An empty path never matches anything — not even another path-less row.
+    expect(await session.removeAttachment("")).toEqual({
+      ok: false,
+      reason: "not_found",
+    });
+    expect(await session.removeAttachment(source)).toEqual({
+      ok: true,
+      removed: 1,
+    });
+    expect(existsSync(join(backendWs, ...source.split("/")))).toBe(false);
+    const after = session.record.find(
+      (b) => b.kind === "system" && b.digest?.kind === "attachment",
+    );
+    if (after?.kind !== "system") throw new Error("no attachment block");
+    expect(after.digest).toMatchObject({ unreadable: "removed", path: "" });
+    expect(after.digest).not.toHaveProperty("source");
+    await cleanup();
+  });
+
   it("removeAttachment takes the outline sidecar with the text and drops its citation from the digest (2026-08-23)", async () => {
     const { makePdf } = await import("./testing/document-fixtures.js");
     const { session, backendWs, srcDir, cleanup } = await mkAttachSession();
@@ -1563,6 +1597,11 @@ describe("Session — attachFiles (ADR 0033)", () => {
     const digestRel = rel.replace(/\.txt$/, ".digest.txt");
     writeFileSync(join(backendWs, ...digestRel.split("/")), "# 文档摘要\n");
 
+    // …and the original's copy (ADR 0038 amendment) with everything else.
+    const source = digest?.kind === "attachment" ? (digest.source ?? "") : "";
+    expect(source).toMatch(/\.pdf$/);
+    expect(existsSync(join(backendWs, ...source.split("/")))).toBe(true);
+
     expect(await session.removeAttachment(rel)).toEqual({
       ok: true,
       removed: 1,
@@ -1570,12 +1609,14 @@ describe("Session — attachFiles (ADR 0033)", () => {
     expect(existsSync(join(backendWs, ...rel.split("/")))).toBe(false);
     expect(existsSync(join(backendWs, ...sidecar.split("/")))).toBe(false);
     expect(existsSync(join(backendWs, ...digestRel.split("/")))).toBe(false);
+    expect(existsSync(join(backendWs, ...source.split("/")))).toBe(false);
     const after = session.record.find(
       (b) => b.kind === "system" && b.digest?.kind === "attachment",
     );
     if (after?.kind !== "system") throw new Error("no attachment block");
     expect(after.digest).toMatchObject({ unreadable: "removed" });
     expect(after.digest).not.toHaveProperty("outline");
+    expect(after.digest).not.toHaveProperty("source");
     expect(JSON.stringify(session.record)).not.toContain("Chapter 2");
     await cleanup();
   });

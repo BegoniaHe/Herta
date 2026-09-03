@@ -305,6 +305,15 @@ export type SystemBlockDigest =
       readonly name: string;
       /** Workspace-relative, so a later dispatch can reach it. */
       readonly path: string;
+      /** The ORIGINAL document's stored copy (ADR 0038 amendment, 2026-09-03):
+       *  `report-<hash>.pdf` beside the `.pdf.txt` above, kept so the file
+       *  viewer (ADR 0054) can show the PDF / Word / spreadsheet / deck
+       *  itself. USER-ONLY: it never enters the block body, a task line or a
+       *  compaction line — 板砖 is never pointed at bytes no tool reads.
+       *  Present for every document the ingest could store, extraction
+       *  outcome aside (a scanned PDF, an .xlsx); absent for text and image
+       *  attachments and on records persisted before it. */
+      readonly source?: string;
       readonly lines: number;
       readonly chars: number;
       /** Set when the stored file is TEXT EXTRACTED from a PDF or Word

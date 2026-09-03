@@ -573,16 +573,22 @@ export const ActivityBlock = memo(function ActivityBlock(
                       // the verbatim arg — it is what the row displays.
                       opTarget(b.digest.arg)
                     : b.digest?.kind === "attachment" &&
-                        b.digest.path.length > 0 &&
                         b.digest.image === undefined &&
-                        // `too_large` means STORED but no head excerpt taken
-                        // — the viewer's own bounded read is exactly the
-                        // remedy, so it stays clickable; genuinely dead
-                        // states (removed / read_error / …) stay plain.
-                        (b.digest.unreadable === undefined ||
-                          b.digest.unreadable === "too_large")
+                        b.digest.unreadable !== "removed" &&
+                        // The ORIGINAL document when the ingest kept one
+                        // (ADR 0038 amendment): the viewer draws the PDF /
+                        // Word / spreadsheet / deck itself (ADR 0054), even
+                        // when no text came out of it. Otherwise the stored
+                        // text: `too_large` means STORED but no head excerpt
+                        // taken — the viewer's own bounded read is exactly
+                        // the remedy, so it stays clickable; genuinely dead
+                        // states (read_error / denied / …) stay plain.
+                        (b.digest.source !== undefined ||
+                          (b.digest.path.length > 0 &&
+                            (b.digest.unreadable === undefined ||
+                              b.digest.unreadable === "too_large")))
                       ? {
-                          path: b.digest.path,
+                          path: b.digest.source ?? b.digest.path,
                           // The row DISPLAYS the middle-truncated name
                           // (long names wrapped the row, owner 2026-08-10)
                           // — split on what is actually on screen or a long
@@ -642,10 +648,17 @@ export const ActivityBlock = memo(function ActivityBlock(
                   // out-of-turn record write as the attach.
                   {...(onRemoveAttachment !== undefined &&
                   b.digest?.kind === "attachment" &&
-                  b.digest.path.length > 0 &&
+                  (b.digest.path.length > 0 || b.digest.source !== undefined) &&
                   b.digest.unreadable !== "removed"
                     ? {
-                        onRemove: onRemoveAttachment(b.digest.path),
+                        // Addressed by the text path when there is one, else
+                        // by the original's (a source-only document — the
+                        // session's removal accepts either).
+                        onRemove: onRemoveAttachment(
+                          b.digest.path.length > 0
+                            ? b.digest.path
+                            : (b.digest.source as string),
+                        ),
                         removeLabel: t("activity.attachment.remove"),
                       }
                     : {})}

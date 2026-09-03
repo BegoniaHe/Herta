@@ -310,6 +310,9 @@ describe("document attachments — PDF / Word (ADR 0038)", () => {
     // No bookmarks → no outline: neither a sidecar nor a digest field.
     expect(r.block.digest).not.toHaveProperty("outline");
     expect(r.block.body).not.toContain("目录");
+    // The original rides the digest for the viewer (ADR 0038 amendment).
+    expect(r.source).toMatch(/\/report-[0-9a-f]{8}\.pdf$/);
+    expect(r.block.digest).toMatchObject({ source: r.source });
     // …and it is reachable through the ADR 0033 carve-out like any attachment.
     const safe = await resolveSafePath(ws, r.relPath, {
       allowAttachmentPaths: true,
@@ -379,9 +382,12 @@ describe("document attachments — PDF / Word (ADR 0038)", () => {
     ).toBe(
       "Chapter 1 (p.1 · L1)\nChapter 2 (p.2 · L4)\n  Section 2.1 (p.3 · L7)\n",
     );
-    // Exactly two files in the session dir: the text and its outline.
+    // Exactly three files in the session dir: the text, its outline, and the
+    // original for the viewer (ADR 0038 amendment).
     expect(readdirSync(join(ws, ".herta", "attachments", "s1")).sort()).toEqual(
-      [r.relPath, outline?.path ?? ""].map((p) => p.split("/").pop()).sort(),
+      [r.relPath, outline?.path ?? "", r.source ?? ""]
+        .map((p) => p.split("/").pop())
+        .sort(),
     );
     // Body, detail and evidence carry it; the head still comes first.
     expect(r.block.body).toContain("· 目录 3 条 ·");
@@ -458,18 +464,30 @@ describe("document attachments — PDF / Word (ADR 0038)", () => {
     ).toBe("总则 (L1)\n  验收标准 (L4)\n");
   });
 
-  it("the stored name hashes the ORIGINAL bytes, so re-attaching is idempotent and the .pdf.txt has no binary sibling", async () => {
+  it("the stored name hashes the ORIGINAL bytes, so re-attaching is idempotent; the original is kept beside the text for the viewer (ADR 0038 amendment)", async () => {
     const pdf = makePdf([["same"]]);
     const a = await ingest(seed("dup.pdf", pdf));
     const b = await ingest(seed("dup.pdf", pdf));
     expect(a.relPath).toBe(b.relPath);
-    // Exactly one file in the session dir: the text. The original is not kept
-    // (ADR 0038 §1) — no tool could read it and removal tracks one path.
+    expect(a.source).toBe(b.source);
+    // Exactly two files in the session dir: the text 板砖 reads, and the
+    // original the viewer draws (`dup-<hash>.pdf`, byte-identical).
     const dir = join(ws, ".herta", "attachments", "s1");
-    expect(readdirSync(dir)).toEqual([a.relPath.split("/").pop()]);
+    expect(a.source).toMatch(/\/dup-[0-9a-f]{8}\.pdf$/);
+    expect(`${a.source}.txt`).toBe(a.relPath);
+    expect(readdirSync(dir).sort()).toEqual(
+      [a.relPath.split("/").pop(), a.source?.split("/").pop()].sort(),
+    );
+    expect(readFileSync(join(ws, ...(a.source ?? "").split("/")))).toEqual(pdf);
+    // The source rides the DIGEST only — the body, which 板砖 and Herta read,
+    // still names the text and nothing else.
+    expect(a.block.digest).toMatchObject({ source: a.source });
+    expect(a.block.body).toContain(a.relPath);
+    expect(a.block.body).not.toContain(`${a.source} `);
+    expect(a.block.body.split(" · ")).not.toContain(a.source);
   });
 
-  it("a scanned (image-only) PDF is `empty` with the page count, and nothing is stored", async () => {
+  it("a scanned (image-only) PDF is `empty` with the page count; no text is stored, the original is (for the viewer)", async () => {
     // ADR 0033 §5's named hazard: "the first scanned PDF produces a confident
     // summary of nothing". The block says so, in words a user can act on.
     const r = await ingest(seed("scan.pdf", makePdf([[], [], []])));
@@ -483,7 +501,12 @@ describe("document attachments — PDF / Word (ADR 0038)", () => {
       unreadable: "empty",
       path: "",
     });
-    expect(existsSync(join(ws, ".herta", "attachments", "s1"))).toBe(false);
+    // The scan itself is exactly what the user wants to LOOK at.
+    expect(r.source).toMatch(/\/scan-[0-9a-f]{8}\.pdf$/);
+    expect(r.block.digest).toMatchObject({ source: r.source });
+    expect(readdirSync(join(ws, ".herta", "attachments", "s1"))).toEqual([
+      r.source?.split("/").pop(),
+    ]);
   });
 
   it("a password-protected PDF is `encrypted` — the one thing the user can fix", async () => {
@@ -586,12 +609,25 @@ describe("document attachments — PDF / Word (ADR 0038)", () => {
     expect(r.block.evidenceDetail).toContain("small text");
   });
 
-  it("legacy .doc / .xls / .ppt / .xlsx / .pptx are `unsupported`, not `binary`", async () => {
+  it("legacy .doc / .xls / .ppt / .xlsx / .pptx are `unsupported`, not `binary` — no text, but the file is kept for the viewer", async () => {
     for (const name of ["old.doc", "sheet.xlsx", "deck.pptx"]) {
       const r = await ingest(seed(name, makeOleBytes()));
       expect(r.unreadable, name).toBe("unsupported");
       expect(r.relPath, name).toBe("");
       expect(r.block.body, name).toContain("暂不支持的文档格式");
+      // ADR 0038 amendment: a spreadsheet or a deck is what the user wants to
+      // LOOK at, and ADR 0054's viewer draws both — the original is stored
+      // and cited to the renderer only.
+      expect(r.source, name).toMatch(
+        new RegExp(
+          `/${name.split(".")[0]}-[0-9a-f]{8}\\.${name.split(".")[1]}$`,
+        ),
+      );
+      expect(r.block.digest, name).toMatchObject({
+        path: "",
+        source: r.source,
+      });
+      expect(r.block.body, name).not.toContain("-");
     }
     // A .docx whose bytes are an OLE package (legacy .doc renamed, or an
     // encrypted OOXML container) — same answer.

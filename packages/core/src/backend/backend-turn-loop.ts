@@ -126,6 +126,25 @@ export interface BackendTurnHandle {
   repoContext?: RepoContextSnapshot;
 }
 
+/** What the permission gate answers for one call. */
+type GateOutcome =
+  | { readonly kind: "run" }
+  | { readonly kind: "result"; readonly result: ToolResult };
+
+const PERMISSION_DENIED_SUGGESTION =
+  "Choose a read-only inspection path or ask the user.";
+
+/** The model-facing hint for a rule-deny, by code. `invalid_input` surfaces
+ *  through the same deny path as real permission denials (rules validate
+ *  before tiering) — say so, or the model reads a malformed call as "tool
+ *  forbidden" and abandons a perfectly usable tool (user 2026-07-31). */
+function denySuggestion(code: string): string | undefined {
+  if (code === "permission_denied") return PERMISSION_DENIED_SUGGESTION;
+  if (code === "invalid_input")
+    return "input validation failed, not a permission denial — fix the input shape and call the tool again";
+  return undefined;
+}
+
 export async function* runBackendTurnLoop(
   deps: BackendTurnDeps,
   brief: HertaToAgentBrief,
@@ -144,6 +163,106 @@ export async function* runBackendTurnLoop(
     const tagged = { ...event, layer: "backend" as const } as AgentEvent;
     deps.bus.publish(tagged);
     yield tagged;
+  }
+
+  /**
+   * The permission gate for ONE tool call, shared by the serial path and
+   * the parallel batch (2026-09-03). Emits the permission events and
+   * answers either "run it" or the failed ToolResult that stands in for the
+   * run. It was two near-identical ~75-line blocks that had already
+   * drifted: the `invalid_input` suggestion (user 2026-07-31 — a model
+   * reads a malformed call as "tool forbidden" and abandons a usable tool)
+   * landed only in the parallel branch, which holds read-only tools only,
+   * and no read-only tool has a permission rule — so the one path that can
+   * produce a rule-deny never carried the hint. One gate, one drift.
+   *
+   * An abort while the resolver is pending propagates (the caller's
+   * exactly-one-terminal-event contract); any other resolver failure is a
+   * result, not a throw.
+   */
+  async function* gatePermission(
+    call: ToolCallRequest,
+    ctx: ToolContext,
+  ): AsyncGenerator<AgentEvent, GateOutcome> {
+    const decision = await deps.permissions.check(call, ctx);
+    if (decision.kind === "deny") {
+      const code = decision.code ?? "permission_denied";
+      // Deterministic rule-deny: no user prompt fired, but the refusal must
+      // still reach the report. Pre-fix nothing emitted a permission event
+      // here — `deniedPermissions` stayed 0 and a run whose only mutation
+      // was auto-blocked could report `completed` (audit 2026-07-10,
+      // finding 6). `decision: "blocked"` is the PermissionEventSummary case
+      // documented for exactly this; the event carries the tool since no
+      // permission.requested precedes it. Code + refused-risk ride along
+      // (2026-08-26) so the status gate can tell a withheld read from a
+      // refused mutation.
+      yield* emit({
+        type: "permission.resolved",
+        id: call.id,
+        decision: "blocked",
+        tool: call.tool,
+        code,
+        ...(decision.risk !== undefined ? { risk: decision.risk } : {}),
+      });
+      const suggestion = denySuggestion(code);
+      return {
+        kind: "result",
+        result: {
+          ok: false,
+          error: { code, message: decision.reason, retryable: false },
+          ...(suggestion !== undefined ? { suggestion } : {}),
+          summary: code === "permission_denied" ? "denied" : `failed: ${code}`,
+          ...(decision.modelText !== undefined
+            ? { modelText: decision.modelText }
+            : {}),
+        },
+      };
+    }
+    if (decision.kind === "ask") {
+      yield* emit({
+        type: "permission.requested",
+        request: decision.request,
+      });
+      let resolved: "allow" | "deny";
+      try {
+        resolved = await decision.decision;
+      } catch (err) {
+        if (isAbortError(err)) throw err;
+        return {
+          kind: "result",
+          result: {
+            ok: false,
+            error: {
+              code: "permission_failed",
+              message: err instanceof Error ? err.message : String(err),
+              retryable: false,
+            },
+            summary: "permission resolver failed",
+          },
+        };
+      }
+      yield* emit({
+        type: "permission.resolved",
+        id: decision.request.id,
+        decision: resolved,
+      });
+      if (resolved === "deny") {
+        return {
+          kind: "result",
+          result: {
+            ok: false,
+            error: {
+              code: "permission_denied",
+              message: `User denied ${call.tool}`,
+              retryable: false,
+            },
+            suggestion: PERMISSION_DENIED_SUGGESTION,
+            summary: "denied",
+          },
+        };
+      }
+    }
+    return { kind: "run" };
   }
 
   // turn.started carries the most recent user request as the "userText"
@@ -398,82 +517,9 @@ export async function* runBackendTurnLoop(
           const allowed: ToolCallRequest[] = [];
           for (const call of group.calls) {
             toolCallCount += 1;
-            const decision = await deps.permissions.check(call, toolCtx);
-            if (decision.kind === "deny") {
-              const code = decision.code ?? "permission_denied";
-              yield* emit({
-                type: "permission.resolved",
-                id: call.id,
-                decision: "blocked",
-                tool: call.tool,
-                // Code + refused-risk ride along (2026-08-26) so the status
-                // gate can tell a withheld read from a refused mutation.
-                code,
-                ...(decision.risk !== undefined ? { risk: decision.risk } : {}),
-              });
-              outcomes.set(call.id, {
-                ok: false,
-                error: { code, message: decision.reason, retryable: false },
-                // invalid_input surfaces through the same deny path as real
-                // permission denials (rules validate before tiering) — say so,
-                // or the model reads a malformed call as "tool forbidden" and
-                // abandons a perfectly usable tool (user 2026-07-31).
-                suggestion:
-                  code === "permission_denied"
-                    ? "Choose a read-only inspection path or ask the user."
-                    : code === "invalid_input"
-                      ? "input validation failed, not a permission denial — fix the input shape and call the tool again"
-                      : undefined,
-                summary:
-                  code === "permission_denied" ? "denied" : `failed: ${code}`,
-                ...(decision.modelText !== undefined
-                  ? { modelText: decision.modelText }
-                  : {}),
-              });
-              continue;
-            }
-            if (decision.kind === "ask") {
-              yield* emit({
-                type: "permission.requested",
-                request: decision.request,
-              });
-              let resolved: "allow" | "deny";
-              try {
-                resolved = await decision.decision;
-              } catch (err) {
-                if (isAbortError(err)) throw err;
-                outcomes.set(call.id, {
-                  ok: false,
-                  error: {
-                    code: "permission_failed",
-                    message: err instanceof Error ? err.message : String(err),
-                    retryable: false,
-                  },
-                  summary: "permission resolver failed",
-                });
-                continue;
-              }
-              yield* emit({
-                type: "permission.resolved",
-                id: decision.request.id,
-                decision: resolved,
-              });
-              if (resolved === "deny") {
-                outcomes.set(call.id, {
-                  ok: false,
-                  error: {
-                    code: "permission_denied",
-                    message: `User denied ${call.tool}`,
-                    retryable: false,
-                  },
-                  suggestion:
-                    "Choose a read-only inspection path or ask the user.",
-                  summary: "denied",
-                });
-                continue;
-              }
-            }
-            allowed.push(call);
+            const gate = yield* gatePermission(call, toolCtx);
+            if (gate.kind === "result") outcomes.set(call.id, gate.result);
+            else allowed.push(call);
           }
 
           for (const call of allowed) {
@@ -541,109 +587,18 @@ export async function* runBackendTurnLoop(
           return;
         }
         toolCallCount += 1;
-        const decision = await deps.permissions.check(call, toolCtx);
-        if (decision.kind === "deny") {
-          const code = decision.code ?? "permission_denied";
-          // Deterministic rule-deny: no user prompt fired, but the refusal
-          // must still reach the report. Pre-fix nothing emitted a
-          // permission event here — `deniedPermissions` stayed 0 and a run
-          // whose only mutation was auto-blocked could report `completed`
-          // (audit 2026-07-10, finding 6). `decision: "blocked"` is the
-          // PermissionEventSummary case documented for exactly this; the
-          // event carries the tool since no permission.requested precedes it.
-          yield* emit({
-            type: "permission.resolved",
-            id: call.id,
-            decision: "blocked",
-            tool: call.tool,
-            // Code + refused-risk ride along (2026-08-26) so the status
-            // gate can tell a withheld read from a refused mutation.
-            code,
-            ...(decision.risk !== undefined ? { risk: decision.risk } : {}),
-          });
-          const result: ToolResult = {
-            ok: false,
-            error: {
-              code,
-              message: decision.reason,
-              retryable: false,
-            },
-            suggestion:
-              code === "permission_denied"
-                ? "Choose a read-only inspection path or ask the user."
-                : undefined,
-            summary:
-              code === "permission_denied" ? "denied" : `failed: ${code}`,
-            ...(decision.modelText !== undefined
-              ? { modelText: decision.modelText }
-              : {}),
-          };
+        const gate = yield* gatePermission(call, toolCtx);
+        if (gate.kind === "result") {
+          // A refusal (rule or user) or a failed resolver stands in for the
+          // run: the same finished event + transcript append a real run gets.
           yield* emit({
             type: "tool.call.finished",
             id: call.id,
             tool: call.tool,
-            result,
+            result: gate.result,
           });
-          deps.transcript.appendTool(call.id, result, deps.clock());
+          deps.transcript.appendTool(call.id, gate.result, deps.clock());
           continue;
-        }
-        if (decision.kind === "ask") {
-          yield* emit({
-            type: "permission.requested",
-            request: decision.request,
-          });
-
-          let resolved: "allow" | "deny";
-          try {
-            resolved = await decision.decision;
-          } catch (err) {
-            if (isAbortError(err)) throw err;
-            const result: ToolResult = {
-              ok: false,
-              error: {
-                code: "permission_failed",
-                message: err instanceof Error ? err.message : String(err),
-                retryable: false,
-              },
-              summary: "permission resolver failed",
-            };
-            yield* emit({
-              type: "tool.call.finished",
-              id: call.id,
-              tool: call.tool,
-              result,
-            });
-            deps.transcript.appendTool(call.id, result, deps.clock());
-            continue;
-          }
-
-          yield* emit({
-            type: "permission.resolved",
-            id: decision.request.id,
-            decision: resolved,
-          });
-
-          if (resolved === "deny") {
-            const result: ToolResult = {
-              ok: false,
-              error: {
-                code: "permission_denied",
-                message: `User denied ${call.tool}`,
-                retryable: false,
-              },
-              suggestion: "Choose a read-only inspection path or ask the user.",
-              summary: "denied",
-            };
-            yield* emit({
-              type: "tool.call.finished",
-              id: call.id,
-              tool: call.tool,
-              result,
-            });
-            deps.transcript.appendTool(call.id, result, deps.clock());
-            continue;
-          }
-          // resolved === "allow" → fall through to existing tool-run code path
         }
 
         yield* emit({

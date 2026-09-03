@@ -7,6 +7,7 @@ import { InMemoryEventBus } from "../event-bus.js";
 import { NoopMemoryManager } from "../memory-manager.js";
 import {
   NoopPermissionEngine,
+  type PermissionEngine,
   RulePermissionEngine,
 } from "../permission-engine.js";
 import { ReadLedger } from "../read-ledger.js";
@@ -1827,5 +1828,113 @@ describe("runBackendTurnLoop — provider error resilience", () => {
         expect(finished.result.error?.code).toBe("command_blocked");
       }
     }
+  });
+});
+
+describe("one permission gate for the serial and the parallel path (2026-09-03)", () => {
+  function denyEngine(code: string): PermissionEngine {
+    return {
+      check: async () => ({ kind: "deny", reason: `refused: ${code}`, code }),
+      resolve: () => {},
+    };
+  }
+
+  function registry(names: readonly string[], readOnly: boolean) {
+    const tools = new InMemoryToolRegistry();
+    for (const name of names) {
+      tools.register({
+        name,
+        readOnly,
+        schema: () => ({
+          name,
+          description: `tool ${name}`,
+          inputSchema: { type: "object", properties: {} },
+        }),
+        run: async () => ({ ok: true, data: {}, summary: "ok" }),
+      });
+    }
+    return tools;
+  }
+
+  async function finishedResults(
+    tools: InMemoryToolRegistry,
+    permissions: PermissionEngine,
+    calls: readonly string[],
+  ) {
+    const provider = new FakeProvider({
+      turns: [
+        [
+          ...calls.map((tool, i) => ({
+            type: "tool-call-request" as const,
+            call: { id: `call-${i}`, tool, input: {} },
+          })),
+          { type: "finish" as const, reason: "tool_calls" as const },
+        ],
+        [{ type: "finish" as const, reason: "stop" as const }],
+      ],
+    });
+    const deps = { ...buildDeps(provider), tools, permissions };
+    deps.backendBuilder = new BackendContextBuilder({ tools });
+    const events: AgentEvent[] = [];
+    for await (const e of runBackendTurnLoop(deps, sampleBrief, {
+      signal: new AbortController().signal,
+      userMessages: sampleUserMessages,
+    })) {
+      events.push(e);
+    }
+    const results = events.flatMap((e) =>
+      e.type === "tool.call.finished" ? [e.result] : [],
+    );
+    const resolved = events.filter((e) => e.type === "permission.resolved");
+    return { results, resolved };
+  }
+
+  it("an invalid_input refusal on the SERIAL path tells the model it is not a permission denial", async () => {
+    const { results, resolved } = await finishedResults(
+      registry(["write_file"], false),
+      denyEngine("invalid_input"),
+      ["write_file"],
+    );
+    expect(results).toHaveLength(1);
+    const r = results[0];
+    expect(r?.ok).toBe(false);
+    expect(r?.error?.code).toBe("invalid_input");
+    expect(r?.suggestion).toContain("not a permission denial");
+    expect(resolved).toHaveLength(1);
+  });
+
+  it("a permission_denied refusal points at the read-only path on both paths", async () => {
+    const serial = await finishedResults(
+      registry(["write_file"], false),
+      denyEngine("permission_denied"),
+      ["write_file"],
+    );
+    const parallel = await finishedResults(
+      registry(["read_a", "read_b"], true),
+      denyEngine("permission_denied"),
+      ["read_a", "read_b"],
+    );
+    for (const r of [...serial.results, ...parallel.results]) {
+      expect(r.ok).toBe(false);
+      expect(r.error?.code).toBe("permission_denied");
+      expect(r.suggestion).toContain("read-only");
+    }
+    expect(parallel.results).toHaveLength(2);
+    expect(parallel.resolved).toHaveLength(2);
+  });
+
+  it("the parallel path renders an unknown deny code exactly like the serial path", async () => {
+    const serial = await finishedResults(
+      registry(["write_file"], false),
+      denyEngine("command_blocked"),
+      ["write_file"],
+    );
+    const parallel = await finishedResults(
+      registry(["read_a"], true),
+      denyEngine("command_blocked"),
+      ["read_a"],
+    );
+    expect(parallel.results[0]).toEqual(serial.results[0]);
+    expect(serial.results[0]?.suggestion).toBeUndefined();
   });
 });

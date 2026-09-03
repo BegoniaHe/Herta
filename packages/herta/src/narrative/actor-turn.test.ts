@@ -5928,17 +5928,93 @@ describe("runActorCompletionTurn — supervisor (Slice: supervisor)", () => {
       expect(out.text).toContain("改口");
     });
 
-    it("does not judge a VETOED candidate's trigger — only the re-speak's", async () => {
-      // A blocked speech is being rewritten anyway; judging its trigger
-      // would burn a call on text about to be thrown away. Here the vetoed
-      // candidate carries `@板砖` and the re-speak does not, so the judge
-      // must never run: one supervisor call, and no dispatch.
+    it("drops the judge's answer on a VETOED candidate — the re-speak gets its own pass", async () => {
+      // The judge starts alongside the supervisor (2026-09-03), so a vetoed
+      // candidate that carries `@板砖` still costs the judge call — but its
+      // answer is about text being thrown away and must not touch the turn.
+      // Here the judge (call 2, scripted to the same BLOCK line — not a
+      // trigger finding) is ignored; the re-speak has no token, so no
+      // further judge runs and nothing dispatches.
       const out = await runWith(
         ["@板砖 跑一下 npm test。", "改口。这事我自己看。"],
         ["BLOCK：称呼：我刚才不该那样叫他"],
       );
-      expect(out.supervisorCalls).toBe(1);
+      expect(out.supervisorCalls).toBe(2);
       expect(out.dispatches).toBe(0);
+      expect(out.text).toContain("改口");
+    });
+
+    it("starts the judge BEFORE the supervisor's verdict is in (2026-09-03)", async () => {
+      // The judge used to wait for the verdict, adding its whole round-trip
+      // to every real dispatch. Now the supervisor's stream is held until the
+      // judge has been called; under the sequential form this would hang
+      // (guarded by the race below and the test timeout).
+      const order: string[] = [];
+      let judgeCalled: () => void = () => {};
+      const judgeStarted = new Promise<void>((resolve) => {
+        judgeCalled = resolve;
+      });
+      let call = 0;
+      const supervisorProvider: ProviderAdapter = {
+        streamChat(): AsyncIterable<ProviderEvent> {
+          const mine = call;
+          call += 1;
+          async function* gen(): AsyncGenerator<ProviderEvent> {
+            if (mine === 0) {
+              order.push("supervisor:start");
+              await Promise.race([
+                judgeStarted,
+                new Promise<void>((resolve) => setTimeout(resolve, 1000)),
+              ]);
+              order.push("supervisor:verdict");
+              yield { type: "text-delta", text: "OK" };
+            } else if (mine === 1) {
+              order.push("judge:start");
+              judgeCalled();
+              yield { type: "text-delta", text: "OK" };
+            } else {
+              // The post-dispatch commentary's own supervisor call.
+              yield { type: "text-delta", text: "OK" };
+            }
+            yield { type: "finish", reason: "stop" };
+          }
+          return gen();
+        },
+      };
+      const dispatches = { value: 0 };
+      const bus = new InMemoryEventBus<AgentEvent>();
+      const checks: string[] = [];
+      bus.onAny((ev) => {
+        if (ev.type === "supervisor.check" && ev.layer === "actor") {
+          checks.push(ev.phase);
+        }
+      });
+      const deps = mkDeps({
+        provider: mkScriptedProvider(["@板砖 跑一下 npm test。", "跑完了。"]),
+        bus,
+        supervisorProvider,
+        supervisorReference: "REF",
+        runtimeFactory: mkCountingRuntime(dispatches),
+      });
+      await runActorCompletionTurn({ record: [] as TerminalRecord }, "hi", {
+        ...deps,
+        intentState: "默认",
+        attachedMetaThink: mkAttachment({
+          preThinkText: "T",
+          preSpeakText: "S",
+        }),
+      });
+      expect(order).toEqual([
+        "supervisor:start",
+        "judge:start",
+        "supervisor:verdict",
+      ]);
+      expect(dispatches.value).toBe(1);
+      // The two overlapping windows publish ONE bracket: the renderer folds
+      // supervisor.check as a boolean, and the faster judge returning must
+      // not clear the hold hint while the verdict is still out. The second
+      // bracket is the post-dispatch commentary's own supervisor call.
+      expect(checks).toEqual(["start", "end", "start", "end"]);
     });
 
     /** Supervisor that passes/blocks per script, then raises AbortError on

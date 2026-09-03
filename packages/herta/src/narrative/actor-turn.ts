@@ -522,14 +522,53 @@ async function withJudgmentWindow<T>(
   const onTurnAbort = (): void => judgeAbort.abort();
   if (turnSignal.aborted) judgeAbort.abort();
   else turnSignal.addEventListener("abort", onTurnAbort, { once: true });
-  bus.publish({ type: "supervisor.check", layer: "actor", phase: "start" });
+  openJudgmentWindow(bus);
   try {
     return await fn(judgeAbort.signal);
   } finally {
     clearTimeout(deadlineTimer);
     turnSignal.removeEventListener("abort", onTurnAbort);
+    closeJudgmentWindow(bus);
+  }
+}
+
+/**
+ * Open judgment windows per bus (2026-09-03). The first-pass judge runs
+ * ALONGSIDE the supervisor now, and the renderer folds `supervisor.check`
+ * as a boolean (`start` → verdict pending, `end` → clear), so two
+ * overlapping brackets would clear the hold hint the moment the FASTER call
+ * returned while the verdict was still out. One bracket spans the overlap:
+ * `start` on the first window to open, `end` on the last to close. Keyed by
+ * the bus — one per session, which runs one turn at a time on it.
+ */
+const openJudgmentWindows = new WeakMap<EventBus<AgentEvent>, number>();
+
+function openJudgmentWindow(bus: EventBus<AgentEvent>): void {
+  const depth = openJudgmentWindows.get(bus) ?? 0;
+  openJudgmentWindows.set(bus, depth + 1);
+  if (depth === 0) {
+    bus.publish({ type: "supervisor.check", layer: "actor", phase: "start" });
+  }
+}
+
+function closeJudgmentWindow(bus: EventBus<AgentEvent>): void {
+  const depth = Math.max(0, (openJudgmentWindows.get(bus) ?? 1) - 1);
+  openJudgmentWindows.set(bus, depth);
+  if (depth === 0) {
     bus.publish({ type: "supervisor.check", layer: "actor", phase: "end" });
   }
+}
+
+/** A promise that never rejects — for a judge started alongside the
+ *  supervisor, so its outcome can be read AFTER the verdict without an
+ *  unhandled rejection in between. */
+type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown };
+
+function settle<T>(p: Promise<T>): Promise<Settled<T>> {
+  return p.then(
+    (value): Settled<T> => ({ ok: true, value }),
+    (error): Settled<T> => ({ ok: false, error }),
+  );
 }
 
 interface SupervisorVerdict {
@@ -734,7 +773,10 @@ async function judgeTriggerAndNeutralize(opts: {
  * into the supervisor veto so the rethink-respeak machinery resolves it — she
  * really dispatches or drops the promise; the harness never injects an `@`
  * itself. Fail-soft: an unavailable judge must not block the commit (returns
- * null). Interrupt: tears the controller down and aborts record-carrying.
+ * null). Interrupt: escapes as the thrown error, exactly like the trigger
+ * judge — the caller owns the controller teardown and the record-carrying
+ * abort (since 2026-09-03 the judge runs alongside the supervisor, and the
+ * supervisor's own interrupt path already tears the controller down).
  */
 async function runMissingDispatchJudge(opts: {
   deps: ActorTurnDeps;
@@ -743,7 +785,6 @@ async function runMissingDispatchJudge(opts: {
   record: TerminalRecord;
   candidate: string;
   thought: string | undefined;
-  controller: SlowStreamController | undefined;
 }): Promise<SupervisorVerdict | null> {
   const { deps, signal } = opts;
   let mdPrompt = "";
@@ -783,10 +824,7 @@ async function runMissingDispatchJudge(opts: {
       }
       return null;
     } catch (err) {
-      if (signal.aborted) {
-        await abandonController(opts.controller);
-        throw new ActorTurnAbortedError(opts.record);
-      }
+      if (signal.aborted) throw err;
       const errorMsg = err instanceof Error ? err.message : String(err);
       deps.onPrompt?.(
         "supervisor-retry-out",
@@ -799,6 +837,59 @@ async function runMissingDispatchJudge(opts: {
       return null;
     }
   });
+}
+
+type FirstPassJudge =
+  | {
+      kind: "trigger";
+      settled: Promise<Settled<{ text: string; reason?: string }>>;
+    }
+  | { kind: "missing"; settled: Promise<Settled<SupervisorVerdict | null>> };
+
+/**
+ * Start the ONE judge a first-pass candidate earns, without waiting for it
+ * (2026-09-03). Which judge is decided from the candidate's text alone — a
+ * live `@板砖` (wouldDispatch) gets the trigger judge, a triggerless 板砖
+ * mention the missing-dispatch judge (ADR 0036), ordinary conversation
+ * nothing — so nothing about the choice depends on the supervisor's verdict,
+ * and the judge's ~2s no longer sits on the critical path AFTER the ~10s
+ * verdict. The caller reads the outcome once the verdict is in and drops it
+ * on a veto (the candidate is being rewritten; the re-speak gets its own
+ * pass in recoverFromVeto) — one wasted flash call per veto, in exchange for
+ * a shorter wait on every dispatch. Gates unchanged from the sequential form:
+ * the missing-dispatch judge reads the SANITIZED projection and ignores the
+ * budget (a written `@` over budget is not a missing one).
+ */
+function startFirstPassJudge(opts: {
+  deps: ActorTurnDeps;
+  supervisorProvider: ProviderAdapter;
+  signal: AbortSignal;
+  record: TerminalRecord;
+  candidate: string;
+  thought: string | undefined;
+  dispatchCount: number;
+}): FirstPassJudge | undefined {
+  const { dispatchCount, ...judgeOpts } = opts;
+  if (wouldDispatch(opts.candidate, dispatchCount)) {
+    return {
+      kind: "trigger",
+      settled: settle(judgeTriggerAndNeutralize(judgeOpts)),
+    };
+  }
+  const projected = sanitizeActorText(
+    stripStrayOpenTags(opts.candidate, "speech"),
+    { role: "speech" },
+  );
+  if (
+    !parseHertaBlock(projected).hasBanzhuanTrigger &&
+    projected.includes("板砖")
+  ) {
+    return {
+      kind: "missing",
+      settled: settle(runMissingDispatchJudge(judgeOpts)),
+    };
+  }
+  return undefined;
 }
 
 /** Would this candidate's `@板砖` actually fire? Backticked tokens cannot,
@@ -1784,98 +1875,85 @@ export async function runActorCompletionTurn(
       // regardless of OK / veto / fail-soft outcome: the slow-stream uses
       // this signal only to switch cadence; the verdict-driven branching
       // (fastForward vs cancelAndBackspace) happens below.
+      //
+      // The first-pass judge (trigger gate 2026-07-29 / missing-dispatch,
+      // ADR 0036) is started right behind it and read only once the verdict
+      // is in — see startFirstPassJudge. The supervisor is started FIRST so
+      // the provider sees the two calls in the order it always has.
+      const verdictInFlight = runSupervisorVerdict({
+        deps,
+        supervisorProvider,
+        supervisorPrompt,
+        supervisorFrame,
+        signal,
+        record,
+        controller: slowStreamController,
+      });
+      const judge = startFirstPassJudge({
+        deps,
+        supervisorProvider,
+        signal,
+        record,
+        candidate: streamResult.text,
+        thought: currentTurnThought,
+        dispatchCount,
+      });
       let supervisorVerdict: SupervisorVerdict;
       try {
-        supervisorVerdict = await runSupervisorVerdict({
-          deps,
-          supervisorProvider,
-          supervisorPrompt,
-          supervisorFrame,
-          signal,
-          record,
-          controller: slowStreamController,
-        });
+        supervisorVerdict = await verdictInFlight;
+      } catch (err) {
+        // The supervisor throws only on interrupt, and the judge's own
+        // signal aborts with the turn — let it settle so its window closes
+        // and its dump lands before the abort leaves this turn.
+        await judge?.settled;
+        throw err;
       } finally {
         resolveVerdictPending();
       }
 
-      // First-pass trigger gate (2026-07-29). A speech the supervisor
-      // PASSED can still be carrying a `@板砖` that was never meant to
-      // dispatch — see judgeTriggerAndNeutralize for the live miss and the
-      // numbers. Runs before the veto branch below so the two never fight:
-      // a blocked speech is being rewritten anyway, and its re-speak gets
-      // its own pass at the bottom of that branch.
-      let triggerNeutralizedThisPass = false;
-      if (
-        supervisorVerdict.verdict !== "block" &&
-        wouldDispatch(streamResult.text, dispatchCount)
-      ) {
-        let judged: { text: string; reason?: string };
-        try {
-          judged = await judgeTriggerAndNeutralize({
-            deps,
-            supervisorProvider,
-            signal,
-            record,
-            candidate: streamResult.text,
-            thought: currentTurnThought,
-          });
-        } catch (err) {
-          // The judge is fail-soft on everything EXCEPT an aborted turn, so
-          // an escaping throw is the interrupt. Same contract as the
-          // supervisor catch: the parked slow-stream gets its terminal
-          // call, then the abort carries the record (audit 2026-07-13 T2.5)
-          // — a raw rethrow reverts the driver to its pre-turn record,
-          // losing blocks an earlier @板砖 dispatch in this turn already put
-          // on screen and disk (D7).
-          if (signal.aborted) {
-            await abandonController(slowStreamController);
-            throw new ActorTurnAbortedError(record);
-          }
-          throw err;
+      // Both judges are fail-soft on everything EXCEPT an aborted turn, so
+      // an escaping throw is the interrupt. Same contract as the supervisor
+      // catch: the parked slow-stream gets its terminal call, then the abort
+      // carries the record (audit 2026-07-13 T2.5) — a raw rethrow reverts
+      // the driver to its pre-turn record, losing blocks an earlier @板砖
+      // dispatch in this turn already put on screen and disk (D7).
+      const rethrowJudgeFailure = async (error: unknown): Promise<never> => {
+        if (signal.aborted) {
+          await abandonController(slowStreamController);
+          throw new ActorTurnAbortedError(record);
         }
-        if (judged.text !== streamResult.text) {
-          triggerNeutralizedThisPass = true;
-          streamResult = { ...streamResult, text: judged.text };
-          if (judged.reason !== undefined) {
+        throw error;
+      };
+
+      if (judge !== undefined && supervisorVerdict.verdict === "block") {
+        // A vetoed candidate is being rewritten anyway; the judge's answer
+        // is about text that is going away, and the re-speak gets its own
+        // pass at the bottom of recoverFromVeto. Settled, not awaited for
+        // its content — usually already done, the judge being the faster
+        // call.
+        await judge.settled;
+      } else if (judge?.kind === "trigger") {
+        // First-pass trigger gate. A speech the supervisor PASSED can still
+        // be carrying a `@板砖` that was never meant to dispatch — see
+        // judgeTriggerAndNeutralize for the live miss and the numbers.
+        const outcome = await judge.settled;
+        if (!outcome.ok) await rethrowJudgeFailure(outcome.error);
+        else if (outcome.value.text !== streamResult.text) {
+          streamResult = { ...streamResult, text: outcome.value.text };
+          const reason = outcome.value.reason;
+          if (reason !== undefined) {
             supervisorVetoReasonForRecord =
               supervisorVetoReasonForRecord !== undefined
-                ? `${supervisorVetoReasonForRecord}；${judged.reason}`
-                : judged.reason;
+                ? `${supervisorVetoReasonForRecord}；${reason}`
+                : reason;
           }
         }
-      }
-
-      // Missing-dispatch judge (ADR 0036) — see runMissingDispatchJudge.
-      // Gated tightly: supervisor passed, the sanitized projection MENTIONS
-      // 板砖, and no live trigger (regardless of budget — a written `@` over
-      // budget is not a missing one). A candidate whose `@` the trigger
-      // judge just STRIPPED is settled rhetoric, not an unbacked promise —
-      // re-judging the neutralized text would veto the very outcome the
-      // first judge chose. A BLOCK folds into the supervisor veto below.
-      if (
-        supervisorVerdict.verdict !== "block" &&
-        !triggerNeutralizedThisPass
-      ) {
-        const projectedForJudge = sanitizeActorText(
-          stripStrayOpenTags(streamResult.text, "speech"),
-          { role: "speech" },
-        );
-        if (
-          !parseHertaBlock(projectedForJudge).hasBanzhuanTrigger &&
-          projectedForJudge.includes("板砖")
-        ) {
-          const mdVerdict = await runMissingDispatchJudge({
-            deps,
-            supervisorProvider,
-            signal,
-            record,
-            candidate: streamResult.text,
-            thought: currentTurnThought,
-            controller: slowStreamController,
-          });
-          if (mdVerdict !== null) supervisorVerdict = mdVerdict;
-        }
+      } else if (judge?.kind === "missing") {
+        // Missing-dispatch judge (ADR 0036) — see runMissingDispatchJudge.
+        // A BLOCK folds into the supervisor veto below.
+        const outcome = await judge.settled;
+        if (!outcome.ok) await rethrowJudgeFailure(outcome.error);
+        else if (outcome.value !== null) supervisorVerdict = outcome.value;
       }
 
       if (supervisorVerdict.verdict === "block") {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   extractDocumentText,
   MAX_OUTLINE_DEPTH,
@@ -101,8 +101,28 @@ describe("extractDocumentText — pdf", () => {
       canvasResolvable = false;
     }
     expect(canvasResolvable).toBe(false);
-    const r = await extractDocumentText("pdf", makePdf([["still works"]]));
-    expect(r).toEqual({ ok: true, text: `${pg(1)}\nstill works`, pages: 1 });
+    // …and the load is QUIET about it: pdfjs's module-scope `console.warn`
+    // for the missing canvas is the designed state, not an error, and it
+    // read as one in the launch log (owner 2026-09-03). This is the first
+    // PDF load in this file, so the import happens inside the spy.
+    const warned: string[] = [];
+    const spy = vi
+      .spyOn(console, "warn")
+      .mockImplementation((...args: unknown[]) => {
+        warned.push(String(args[0]));
+      });
+    try {
+      const r = await extractDocumentText("pdf", makePdf([["still works"]]));
+      expect(r).toEqual({ ok: true, text: `${pg(1)}\nstill works`, pages: 1 });
+      // The filter is scoped to the import: what was console.warn before the
+      // load (the spy) is console.warn again after it.
+      expect(console.warn).toBe(spy);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(warned.filter((w) => /napi-rs\/canvas|polyfill/.test(w))).toEqual(
+      [],
+    );
   });
 
   it("extracts text with line breaks and a page count, every page opened by its marker line (2026-08-23)", async () => {

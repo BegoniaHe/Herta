@@ -1525,7 +1525,12 @@ export class SessionImpl implements Session {
         this.driver.getRecord(),
         TITLE_WINDOW_EXCHANGES,
       );
-      if (input === null) return;
+      if (input === null) {
+        console.warn(
+          `[herta] title: nothing to title yet (no user text in the window) — session ${this.sessionId}`,
+        );
+        return;
+      }
       const title = await generateSessionTitle(
         this.titleProvider,
         {
@@ -1540,7 +1545,16 @@ export class SessionImpl implements Session {
         },
         this.titleAbort.signal,
       );
-      if (title === null) return;
+      if (title === null) {
+        // Best-effort by contract, but not silent (owner 2026-09-03: a
+        // sidebar stuck on 未命名 had nothing in the log to explain it). The
+        // generator swallows the provider error, so this line is the only
+        // trace a failing title model leaves.
+        console.warn(
+          `[herta] title: the title model returned nothing (attempt ${this.titleAttempts}/${MAX_INITIAL_TITLE_ATTEMPTS} while untitled) — session ${this.sessionId}`,
+        );
+        return;
+      }
       // A rewind landed while the model was thinking: `input` describes a
       // window that no longer exists, and every index below is stale. Drop
       // the whole result — no title, no topic, no persist, no emit.
@@ -1581,8 +1595,13 @@ export class SessionImpl implements Session {
         title,
         ...(newTopic !== undefined ? { topic: newTopic } : {}),
       });
-    } catch {
-      // best-effort: a title failure never affects the session
+    } catch (err) {
+      // best-effort: a title failure never affects the session — but it is
+      // logged (see above), so a stuck 未命名 can be diagnosed from the log.
+      console.warn(
+        `[herta] title: generation failed — session ${this.sessionId}:`,
+        err instanceof Error ? err.message : String(err),
+      );
     } finally {
       this.titleGenInFlight = false;
     }

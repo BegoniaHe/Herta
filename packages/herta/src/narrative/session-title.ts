@@ -210,7 +210,16 @@ export async function generateSessionTitle(
       if (ev.type === "text-delta") buffered += ev.text;
       else if (ev.type === "finish") break;
     }
-  } catch {
+  } catch (err) {
+    // Never throws — but says why (2026-09-03): the caller can only report
+    // "returned nothing", and a 401/402/429 from the title model is the
+    // difference between a key problem and a prompt problem.
+    const e = err as { name?: unknown; status?: unknown; message?: unknown };
+    console.warn(
+      "[herta] title model call failed:",
+      typeof e?.status === "number" ? `HTTP ${e.status}` : String(e?.name),
+      String(e?.message ?? err),
+    );
     return null;
   }
   // An exact copy of the incumbent skips sanitizeTitle: the incumbent already

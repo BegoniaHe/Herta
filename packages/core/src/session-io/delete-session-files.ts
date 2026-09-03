@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 
 /**
@@ -23,11 +23,18 @@ export function recapCachePath(
  * any traversal) so a malformed id can never escape the base.  An external
  * "set" workspace lives outside the base and is therefore never touched here.
  *
- * Idempotent — a missing file or directory is not an error (`rmSync` with
+ * Idempotent — a missing file or directory is not an error (`rm` with
  * `force: true` swallows ENOENT). Other I/O errors propagate. The file list
  * is kept in one place so a future per-session sidecar is a one-line addition.
+ *
+ * Async since 2026-09-03: the managed workspace is where 板砖 clones and
+ * installs, so it can hold a `node_modules` of tens of thousands of files —
+ * the recursive delete ran synchronously on the Electron main thread and the
+ * sidebar click looked hung for seconds. The ordering the sync call protected
+ * (close → settle the turn → delete) lives in the caller's lifecycle
+ * serializer, which awaits this.
  */
-export function deleteSessionFiles(
+export async function deleteSessionFiles(
   transcriptDir: string,
   sessionId: string,
   workspacesBaseDir?: string,
@@ -36,10 +43,10 @@ export function deleteSessionFiles(
    *  leave it behind forever. Optional: callers without a root keep the old
    *  behaviour rather than guessing a path. */
   workspaceRoot?: string,
-): void {
+): Promise<void> {
   // Same containment rule as the workspace-dir guard below (audit 2026-07-13
   // T1.2): the transcript/title joins were the one unguarded id→path sink, so
-  // a traversal id could rmSync an arbitrary `.jsonl` anywhere on disk.
+  // a traversal id could remove an arbitrary `.jsonl` anywhere on disk.
   const dir = resolve(transcriptDir);
   const files = [
     resolve(dir, `${sessionId}.jsonl`),
@@ -47,7 +54,7 @@ export function deleteSessionFiles(
   ];
   for (const f of files) {
     if (!f.startsWith(dir + sep)) continue;
-    rmSync(f, { force: true });
+    await rm(f, { force: true });
   }
 
   if (workspaceRoot !== undefined) {
@@ -55,7 +62,7 @@ export function deleteSessionFiles(
     const compactionDir = resolve(workspaceRoot, ".herta", "compaction");
     const sidecar = resolve(recapCachePath(workspaceRoot, sessionId));
     if (sidecar.startsWith(compactionDir + sep)) {
-      rmSync(sidecar, { force: true });
+      await rm(sidecar, { force: true });
     }
   }
 
@@ -67,5 +74,5 @@ export function deleteSessionFiles(
   const target = resolve(base, sessionId);
   const inside = target !== base && target.startsWith(base + sep);
   if (!inside) return;
-  rmSync(target, { recursive: true, force: true });
+  await rm(target, { recursive: true, force: true });
 }

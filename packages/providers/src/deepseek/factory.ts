@@ -18,6 +18,10 @@ export interface DeepseekProviderOpts {
   thinking?: false | "low" | "high" | "max";
   temperature?: number;
   maxTokens?: number;
+  /** Transport retries per call on 429/5xx (default: the retry loop's own,
+   *  currently 2). The BACKEND passes 0 — its turn loop paces retries with
+   *  its own policy, and two layers stacked (2026-09-03). */
+  maxRetries?: number;
   fetchImpl?: typeof fetch;
 }
 
@@ -36,6 +40,7 @@ export function deepseekProvider(opts: DeepseekProviderOpts): ProviderAdapter {
     model: opts.model ?? "deepseek-v4-pro",
     temperature: opts.temperature,
     maxTokens: opts.maxTokens,
+    ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
     extraBody,
     fetchImpl: opts.fetchImpl,
   });

@@ -18,6 +18,12 @@ const MAX_FRAME_DT_S = 0.05;
    fluid. */
 const CALM_MIN_FRAME_MS = 30;
 const CALM_HOLD_MS = 1500;
+/* Parking (perf 2026-09-03, mirrors AuraVisual): once the LED has been
+   calm for this long with the window unfocused, the loop parks on its last
+   frame — `document.hidden` never flips for a window behind another one,
+   so the breath otherwise ran at ~33fps all day for nobody. Focus or a
+   state change restarts it. */
+const PARK_UNFOCUSED_MS = 5000;
 
 export interface DeviceGlowProps {
   readonly state: BanzhuanDeviceState;
@@ -52,6 +58,12 @@ export function DeviceGlow(props: DeviceGlowProps): JSX.Element {
     if (props.paused === true) c.stop();
     else c.start();
   }, [props.paused]);
+  // A parked loop (PARK_UNFOCUSED_MS) wakes on a state change; start() is
+  // idempotent while the loop runs.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the state and reduced flag are wake triggers the loop reads through `live`, not inputs of the effect body
+  useEffect(() => {
+    if (props.paused !== true) loopControls.current?.start();
+  }, [props.paused, props.state, reduced]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -140,9 +152,21 @@ export function DeviceGlow(props: DeviceGlowProps): JSX.Element {
     let calm = false;
     let prevState = live.current.state;
     let stateChangedTs = performance.now();
+    let calmSince: number | null = null;
+    let focused =
+      typeof document.hasFocus === "function" ? document.hasFocus() : true;
 
     const render = (now: number): void => {
       raf = null;
+      // Park (see PARK_UNFOCUSED_MS): stop re-arming; start() resumes.
+      if (
+        calm &&
+        !focused &&
+        calmSince !== null &&
+        now - calmSince > PARK_UNFOCUSED_MS
+      ) {
+        return;
+      }
       // Idle frame governor: `last` only advances on DRAWN frames, so dt
       // spans the skipped gap naturally (clamped by MAX_FRAME_DT_S). The
       // wait rides a TIMER, not rAF (audit T3.7): re-arming rAF here woke
@@ -196,6 +220,8 @@ export function DeviceGlow(props: DeviceGlowProps): JSX.Element {
       // Judge NEXT frame's throttle: steady breathing (any state) throttles;
       // flash envelopes and fresh transitions keep full rate.
       calm = u.flash === 0 && now - stateChangedTs > CALM_HOLD_MS;
+      if (!calm) calmSince = null;
+      else if (calmSince === null) calmSince = now;
       // Diagnostics handle (plain JS property, no DOM impact) — probes count
       // real draws per second to verify the governor.
       (canvas as HTMLCanvasElement & { __draws?: number }).__draws =
@@ -213,6 +239,10 @@ export function DeviceGlow(props: DeviceGlowProps): JSX.Element {
         !document.hidden &&
         live.current.paused !== true
       ) {
+        // A (re)start always draws its first frame and re-judges (the park
+        // gate reads the previous frame's verdict — see AuraVisual).
+        calm = false;
+        calmSince = null;
         last = performance.now();
         raf = requestAnimationFrame(render);
       }
@@ -230,6 +260,13 @@ export function DeviceGlow(props: DeviceGlowProps): JSX.Element {
     const onVisibility = (): void => {
       if (document.hidden) stop();
       else start();
+    };
+    const onFocus = (): void => {
+      focused = true;
+      start();
+    };
+    const onBlur = (): void => {
+      focused = false;
     };
     // Context loss/restore (audit 2026-07-13 T2.1, mirrors AuraVisual):
     // reveal the legacy SVG/CSS stack while the GPU is gone, rebuild the
@@ -249,12 +286,16 @@ export function DeviceGlow(props: DeviceGlowProps): JSX.Element {
     canvas.addEventListener("webglcontextlost", onContextLost);
     canvas.addEventListener("webglcontextrestored", onContextRestored);
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
     loopControls.current = { start, stop };
     start();
     return () => {
       stop();
       loopControls.current = null;
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
       canvas.removeEventListener("webglcontextlost", onContextLost);
       canvas.removeEventListener("webglcontextrestored", onContextRestored);
       ro?.disconnect();

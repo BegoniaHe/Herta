@@ -1570,9 +1570,18 @@ export const Conversation = memo(function Conversation(): JSX.Element {
   // at all. A FACTORY per stored path so ActivityStep holds no record state;
   // memoized on the two things it closes over, keeping the rows memo stable
   // between turns.
+  //
+  // NOT memoized on `status` (2026-09-03): it flips at send and at turn end,
+  // and a factory whose identity changed with it re-rendered EVERY
+  // historical ActivityBlock twice per turn — at exactly the heaviest
+  // main-thread moment the app has (see the send-morph notes above). Like
+  // `handleRewind`, the guard reads the LIVE status at click time from the
+  // store, and the control's visibility mid-turn is CSS
+  // (`.conversation-flow.is-busy .activity-step__remove`).
   const removeAttachmentFactory = useMemo(() => {
-    if (sessionId === null || status !== "idle") return undefined;
+    if (sessionId === null) return undefined;
     return (path: string) => () => {
+      if (sessionStore.getSnapshot().status !== "idle") return;
       void bridge
         .removeAttachment(sessionId, path)
         .then((r) => {
@@ -1586,7 +1595,7 @@ export const Conversation = memo(function Conversation(): JSX.Element {
           sessionStore.setComposerNotice(t("activity.attachment.removeFailed")),
         );
     };
-  }, [sessionId, status, bridge, sessionStore, t]);
+  }, [sessionId, bridge, sessionStore, t]);
   // The rewind control shows only on the LATEST user turn, and only when idle
   // (no in-flight turn to race the truncation). Find the last `user` block index.
   const lastUserIndex = useMemo(() => {

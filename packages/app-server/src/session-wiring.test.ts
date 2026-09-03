@@ -4,7 +4,20 @@ import { join } from "node:path";
 import type { AskResolver } from "@herta/core";
 import { FakeProvider } from "@herta/core/testing";
 import { afterEach, describe, expect, it } from "vitest";
-import { createBackendStack } from "./session-wiring.js";
+import {
+  BACKEND_PROVIDER_MAX_RETRIES,
+  createBackendStack,
+} from "./session-wiring.js";
+
+describe("BACKEND_PROVIDER_MAX_RETRIES", () => {
+  it("is zero — the turn loop's retry policy is the one layer that paces a rate limit (2026-09-03)", () => {
+    // With the provider's own two transport retries stacked under the
+    // loop's four attempts, one persistent 429 cost twelve full-prompt
+    // POSTs. Both hosts (session.ts, the CLI) pass this to the backend
+    // provider; the actor and the sidecars keep the transport default.
+    expect(BACKEND_PROVIDER_MAX_RETRIES).toBe(0);
+  });
+});
 
 const originalEnv = { ...process.env };
 const tmpDirs: string[] = [];

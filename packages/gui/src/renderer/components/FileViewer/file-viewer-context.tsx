@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
@@ -72,7 +73,13 @@ export interface FileViewerState {
   readonly activateTab: (index: number) => void;
   /** Close one tab; closing the last closes the panel. */
   readonly closeTab: (index: number) => void;
+  /** Live width during a drag — state only, no storage write. */
   readonly setWidthPx: (w: number) => void;
+  /** Persist the current width (the drag's pointer-up). `localStorage`'s
+   *  setItem is a synchronous IPC to the browser process; a precision mouse
+   *  delivers hundreds of pointer events a second, so the write rides the
+   *  end of the gesture, not every frame of it (2026-09-03). */
+  readonly persistWidthPx: () => void;
   readonly setBodyWidth: (w: number) => void;
 }
 
@@ -237,10 +244,20 @@ export function FileViewerProvider({
       }),
     [setTabState],
   );
+  // The latest width lives in a ref too, so the persist reads the value the
+  // drag ended on rather than the render it was captured in.
+  const widthRef = useRef(0);
   const setWidthPx = useCallback((w: number) => {
+    widthRef.current = w;
     setWidthState(w);
+  }, []);
+  const persistWidthPx = useCallback(() => {
+    if (widthRef.current <= 0) return;
     try {
-      window.localStorage.setItem(WIDTH_STORE_KEY, String(Math.round(w)));
+      window.localStorage.setItem(
+        WIDTH_STORE_KEY,
+        String(Math.round(widthRef.current)),
+      );
     } catch {
       // storage can be unavailable; the width just won't persist
     }
@@ -274,6 +291,7 @@ export function FileViewerProvider({
       activateTab,
       closeTab,
       setWidthPx,
+      persistWidthPx,
       setBodyWidth,
     }),
     [
@@ -288,6 +306,7 @@ export function FileViewerProvider({
       activateTab,
       closeTab,
       setWidthPx,
+      persistWidthPx,
     ],
   );
 

@@ -443,11 +443,15 @@ class SessionHostImpl implements SessionHost {
     const wasActive =
       this._active !== null && this._active.sessionId === sessionId;
     // Close FIRST so the persister releases its handle on `<id>.jsonl`
-    // (Windows locks open files — rmSync would EBUSY otherwise). close()
-    // awaits the in-flight turn's settlement (finding 14), so the rmSync
-    // below cannot race a still-unwinding turn's appends.
+    // (Windows locks open files — the remove would EBUSY otherwise). close()
+    // awaits the in-flight turn's settlement (finding 14), so the remove
+    // below cannot race a still-unwinding turn's appends. The remove is
+    // awaited (async since 2026-09-03 — a managed workspace with a
+    // node_modules is a seconds-long tree delete that used to block the
+    // main thread), and this whole method runs inside the lifecycle
+    // serializer, so nothing reopens the session until it is gone.
     if (wasActive) await this.closeActiveInner();
-    deleteSessionFiles(
+    await deleteSessionFiles(
       this.config.transcriptDir,
       sessionId,
       workspacesBaseDir(homedir()),

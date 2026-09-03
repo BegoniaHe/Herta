@@ -14,9 +14,27 @@ import { InMemoryToolRegistry } from "../tool-registry.js";
 import type { AgentEvent } from "../types/events.js";
 import type { ProviderPromptFrame } from "../types/provider.js";
 import { BackendContextBuilder } from "./backend-context-builder.js";
-import { CodingAgentRuntime } from "./coding-agent-runtime.js";
+import { CodingAgentRuntime, summarizeDiff } from "./coding-agent-runtime.js";
 
 const sampleBrief: HertaToAgentBrief = { taskId: "t-1" };
+
+describe("summarizeDiff", () => {
+  it("counts a deleted line that begins with `--` (a fifth copy of the header-by-prefix defect, 2026-09-03)", () => {
+    // The shared counter skips the two file headers by POSITION; the old
+    // private copy skipped every line starting with `---`, so a removed
+    // YAML front-matter rule or SQL comment vanished from the count.
+    const diff = [
+      "--- a/x.sql",
+      "+++ b/x.sql",
+      "@@ -1,3 +1,2 @@",
+      "-- keep",
+      "--- old comment",
+      "+++i",
+      " x",
+    ].join("\n");
+    expect(summarizeDiff(diff)).toBe("+1 -2");
+  });
+});
 
 // Each brief idempotently ensures its workspaceRoot exists, so the suite uses
 // a real tmp dir (cleaned per-test) instead of a hardcoded path.

@@ -2,6 +2,7 @@ import { act, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HertaBridgeProvider } from "../../context/HertaBridgeContext.js";
 import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
+import { renderWithSession } from "../../testing/renderWithSession.js";
 import { AuraVisual } from "./AuraVisual.js";
 
 afterEach(() => {
@@ -154,6 +155,35 @@ describe("AuraVisual", () => {
     expect(calls.linkProgram ?? 0).toBe(linked + 1);
     expect(canvas.dataset.fallback).toBeUndefined();
     expect(calls.drawArrays ?? 0).toBeGreaterThan(during + 2);
+  });
+
+  it("parks once calm with the window unfocused, and a focus wakes it (perf 2026-09-03)", () => {
+    vi.useFakeTimers();
+    mockAsyncRaf();
+    const { calls } = mockWebgl();
+    // A live session so the aura is LISTENING (calm is judged on that
+    // state); the mock clock only advances on drawn frames.
+    const mock = createMockHertaBridge();
+    const h = renderWithSession(<AuraVisual />, { mock });
+    h.openSession("s1");
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+      // Well past CALM_HOLD_MS + PARK_UNFOCUSED_MS of drawn-frame time (the
+      // governor sleeps ~14ms of every 30ms, so wall time runs ~2× ahead).
+      vi.advanceTimersByTime(20_000);
+    });
+    const parkedAt = calls.drawArrays ?? 0;
+    expect(parkedAt).toBeGreaterThan(50);
+    act(() => {
+      vi.advanceTimersByTime(3_000);
+    });
+    // Parked: nothing drawn while unfocused and calm.
+    expect((calls.drawArrays ?? 0) - parkedAt).toBe(0);
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+      vi.advanceTimersByTime(16 * 5);
+    });
+    expect(calls.drawArrays ?? 0).toBeGreaterThan(parkedAt + 1);
   });
 
   it("pauses while document.hidden and resumes on visibilitychange", () => {

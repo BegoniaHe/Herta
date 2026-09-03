@@ -1,5 +1,6 @@
 import {
   Fragment,
+  memo,
   type RefObject,
   useLayoutEffect,
   useRef,
@@ -226,7 +227,15 @@ function useMeasuredFold(open: boolean): RefObject<HTMLDivElement> {
 }
 
 /** One row in an activity block: a verb icon + the (collapsible) body. */
-export function ActivityStep(props: ActivityStepProps): JSX.Element {
+/**
+ * memo (2026-09-03): the parent derives every row's props once per `blocks`
+ * identity, so a historical row's props are reference-stable across the
+ * live group's 1 Hz tick and the turn-boundary re-renders — only the row
+ * whose `active` shimmer flips reconciles.
+ */
+export const ActivityStep = memo(function ActivityStep(
+  props: ActivityStepProps,
+): JSX.Element {
   const icon = props.icon ?? stepIcon(props.body);
   const continuation = icon === "result" || icon === "fail";
   // The projected body carries a literal "↳ " prefix for the CLI (which has no
@@ -422,4 +431,4 @@ export function ActivityStep(props: ActivityStepProps): JSX.Element {
       </div>
     </div>
   );
-}
+});

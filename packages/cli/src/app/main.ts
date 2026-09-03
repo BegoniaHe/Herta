@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  BACKEND_PROVIDER_MAX_RETRIES,
   createActorStack,
   createBackendStack,
   digestModelFrom,
@@ -214,6 +215,9 @@ export async function main(
     // its announced early-August-2026 update (flash already honors it).
     thinking:
       parseThinking(process.env.HERTA_BACKEND_THINKING, stderr) ?? "high",
+    // The turn loop's retry policy paces a rate limit; the transport must
+    // not stack its own retries under it (session-wiring.ts).
+    maxRetries: BACKEND_PROVIDER_MAX_RETRIES,
     ...baseUrl,
   });
   const isTty =

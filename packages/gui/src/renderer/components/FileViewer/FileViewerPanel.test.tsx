@@ -266,6 +266,42 @@ describe("FileViewerPanel (ADR 0050)", () => {
   });
 });
 
+describe("FileViewerPanel — divider drag", () => {
+  it("persists the width once, on pointer-up — never per pointer move (2026-09-03)", async () => {
+    // localStorage.setItem is a synchronous IPC to the browser process; a
+    // precision mouse delivers hundreds of pointer events a second.
+    window.localStorage.removeItem("herta.fileViewer.widthPx");
+    const mock = createMockHertaBridge();
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: vi.fn(async () => ({
+        ok: true as const,
+        content: "x",
+        truncated: false,
+        size: 1,
+        relative: "src/a.ts",
+      })),
+    });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("probe"));
+    await waitFor(() =>
+      expect(screen.getByTestId("file-viewer")).toBeInTheDocument(),
+    );
+    const divider = screen
+      .getByTestId("file-viewer")
+      .querySelector(".file-viewer__divider") as HTMLElement;
+    fireEvent.pointerDown(divider, { clientX: 800, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 780 });
+    fireEvent.pointerMove(window, { clientX: 760 });
+    fireEvent.pointerMove(window, { clientX: 740 });
+    expect(window.localStorage.getItem("herta.fileViewer.widthPx")).toBeNull();
+    fireEvent.pointerUp(window, { clientX: 740 });
+    expect(
+      window.localStorage.getItem("herta.fileViewer.widthPx"),
+    ).not.toBeNull();
+  });
+});
+
 describe("FileViewerPanel — the file's kind picks the read and the renderer (ADR 0054)", () => {
   it("a picture takes the BYTES read, not the text read, and draws through <img>", async () => {
     const mock = createMockHertaBridge();

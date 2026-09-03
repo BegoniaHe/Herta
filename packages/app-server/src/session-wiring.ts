@@ -94,6 +94,22 @@ import type { AppServerConfig } from "./types.js";
 // ── Backend stack ───────────────────────────────────────────────────────────
 
 /**
+ * The BACKEND provider makes no transport retries of its own (2026-09-03).
+ *
+ * Two retry layers used to stack: the provider's `retryPost` retried a 429
+ * or 5xx twice per call (0.5 s, 1 s), and the backend turn loop's
+ * `BackendRetryState` then retried the whole call up to three more times
+ * with 2/4/8/16 s backoff — so one persistent rate limit cost twelve full-
+ * prompt POSTs of the backend frame and half a minute before `provider_failed`,
+ * against an API that was already saying "slow down". The loop's policy is
+ * the one designed for this (named reasons, jittered backoff, a hard cap), so
+ * the backend provider runs with the transport layer's retries off and lets
+ * the policy pace. The actor and the sidecars keep the provider default —
+ * they have no loop above them.
+ */
+export const BACKEND_PROVIDER_MAX_RETRIES = 0;
+
+/**
  * The digest tool's side model (ADR 0043): one chat call in, plain text out.
  * Flash with thinking OFF — a chunk summary is extraction, not reasoning,
  * and the reasoning chain would cost more tokens than the answer (the title

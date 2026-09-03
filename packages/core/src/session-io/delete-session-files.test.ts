@@ -15,21 +15,21 @@ function tmp(): string {
 }
 
 describe("deleteSessionFiles", () => {
-  it("removes the transcript and title sidecar for the id", () => {
+  it("removes the transcript and title sidecar for the id", async () => {
     const dir = tmp();
     writeFileSync(join(dir, "a.jsonl"), "{}");
     writeFileSync(join(dir, "a.title.json"), "{}");
-    deleteSessionFiles(dir, "a");
+    await deleteSessionFiles(dir, "a");
     expect(existsSync(join(dir, "a.jsonl"))).toBe(false);
     expect(existsSync(join(dir, "a.title.json"))).toBe(false);
   });
 
-  it("is idempotent when files are already missing", () => {
+  it("is idempotent when files are already missing", async () => {
     const dir = tmp();
-    expect(() => deleteSessionFiles(dir, "ghost")).not.toThrow();
+    await expect(deleteSessionFiles(dir, "ghost")).resolves.toBeUndefined();
   });
 
-  it("removes the recap sidecar too, given a workspace root (audit BL8)", () => {
+  it("removes the recap sidecar too, given a workspace root (audit BL8)", async () => {
     // It lives under `.herta/compaction`, OUTSIDE transcriptDir, so before
     // this it survived every delete — a growing pile of orphans describing
     // conversations that no longer exist.
@@ -41,11 +41,11 @@ describe("deleteSessionFiles", () => {
     mkdirSync(join(ws, ".herta", "compaction"), { recursive: true });
     writeFileSync(sidecar, "{}");
 
-    deleteSessionFiles(dir, "a", undefined, ws);
+    await deleteSessionFiles(dir, "a", undefined, ws);
     expect(existsSync(sidecar)).toBe(false);
   });
 
-  it("leaves the sidecar alone when no workspace root is given", () => {
+  it("leaves the sidecar alone when no workspace root is given", async () => {
     // Callers that do not know the root keep the old behaviour rather than
     // guessing a path and deleting something else.
     const ws = tmp();
@@ -55,70 +55,76 @@ describe("deleteSessionFiles", () => {
     mkdirSync(join(ws, ".herta", "compaction"), { recursive: true });
     writeFileSync(sidecar, "{}");
 
-    deleteSessionFiles(dir, "a");
+    await deleteSessionFiles(dir, "a");
     expect(existsSync(sidecar)).toBe(true);
   });
 
-  it("a traversal id cannot reach a sidecar outside the compaction dir", () => {
+  it("a traversal id cannot reach a sidecar outside the compaction dir", async () => {
     const ws = tmp();
     const outside = join(ws, "precious.json");
     writeFileSync(outside, "{}");
-    deleteSessionFiles(join(ws, "t"), "../../precious", undefined, ws);
+    await deleteSessionFiles(join(ws, "t"), "../../precious", undefined, ws);
     expect(existsSync(outside)).toBe(true);
   });
 
-  it("leaves other sessions' files intact", () => {
+  it("leaves other sessions' files intact", async () => {
     const dir = tmp();
     writeFileSync(join(dir, "a.jsonl"), "{}");
     writeFileSync(join(dir, "b.jsonl"), "{}");
     writeFileSync(join(dir, "b.title.json"), "{}");
-    deleteSessionFiles(dir, "a");
+    await deleteSessionFiles(dir, "a");
     expect(readdirSync(dir).sort()).toEqual(["b.jsonl", "b.title.json"]);
   });
 
-  it("deletes the managed workspace dir for the id when a base dir is given", () => {
+  it("deletes the managed workspace dir for the id when a base dir is given — a tree, off the event loop", async () => {
     const transcriptDir = tmp();
     const workspacesDir = tmp();
     const wsPath = join(workspacesDir, "abc");
-    mkdirSync(wsPath, { recursive: true });
+    // A small tree: the delete is recursive, and the whole point of the
+    // async form is that a `node_modules`-sized one does not block the UI.
+    mkdirSync(join(wsPath, "node_modules", "pkg", "lib"), { recursive: true });
     writeFileSync(join(wsPath, "scratch.ts"), "x");
+    writeFileSync(join(wsPath, "node_modules", "pkg", "lib", "index.js"), "x");
     writeFileSync(join(transcriptDir, "abc.jsonl"), "{}");
-    deleteSessionFiles(transcriptDir, "abc", workspacesDir);
+    // The returned promise is the completion: nothing is gone before it
+    // settles, everything is gone after.
+    const done = deleteSessionFiles(transcriptDir, "abc", workspacesDir);
+    await done;
     expect(existsSync(join(transcriptDir, "abc.jsonl"))).toBe(false);
     expect(existsSync(wsPath)).toBe(false);
   });
 
-  it("is a no-op for the workspace dir when no base dir is given", () => {
+  it("is a no-op for the workspace dir when no base dir is given", async () => {
     const dir = tmp();
     writeFileSync(join(dir, "abc.jsonl"), "{}");
-    expect(() => deleteSessionFiles(dir, "abc")).not.toThrow();
+    await expect(deleteSessionFiles(dir, "abc")).resolves.toBeUndefined();
   });
 
-  it("never escapes the transcript dir (guard rejects a traversal id)", () => {
+  it("never escapes the transcript dir (guard rejects a traversal id)", async () => {
     const outer = tmp();
     const transcriptDir = join(outer, "transcripts");
     mkdirSync(transcriptDir, { recursive: true });
     writeFileSync(join(outer, "victim.jsonl"), "{}");
     writeFileSync(join(outer, "victim.title.json"), "{}");
-    deleteSessionFiles(transcriptDir, "../victim");
+    await deleteSessionFiles(transcriptDir, "../victim");
     expect(existsSync(join(outer, "victim.jsonl"))).toBe(true);
     expect(existsSync(join(outer, "victim.title.json"))).toBe(true);
   });
 
-  it("never follows an absolute-path id out of the transcript dir", () => {
+  it("never follows an absolute-path id out of the transcript dir", async () => {
     const transcriptDir = tmp();
     const elsewhere = tmp();
     const victim = join(elsewhere, "victim");
     writeFileSync(`${victim}.jsonl`, "{}");
-    deleteSessionFiles(transcriptDir, victim);
+    await deleteSessionFiles(transcriptDir, victim);
     expect(existsSync(`${victim}.jsonl`)).toBe(true);
   });
 
-  it("never escapes the workspaces base dir (guard rejects a traversal id)", () => {
+  it("never escapes the workspaces base dir (guard rejects a traversal id)", async () => {
     const transcriptDir = tmp();
     const workspacesDir = tmp();
     writeFileSync(join(workspacesDir, "keep.txt"), "x");
-    deleteSessionFiles(transcriptDir, "..", workspacesDir);
+    await deleteSessionFiles(transcriptDir, "..", workspacesDir);
     // The parent of the base must be untouched, and the base itself must survive.
     expect(existsSync(join(workspacesDir, "keep.txt"))).toBe(true);
     expect(existsSync(workspacesDir)).toBe(true);

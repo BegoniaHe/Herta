@@ -1265,6 +1265,13 @@ body:after{
    handler holds the real guard (it re-checks the store on click); this is only
    the affordance. `display: none` and not opacity, so it also leaves the tab
    order while it cannot be used. */
+/* The attachment take-back hides the same way while a turn runs (2026-09-03):
+   its factory used to be withheld mid-turn, which re-rendered every
+   historical activity group at each turn boundary. The handler now checks
+   the live status; the control just is not shown. */
+.conversation-flow.is-busy .activity-step__remove {
+  display: none;
+}
 .conversation-flow.is-busy .message-rewind {
   display: none;
 }

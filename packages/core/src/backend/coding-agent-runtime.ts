@@ -11,6 +11,7 @@ import { FindingsLedger } from "../findings-ledger.js";
 import type { MemoryManager } from "../memory-manager.js";
 import type { PermissionEngine, RiskLevel } from "../permission-engine.js";
 import { ReadLedger } from "../read-ledger.js";
+import { countDiffLines } from "../text/diff-lines.js";
 import { TodoStore } from "../todo-store.js";
 import type { ToolRegistry } from "../tool-registry.js";
 import { TranscriptStore } from "../transcript-store.js";
@@ -626,13 +627,15 @@ export class CodingAgentRuntime {
   }
 }
 
-function summarizeDiff(diff: string): string {
-  const lines = diff.split("\n");
-  const adds = lines.filter(
-    (l) => l.startsWith("+") && !l.startsWith("+++"),
-  ).length;
-  const dels = lines.filter(
-    (l) => l.startsWith("-") && !l.startsWith("---"),
-  ).length;
-  return `+${adds} -${dels}`;
+/**
+ * The `+N -M` a changed file reports. Through the ONE diff-line counter
+ * (`text/diff-lines.ts`): this used to be a fifth private copy with the
+ * exact defect that counter was written to fix — a deleted line whose text
+ * begins with `--` (YAML front matter, a markdown rule, an SQL comment)
+ * read as a `---` header and was dropped, so the done marker under-counted
+ * work the record presents as ground truth. Exported for the test.
+ */
+export function summarizeDiff(diff: string): string {
+  const { add, del } = countDiffLines(diff);
+  return `+${add} -${del}`;
 }

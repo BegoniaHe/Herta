@@ -521,6 +521,8 @@ function useDividerDrag(): (e: ReactPointerEvent<HTMLDivElement>) => void {
         v.setWidthPx(w);
       };
       const onUp = (): void => {
+        // One storage write per gesture, not per frame (see persistWidthPx).
+        v.persistWidthPx();
         body?.classList.remove("is-resizing");
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);

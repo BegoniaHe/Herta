@@ -66,6 +66,7 @@ import {
   topicAnchorText,
 } from "./session-topics.js";
 import {
+  BACKEND_PROVIDER_MAX_RETRIES,
   createActorStack,
   createBackendStack,
   digestModelFrom,
@@ -1713,6 +1714,9 @@ export class SessionImpl implements Session {
         // until its announced early-August-2026 update (flash honors it).
         thinking:
           config.thinking === "off" ? false : (config.thinking ?? "high"),
+        // The turn loop's retry policy paces a rate limit; the transport
+        // must not stack its own retries under it (see the constant).
+        maxRetries: BACKEND_PROVIDER_MAX_RETRIES,
         ...baseUrl,
       });
 

@@ -33,6 +33,15 @@ const MAX_FRAME_DT_S = 0.05;
 const CALM_MIN_FRAME_MS = 30;
 const CALM_HOLD_MS = 1500; // full rate for this long after any state change
 const CALM_ENERGY = 0.04; // env.fast below this counts as at-rest
+/* Parking (perf 2026-09-03): the governor's floor is ~33fps FOREVER while a
+   session is open — `document.hidden` never flips for a window that is
+   merely behind another one, so an app left open all day kept the most
+   expensive shader in the app running for nobody. When the window is not
+   focused AND the wave has been calm for this long, the loop parks on its
+   last frame (no rAF, no timer). Focus, a state change, or a voice cue
+   restarts it; while the window IS focused nothing changes — the breath is
+   part of the product. */
+const PARK_UNFOCUSED_MS = 5000;
 /* Resolution cap (perf 2026-07-13): the tide shader is the most expensive
    per-fragment pass in the app (a 30-step march × 4-iteration warp), and
    the canvas spans the composer's full width. HORIZONTAL detail varies
@@ -104,6 +113,19 @@ export function AuraVisual(): JSX.Element {
     if (disconnected) c.stop();
     else c.start();
   }, [disconnected]);
+  // A parked loop (see PARK_UNFOCUSED_MS) wakes on anything that changes
+  // what it would draw: the session status, a voice cue, reduced motion.
+  // start() is idempotent while the loop runs.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the values are wake triggers the loop reads through `live`, not inputs of the effect body
+  useEffect(() => {
+    if (!disconnected) loopControls.current?.start();
+  }, [
+    disconnected,
+    snapshot.status,
+    snapshot.sessionId,
+    voicePlaying,
+    reduced,
+  ]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -237,9 +259,26 @@ export function AuraVisual(): JSX.Element {
     let calm = false;
     let prevResolvedState: string | null = null;
     let stateChangedTs = performance.now();
+    // Parking state: when the calm run began, and whether the window has
+    // focus (tracked by event — `document.hidden` does not cover "behind
+    // another window").
+    let calmSince: number | null = null;
+    let focused =
+      typeof document.hasFocus === "function" ? document.hasFocus() : true;
 
     const render = (now: number): void => {
       raf = null;
+      // Park: calm for PARK_UNFOCUSED_MS with the window unfocused — stop
+      // re-arming. `raf` and `idleTimer` are both null here, so a later
+      // start() (focus, a state change) simply resumes.
+      if (
+        calm &&
+        !focused &&
+        calmSince !== null &&
+        now - calmSince > PARK_UNFOCUSED_MS
+      ) {
+        return;
+      }
       // Idle frame governor: at rest, space frames to ~33fps. `last` only
       // advances on DRAWN frames, so dt spans the skipped gap naturally
       // (clamped by MAX_FRAME_DT_S). The wait rides a TIMER, not rAF
@@ -336,6 +375,8 @@ export function AuraVisual(): JSX.Element {
         resolved.state === "listening" &&
         env.fast < CALM_ENERGY &&
         now - stateChangedTs > CALM_HOLD_MS;
+      if (!calm) calmSince = null;
+      else if (calmSince === null) calmSince = now;
       // Diagnostics handle (a plain JS property — never a DOM attribute, so
       // no style/layout impact): lets probes count real draws per second to
       // verify the governor. Harmless in production.
@@ -356,6 +397,11 @@ export function AuraVisual(): JSX.Element {
         !document.hidden &&
         !live.current.hidden
       ) {
+        // A (re)start always draws its first frame and re-judges: the park
+        // gate reads the PREVIOUS frame's calm verdict, which is exactly what
+        // parked the loop — left standing, a wake would park again at once.
+        calm = false;
+        calmSince = null;
         last = performance.now();
         raf = requestAnimationFrame(render);
       }
@@ -373,6 +419,16 @@ export function AuraVisual(): JSX.Element {
     const onVisibility = (): void => {
       if (document.hidden) stop();
       else start();
+    };
+    // Window focus: a blur lets the loop park itself once calm (the render
+    // gate above); a focus wakes a parked loop. Only the flag flips on blur —
+    // a state change while unfocused still draws at the calm rate.
+    const onFocus = (): void => {
+      focused = true;
+      start();
+    };
+    const onBlur = (): void => {
+      focused = false;
     };
     // Context loss/restore (audit 2026-07-13 T2.1): without these, a GPU
     // reset left every GL call a no-op with the rAF loop running dead — an
@@ -394,12 +450,16 @@ export function AuraVisual(): JSX.Element {
     canvas.addEventListener("webglcontextlost", onContextLost);
     canvas.addEventListener("webglcontextrestored", onContextRestored);
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
     loopControls.current = { start, stop };
     start();
     return () => {
       stop();
       loopControls.current = null;
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
       canvas.removeEventListener("webglcontextlost", onContextLost);
       canvas.removeEventListener("webglcontextrestored", onContextRestored);
       ro?.disconnect();

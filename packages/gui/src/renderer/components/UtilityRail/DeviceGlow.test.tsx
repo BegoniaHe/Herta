@@ -61,6 +61,46 @@ function mockAsyncRaf(): void {
 }
 
 describe("DeviceGlow", () => {
+  it("parks once calm with the window unfocused; a focus or a state change wakes it (perf 2026-09-03)", () => {
+    vi.useFakeTimers();
+    mockAsyncRaf();
+    const { calls } = mockWebgl();
+    const { rerender } = render(<DeviceGlow state="idle" />);
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+      // Past CALM_HOLD_MS + PARK_UNFOCUSED_MS of drawn-frame time (the mock
+      // clock advances only on drawn frames; the governor sleeps between).
+      vi.advanceTimersByTime(20_000);
+    });
+    const parkedAt = calls.drawArrays ?? 0;
+    expect(parkedAt).toBeGreaterThan(50);
+    act(() => {
+      vi.advanceTimersByTime(3_000);
+    });
+    expect((calls.drawArrays ?? 0) - parkedAt).toBe(0);
+    // A state change wakes a parked loop even while unfocused…
+    rerender(<DeviceGlow state="delegated" />);
+    act(() => {
+      vi.advanceTimersByTime(16 * 5);
+    });
+    const afterState = calls.drawArrays ?? 0;
+    expect(afterState).toBeGreaterThan(parkedAt + 1);
+    // …and so does focus, once it has parked again.
+    act(() => {
+      vi.advanceTimersByTime(20_000);
+    });
+    const parkedAgain = calls.drawArrays ?? 0;
+    act(() => {
+      vi.advanceTimersByTime(3_000);
+    });
+    expect((calls.drawArrays ?? 0) - parkedAgain).toBe(0);
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+      vi.advanceTimersByTime(16 * 5);
+    });
+    expect(calls.drawArrays ?? 0).toBeGreaterThan(parkedAgain + 1);
+  });
+
   it("renders the canvas layer plus the legacy stack as fallback markup", () => {
     const { container } = render(<DeviceGlow state="delegated" />);
     expect(container.querySelector("canvas.device-glow-canvas")).toBeTruthy();

@@ -5244,6 +5244,467 @@ button.session-item__badge--dismiss {
   color: var(--muted-slate);
 }
 
+/* ── The rich renderers (ADR 0054) ───────────────────────────────────────
+   One scroller class shared by every kind that is not the code layout;
+   the house scrollbar from .file-viewer__code, repeated on it. */
+.file-viewer__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.file-viewer__scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.file-viewer__scroll::-webkit-scrollbar-track { background: transparent; }
+.file-viewer__scroll::-webkit-scrollbar-corner { background: transparent; }
+.file-viewer__scroll::-webkit-scrollbar-thumb {
+  background: var(--ink-a13);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.file-viewer__scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-a22);
+  background-clip: padding-box;
+}
+.file-viewer__action.is-on {
+  background: var(--ink-a13);
+  color: var(--slate-deep);
+}
+
+/* Code tokens (highlight.js classes) in house ink — both themes read the
+   same tokens, so the palette lives here once and follows the ink. */
+.file-viewer .hljs-comment,
+.file-viewer .hljs-quote { color: var(--muted-3); font-style: italic; }
+.file-viewer .hljs-keyword,
+.file-viewer .hljs-selector-tag,
+.file-viewer .hljs-doctag,
+.file-viewer .hljs-meta { color: #7c3aed; }
+.file-viewer .hljs-string,
+.file-viewer .hljs-regexp,
+.file-viewer .hljs-addition,
+.file-viewer .hljs-template-tag { color: #0f766e; }
+.file-viewer .hljs-number,
+.file-viewer .hljs-literal,
+.file-viewer .hljs-symbol,
+.file-viewer .hljs-bullet { color: #b45309; }
+.file-viewer .hljs-title,
+.file-viewer .hljs-title.function_,
+.file-viewer .hljs-title.class_,
+.file-viewer .hljs-section,
+.file-viewer .hljs-name { color: #1d4ed8; }
+.file-viewer .hljs-attr,
+.file-viewer .hljs-attribute,
+.file-viewer .hljs-variable,
+.file-viewer .hljs-template-variable,
+.file-viewer .hljs-property { color: #0e7490; }
+.file-viewer .hljs-built_in,
+.file-viewer .hljs-type,
+.file-viewer .hljs-selector-class,
+.file-viewer .hljs-selector-id { color: #9d174d; }
+.file-viewer .hljs-deletion { color: #b91c1c; }
+.file-viewer .hljs-emphasis { font-style: italic; }
+.file-viewer .hljs-strong { font-weight: 700; }
+:root[data-theme="dark"] .file-viewer .hljs-keyword,
+:root[data-theme="dark"] .file-viewer .hljs-selector-tag,
+:root[data-theme="dark"] .file-viewer .hljs-doctag,
+:root[data-theme="dark"] .file-viewer .hljs-meta { color: #c4b5fd; }
+:root[data-theme="dark"] .file-viewer .hljs-string,
+:root[data-theme="dark"] .file-viewer .hljs-regexp,
+:root[data-theme="dark"] .file-viewer .hljs-addition,
+:root[data-theme="dark"] .file-viewer .hljs-template-tag { color: #5eead4; }
+:root[data-theme="dark"] .file-viewer .hljs-number,
+:root[data-theme="dark"] .file-viewer .hljs-literal,
+:root[data-theme="dark"] .file-viewer .hljs-symbol,
+:root[data-theme="dark"] .file-viewer .hljs-bullet { color: #fcd34d; }
+:root[data-theme="dark"] .file-viewer .hljs-title,
+:root[data-theme="dark"] .file-viewer .hljs-title.function_,
+:root[data-theme="dark"] .file-viewer .hljs-title.class_,
+:root[data-theme="dark"] .file-viewer .hljs-section,
+:root[data-theme="dark"] .file-viewer .hljs-name { color: #93c5fd; }
+:root[data-theme="dark"] .file-viewer .hljs-attr,
+:root[data-theme="dark"] .file-viewer .hljs-attribute,
+:root[data-theme="dark"] .file-viewer .hljs-variable,
+:root[data-theme="dark"] .file-viewer .hljs-template-variable,
+:root[data-theme="dark"] .file-viewer .hljs-property { color: #67e8f9; }
+:root[data-theme="dark"] .file-viewer .hljs-built_in,
+:root[data-theme="dark"] .file-viewer .hljs-type,
+:root[data-theme="dark"] .file-viewer .hljs-selector-class,
+:root[data-theme="dark"] .file-viewer .hljs-selector-id { color: #f9a8d4; }
+:root[data-theme="dark"] .file-viewer .hljs-deletion { color: #fca5a5; }
+
+/* Markdown as the page: the record's reading measure, house type. */
+.file-viewer__doc {
+  padding: 18px 22px 28px;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+.file-viewer__doc > :first-child { margin-top: 0; }
+.file-viewer__doc h1,
+.file-viewer__doc h2,
+.file-viewer__doc h3,
+.file-viewer__doc h4,
+.file-viewer__doc h5,
+.file-viewer__doc h6 {
+  margin: 1.5em 0 0.5em;
+  line-height: 1.3;
+  color: var(--ink-2);
+  font-weight: 650;
+}
+.file-viewer__doc h1 { font-size: 1.55em; padding-bottom: 0.3em; border-bottom: 1px solid var(--hairline); }
+.file-viewer__doc h2 { font-size: 1.3em; padding-bottom: 0.25em; border-bottom: 1px solid var(--hairline); }
+.file-viewer__doc h3 { font-size: 1.12em; }
+.file-viewer__doc h4 { font-size: 1em; }
+.file-viewer__doc h5,
+.file-viewer__doc h6 { font-size: 0.92em; color: var(--muted-slate); }
+.file-viewer__doc p,
+.file-viewer__doc ul,
+.file-viewer__doc ol,
+.file-viewer__doc blockquote,
+.file-viewer__doc pre,
+.file-viewer__doc table { margin: 0 0 0.9em; }
+.file-viewer__doc ul,
+.file-viewer__doc ol { padding-left: 1.6em; }
+.file-viewer__doc li + li { margin-top: 0.2em; }
+.file-viewer__doc li > p { margin-bottom: 0.35em; }
+.file-viewer__doc input[type="checkbox"] { margin: 0 0.4em 0 -1.3em; vertical-align: -1px; }
+.file-viewer__doc a { color: var(--accent-blue); text-decoration: underline; text-decoration-color: var(--ink-a22); text-underline-offset: 2px; cursor: default; }
+.file-viewer__doc code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--ink-a06);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.file-viewer__doc pre {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--ink-a05);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.file-viewer__doc pre code { background: transparent; padding: 0; font-size: inherit; }
+.file-viewer__doc blockquote {
+  padding: 0.1em 0 0.1em 0.9em;
+  border-left: 3px solid var(--ink-a13);
+  color: var(--muted-slate);
+}
+.file-viewer__doc hr { border: 0; border-top: 1px solid var(--hairline); margin: 1.4em 0; }
+.file-viewer__doc img { max-width: 100%; height: auto; border-radius: 8px; }
+.file-viewer__doc table { border-collapse: collapse; font-size: 0.93em; display: block; max-width: 100%; overflow: auto; }
+.file-viewer__doc th,
+.file-viewer__doc td { padding: 5px 10px; border: 1px solid var(--hairline-strong); text-align: left; vertical-align: top; }
+.file-viewer__doc th { background: var(--ink-a05); font-weight: 600; color: var(--ink-2); }
+.file-viewer__doc tr:nth-child(even) td { background: var(--ink-a03); }
+.file-viewer__diagram {
+  margin: 0 0 1em;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--glass-a55);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  overflow: auto;
+  text-align: center;
+}
+.file-viewer__diagram svg { max-width: 100%; height: auto; }
+.file-viewer__diagram-failed {
+  margin: 0 0 0.4em;
+  font-size: 12px;
+  color: var(--muted-slate);
+}
+
+/* Pictures: fit by default, 1:1 on click, centred on the glass. */
+.file-viewer__image-wrap {
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+.file-viewer__image-btn {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: zoom-in;
+  max-width: 100%;
+  line-height: 0;
+}
+.file-viewer__image-wrap.is-actual { place-items: start; }
+.file-viewer__image-wrap.is-actual .file-viewer__image-btn { cursor: zoom-out; max-width: none; }
+.file-viewer__image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  background:
+    linear-gradient(45deg, var(--ink-a05) 25%, transparent 25%, transparent 75%, var(--ink-a05) 75%),
+    linear-gradient(45deg, var(--ink-a05) 25%, transparent 25%, transparent 75%, var(--ink-a05) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+.file-viewer__image-wrap.is-actual .file-viewer__image { max-width: none; }
+.file-viewer__image-meta,
+.file-viewer__pdf-meta { padding-top: 6px; padding-bottom: 10px; font-variant-numeric: tabular-nums; }
+
+/* PDF pages: paper on the glass, one column, fit to width. */
+.file-viewer__pdf { padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.file-viewer__pdf-page {
+  background: #fff;
+  border-radius: 4px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.14), 0 0 0 1px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+}
+.file-viewer__pdf-page canvas { display: block; }
+
+/* Word: docx-preview's page wrapper, restyled to the glass. The renderer
+   sets widths/fonts inline; only the frame is ours. */
+.file-viewer__docx { padding: 12px 16px 24px; }
+.file-viewer__docx .docx-wrapper { background: transparent; padding: 0; display: block; }
+.file-viewer__docx .docx-wrapper > section.docx {
+  width: auto !important;
+  min-height: 0 !important;
+  margin: 0 0 14px;
+  padding: 28px 30px !important;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(15, 23, 42, 0.06);
+  border-radius: 4px;
+  background: #fff;
+  color: #111417;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+}
+.file-viewer__docx .docx-wrapper > section.docx img { max-width: 100%; height: auto; }
+.file-viewer__docx .docx-wrapper > section.docx table { max-width: 100%; }
+.file-viewer__docx a { pointer-events: none; }
+
+/* The grid (spreadsheets, CSV): sticky letters and numbers, virtualized
+   rows on a fixed height (GridView.ROW_H). */
+.file-viewer__grid {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--slate-deep);
+}
+.file-viewer__grid-canvas { position: relative; }
+.file-viewer__gridhead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 24px;
+  background: var(--glass-a78);
+  border-bottom: 1px solid var(--hairline-strong);
+}
+.file-viewer__corner {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  display: inline-block;
+  height: 24px;
+  background: var(--glass-a78);
+  border-right: 1px solid var(--hairline-strong);
+}
+.file-viewer__colhead {
+  position: absolute;
+  top: 0;
+  height: 24px;
+  line-height: 24px;
+  text-align: center;
+  color: var(--muted-slate);
+  border-right: 1px solid var(--hairline);
+  box-sizing: border-box;
+  overflow: hidden;
+  font-weight: 600;
+}
+.file-viewer__row {
+  position: absolute;
+  left: 0;
+  height: 24px;
+  border-bottom: 1px solid var(--hairline);
+  box-sizing: border-box;
+}
+.file-viewer__rowhead {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: inline-block;
+  height: 24px;
+  line-height: 23px;
+  text-align: center;
+  color: var(--muted-slate);
+  background: var(--glass-a78);
+  border-right: 1px solid var(--hairline-strong);
+  box-sizing: border-box;
+  font-weight: 600;
+}
+.file-viewer__cell {
+  position: absolute;
+  top: 0;
+  height: 24px;
+  line-height: 23px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-right: 1px solid var(--hairline);
+}
+.file-viewer__cell.is-n,
+.file-viewer__cell.is-d { text-align: right; }
+.file-viewer__cell.is-b { text-align: center; color: var(--muted-slate); }
+.file-viewer__cell.is-e { color: #b91c1c; }
+.file-viewer__sheet-tabs {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--hairline);
+  overflow-x: auto;
+}
+.file-viewer__sheet-tab {
+  border: 0;
+  border-radius: 7px;
+  padding: 3px 10px;
+  font-size: 12px;
+  background: transparent;
+  color: var(--muted-slate);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.file-viewer__sheet-tab:hover { background: var(--ink-a13); }
+.file-viewer__sheet-tab.is-active {
+  background: var(--glass-a78);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--slate-deep);
+  font-weight: 600;
+}
+
+/* Decks: thumbnail strip, the current slide fit to width, a page bar. */
+.file-viewer__slides { outline: none; }
+.file-viewer__slides-row {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.file-viewer__thumbs {
+  flex: none;
+  width: 164px;
+  overflow-y: auto;
+  padding: 12px 10px;
+  border-right: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.file-viewer__thumbs::-webkit-scrollbar { width: 8px; }
+.file-viewer__thumbs::-webkit-scrollbar-track { background: transparent; }
+.file-viewer__thumbs::-webkit-scrollbar-thumb { background: var(--ink-a13); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+.file-viewer__thumb {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.file-viewer__thumb-n {
+  flex: none;
+  width: 14px;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--muted-slate);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.file-viewer__thumb-box {
+  display: block;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--hairline-strong);
+  transition: box-shadow 140ms ease;
+}
+.file-viewer__thumb:hover .file-viewer__thumb-box { box-shadow: 0 0 0 1px var(--ink-a35); }
+.file-viewer__thumb.is-active .file-viewer__thumb-box { box-shadow: 0 0 0 2px var(--accent-blue); }
+.file-viewer__slide-main {
+  padding: 24px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+.file-viewer__slide {
+  position: relative;
+  overflow: hidden;
+  border-radius: 4px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.14), 0 0 0 1px rgba(15, 23, 42, 0.06);
+  background: #fff;
+  flex: none;
+}
+.file-viewer__slide-inner {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  font-family: Calibri, "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Inter, sans-serif;
+  color: #111417;
+}
+.file-viewer__shape {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.file-viewer__shape.is-picture img { max-width: none; }
+.file-viewer__shape.is-line { pointer-events: none; }
+.file-viewer__shape.is-placeholder {
+  display: grid;
+  place-items: center;
+  border: 1.5px dashed rgba(17, 20, 23, 0.25);
+  border-radius: 6px;
+  color: rgba(17, 20, 23, 0.45);
+  font-size: 18px;
+}
+.file-viewer__textbody {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.file-viewer__textbody.is-middle { justify-content: center; }
+.file-viewer__textbody.is-bottom { justify-content: flex-end; }
+.file-viewer__textbody.is-vertical { writing-mode: vertical-rl; }
+.file-viewer__pp { min-width: 0; }
+.file-viewer__bullet { flex: none; display: inline-block; }
+.file-viewer__runs { flex: 1 1 auto; min-width: 0; }
+.file-viewer__slide-table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 18px;
+}
+.file-viewer__slide-table td {
+  border: 1px solid rgba(17, 20, 23, 0.25);
+  padding: 4px 8px;
+  vertical-align: top;
+  overflow: hidden;
+}
+.file-viewer__slides-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--hairline);
+}
+.file-viewer__slides-bar .file-viewer__action:disabled { opacity: 0.35; cursor: default; }
+.file-viewer__slides-count {
+  font-size: 12px;
+  color: var(--muted-slate);
+  font-variant-numeric: tabular-nums;
+  min-width: 54px;
+  text-align: center;
+}
+.file-viewer__slides-bar .file-viewer__notice { padding: 0 0 0 8px; }
+
 /* ── The clickable file NAME in a record row (ADR 0050 §1) ────────────────
    The name, not the row, and not a blue link: ink text with a faint dotted
    underline; hover firms the underline and raises a soft glass pill. */

@@ -55,6 +55,7 @@ import {
   setDeepSeekKey,
 } from "./key-store.js";
 import {
+  readWorkspaceBytesBounded,
   readWorkspaceFileBounded,
   resolveInsideWorkspace,
 } from "./read-workspace-file.js";
@@ -764,6 +765,18 @@ export function createSessionService(
           return { ok: false as const, reason: "no_session" as const };
         }
         return readWorkspaceFileBounded(s.backendWorkspace, path);
+      },
+    );
+    // The rich kinds' read (ADR 0054 §2): the whole file as bytes for the
+    // renderers that parse it themselves — same jail, 64 MB ceiling.
+    handle(
+      CMD.readWorkspaceBytes,
+      async (_e, sessionId: string, path: string) => {
+        const s = host?.activeSession ?? null;
+        if (s === null || s.sessionId !== sessionId) {
+          return { ok: false as const, reason: "no_session" as const };
+        }
+        return readWorkspaceBytesBounded(s.backendWorkspace, path);
       },
     );
     // The viewer's 打开: hand the jailed path to the OS default app. The

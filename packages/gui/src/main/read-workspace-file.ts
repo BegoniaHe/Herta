@@ -36,6 +36,30 @@ export type ReadWorkspaceFileResult =
  *  panel; the panel says the file continues and offers 打开 for the rest. */
 export const MAX_VIEWER_BYTES = 1_500_000;
 
+/** The BYTES read's ceiling (ADR 0054 §2): the attachment store's own
+ *  ceiling, so nothing a session holds is unreadable by size. Whole or
+ *  refused — a truncated ZIP or PDF is garbage, not a preview. */
+export const MAX_VIEWER_RICH_BYTES = 64 * 1024 * 1024;
+
+export interface ReadWorkspaceBytesOk {
+  readonly ok: true;
+  readonly bytes: Uint8Array;
+  readonly size: number;
+  readonly relative: string;
+}
+export interface ReadWorkspaceBytesErr {
+  readonly ok: false;
+  readonly reason:
+    | "not_found"
+    | "not_a_file"
+    | "outside_workspace"
+    | "too_large"
+    | "unreadable";
+}
+export type ReadWorkspaceBytesResult =
+  | ReadWorkspaceBytesOk
+  | ReadWorkspaceBytesErr;
+
 /** NUL inside the head is the classic text/binary sniff — git's own. */
 const BINARY_SNIFF_BYTES = 8_000;
 
@@ -128,5 +152,39 @@ export async function readWorkspaceFileBounded(
     return { ok: false, reason: "unreadable" };
   } finally {
     await fh?.close().catch(() => undefined);
+  }
+}
+
+/**
+ * The rich kinds' read (ADR 0054 §2): the same jail, the whole file as
+ * bytes, refused over MAX_VIEWER_RICH_BYTES. No sniffing — the renderer
+ * chose this read by extension and its parser is the judge of the bytes.
+ */
+export async function readWorkspaceBytesBounded(
+  workspaceRoot: string,
+  inputPath: string,
+): Promise<ReadWorkspaceBytesResult> {
+  const resolved = await resolveInsideWorkspace(workspaceRoot, inputPath);
+  if (resolved.kind === "outside")
+    return { ok: false, reason: "outside_workspace" };
+  if (resolved.kind === "missing") return { ok: false, reason: "not_found" };
+  let stat: Awaited<ReturnType<typeof fs.stat>>;
+  try {
+    stat = await fs.stat(resolved.abs);
+  } catch {
+    return { ok: false, reason: "not_found" };
+  }
+  if (!stat.isFile()) return { ok: false, reason: "not_a_file" };
+  if (stat.size > MAX_VIEWER_RICH_BYTES)
+    return { ok: false, reason: "too_large" };
+  try {
+    const buf = await fs.readFile(resolved.abs);
+    // A fresh Uint8Array over its own buffer: a Node Buffer may be a view
+    // into a shared pool, and structured clone would carry the whole pool.
+    const bytes = new Uint8Array(buf.byteLength);
+    bytes.set(buf);
+    return { ok: true, bytes, size: stat.size, relative: resolved.relative };
+  } catch {
+    return { ok: false, reason: "unreadable" };
   }
 }

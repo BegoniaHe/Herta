@@ -98,7 +98,10 @@ export function buildCsp(opts: CspOptions): string {
     "object-src 'none'",
     "frame-src 'none'",
     "child-src 'none'",
-    "worker-src 'none'",
+    // The file viewer's PDF renderer runs pdf.js's worker (ADR 0054 §5) —
+    // a module worker from the app's own bundle. 'self' is the bundle;
+    // blob: is pdf.js's fallback wrapper when the direct URL is refused.
+    "worker-src 'self' blob:",
     "frame-ancestors 'none'",
     "base-uri 'none'",
     "form-action 'none'",

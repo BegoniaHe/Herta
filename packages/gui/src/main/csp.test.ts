@@ -85,6 +85,11 @@ describe("buildCsp (audit BL2)", () => {
     // Vite inlines small assets as data: URIs; attachment images ride their
     // own scheme (ADR 0048) rather than the record.
     expect(csp).toContain("img-src 'self' data: blob: herta-attachment:");
+    // The viewer's PDF renderer runs pdf.js's worker from the bundle (ADR
+    // 0054 §5) — the one directive that opened since the audit; workers
+    // from anywhere else stay refused.
+    expect(csp).toContain("worker-src 'self' blob:");
+    expect(csp).not.toContain("worker-src 'none'");
   });
 
   it("dev: relaxes exactly what Vite needs, and nothing else", () => {

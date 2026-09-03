@@ -213,6 +213,29 @@ export type ReadWorkspaceFileReply =
         | "no_session";
     };
 
+/**
+ * Reply from `readWorkspaceBytes` (ADR 0054 §2): the rich kinds' read —
+ * the whole file as bytes through the same jail, refused over the 64 MB
+ * ceiling. No truncation: a cut ZIP or PDF is garbage, not a preview.
+ */
+export type ReadWorkspaceBytesReply =
+  | {
+      readonly ok: true;
+      readonly bytes: Uint8Array;
+      readonly size: number;
+      readonly relative: string;
+    }
+  | {
+      readonly ok: false;
+      readonly reason:
+        | "not_found"
+        | "not_a_file"
+        | "outside_workspace"
+        | "too_large"
+        | "unreadable"
+        | "no_session";
+    };
+
 /** Reply from `stageImages`. Per-file refusals ride `rejected` so one bad
  *  item never discards its siblings; only whole-action failures use `ok:
  *  false` with a message, like every other command here. */
@@ -362,6 +385,12 @@ export interface HertaBridge {
     sessionId: string,
     path: string,
   ): Promise<ReadWorkspaceFileReply>;
+  /** The rich kinds' read (ADR 0054 §2): bytes for pictures, PDFs and
+   *  Office files, same jail, 64 MB ceiling. Optional like its sibling. */
+  readWorkspaceBytes?(
+    sessionId: string,
+    path: string,
+  ): Promise<ReadWorkspaceBytesReply>;
   /** The viewer's 打开 button: open the jailed path with the OS default
    *  application (shell.openPath). False when refused/missing. */
   openWorkspaceFile?(sessionId: string, path: string): Promise<boolean>;

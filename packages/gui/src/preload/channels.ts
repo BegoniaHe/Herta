@@ -26,6 +26,7 @@ export const CMD = {
   stageImages: "session:stageImages",
   unstageImage: "session:unstageImage",
   readWorkspaceFile: "session:readWorkspaceFile",
+  readWorkspaceBytes: "session:readWorkspaceBytes",
   openWorkspaceFile: "session:openWorkspaceFile",
   getDreamConfig: "settings:getDreamConfig",
   setDreamConfig: "settings:setDreamConfig",

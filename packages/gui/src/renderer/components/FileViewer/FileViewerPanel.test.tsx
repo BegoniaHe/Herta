@@ -8,6 +8,12 @@ import {
   useFileViewerOpen,
 } from "./file-viewer-context.js";
 
+// jsdom has no object URLs; the picture renderer mints one per image.
+if (typeof URL.createObjectURL !== "function") {
+  URL.createObjectURL = () => "blob:jsdom";
+  URL.revokeObjectURL = () => undefined;
+}
+
 function Probe(): JSX.Element {
   const open = useFileViewerOpen();
   return (
@@ -19,6 +25,27 @@ function Probe(): JSX.Element {
         onClick={() => open?.("src/a.ts")}
       >
         open
+      </button>
+      <button
+        type="button"
+        data-testid="probe-png"
+        onClick={() => open?.("shots/one.png")}
+      >
+        open png
+      </button>
+      <button
+        type="button"
+        data-testid="probe-md"
+        onClick={() => open?.("docs/notes.md")}
+      >
+        open md
+      </button>
+      <button
+        type="button"
+        data-testid="probe-md-anchored"
+        onClick={() => open?.("docs/notes.md", { anchor: { from: 1, to: 1 } })}
+      >
+        open md anchored
       </button>
       <button
         type="button"
@@ -231,5 +258,164 @@ describe("FileViewerPanel (ADR 0050)", () => {
     );
     h.switchSession("s2");
     expect(screen.queryByTestId("file-viewer")).toBeNull();
+  });
+});
+
+describe("FileViewerPanel — the file's kind picks the read and the renderer (ADR 0054)", () => {
+  it("a picture takes the BYTES read, not the text read, and draws through <img>", async () => {
+    const mock = createMockHertaBridge();
+    const readWorkspaceFile = vi.fn(async () => ({
+      ok: true as const,
+      content: "",
+      truncated: false,
+      size: 0,
+      relative: "x",
+    }));
+    const readWorkspaceBytes = vi.fn(async () => ({
+      ok: true as const,
+      bytes: new Uint8Array([137, 80, 78, 71]),
+      size: 4,
+      relative: "shots/one.png",
+    }));
+    Object.assign(mock.bridge, { readWorkspaceFile, readWorkspaceBytes });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("probe-png"));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByTestId("file-viewer")
+          .querySelector("img.file-viewer__image"),
+      ).not.toBeNull(),
+    );
+    expect(readWorkspaceBytes).toHaveBeenCalledWith("s1", "shots/one.png");
+    expect(readWorkspaceFile).not.toHaveBeenCalled();
+    expect(screen.getByTestId("file-viewer").dataset.kind).toBe("image");
+  });
+
+  it("without the bytes read (an older bridge) a picture falls to the text read's binary notice", async () => {
+    const mock = createMockHertaBridge();
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: vi.fn(async () => ({
+        ok: false as const,
+        reason: "binary" as const,
+      })),
+    });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("probe-png"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("file-viewer").querySelector(".file-viewer__notice")
+          ?.textContent,
+      ).toContain("Binary file"),
+    );
+  });
+
+  it("a file over the bytes ceiling answers with the honest notice", async () => {
+    const mock = createMockHertaBridge();
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: vi.fn(),
+      readWorkspaceBytes: vi.fn(async () => ({
+        ok: false as const,
+        reason: "too_large" as const,
+      })),
+    });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("probe-png"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("file-viewer").querySelector(".file-viewer__notice")
+          ?.textContent,
+      ).toContain("Too large"),
+    );
+  });
+
+  it("Markdown renders as the page; the header toggle swaps to the source with line numbers and back", async () => {
+    const mock = createMockHertaBridge();
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: vi.fn(async () => ({
+        ok: true as const,
+        content: "# Hello\n\ntext\n",
+        truncated: false,
+        size: 14,
+        relative: "docs/notes.md",
+      })),
+    });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("probe-md"));
+    const panel = () => screen.getByTestId("file-viewer");
+    await waitFor(() =>
+      expect(panel().querySelector(".file-viewer__doc h1")?.textContent).toBe(
+        "Hello",
+      ),
+    );
+    expect(panel().querySelector(".file-viewer__text")).toBeNull();
+    fireEvent.click(screen.getByTestId("viewer-toggle-source"));
+    await waitFor(() =>
+      expect(
+        panel().querySelector(".file-viewer__text")?.textContent,
+      ).toContain("# Hello"),
+    );
+    expect(
+      panel().querySelector(".file-viewer__gutter")?.textContent,
+    ).toContain("1\n2\n3");
+    fireEvent.click(screen.getByTestId("viewer-toggle-source"));
+    await waitFor(() =>
+      expect(panel().querySelector(".file-viewer__doc h1")).not.toBeNull(),
+    );
+  });
+
+  it("a cite anchor opens Markdown at the SOURCE (lines are a source concept)", async () => {
+    const mock = createMockHertaBridge();
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: vi.fn(async () => ({
+        ok: true as const,
+        content: "# Hello\n",
+        truncated: false,
+        size: 8,
+        relative: "docs/notes.md",
+      })),
+    });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("probe-md-anchored"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("file-viewer").querySelector(".file-viewer__anchor"),
+      ).not.toBeNull(),
+    );
+    expect(
+      screen.getByTestId("file-viewer").querySelector(".file-viewer__doc"),
+    ).toBeNull();
+  });
+
+  it("code files keep the gutter layout and gain tokens once the highlighter lands", async () => {
+    const mock = createMockHertaBridge();
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: vi.fn(async () => ({
+        ok: true as const,
+        content: "const a = 1;\n",
+        truncated: false,
+        size: 13,
+        relative: "src/a.ts",
+      })),
+    });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("probe"));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByTestId("file-viewer")
+          .querySelector(".file-viewer__text .hljs-keyword"),
+      ).not.toBeNull(),
+    );
+    expect(
+      screen.getByTestId("file-viewer").querySelector(".file-viewer__text")
+        ?.textContent,
+    ).toBe("const a = 1;\n");
   });
 });

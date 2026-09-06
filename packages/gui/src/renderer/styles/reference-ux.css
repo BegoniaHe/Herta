@@ -1824,6 +1824,38 @@ body:after{
 .device-card[data-scene="live"] .device-scene-canvas {
   opacity: 1;
 }
+/* The glass proper (§2.13, owner: the flat art is a different drawing of
+   the device — "make the frosted images from the 3D rendered results"):
+   the scene's own last rendering, a quarter-size JPEG kept per theme,
+   stretched over the canvas box and blurred; scaled up a little so the
+   blur's transparent fringe stays outside the card. With it the flat
+   stack is not shown at all. It clears with the same focus as the rest. */
+.device-frost {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+  object-fit: fill;
+  transform: scale(1.06);
+  filter: blur(8px);
+  opacity: 1;
+  transition:
+    filter 700ms ease,
+    opacity 700ms ease,
+    visibility 0s linear 700ms;
+}
+.device-card[data-scene="live"] .device-frost {
+  filter: blur(0);
+  opacity: 0;
+  visibility: hidden;
+}
+.device-card.has-frost[data-scene="pending"] .agent-lift-group,
+.device-card.has-frost[data-scene="pending"] .agent-shadow {
+  visibility: hidden;
+  transition: none;
+}
 
 /* Slice 3 addition — reset UA button styles on .agent-preview (Task 13
    changed the element from <div> to <button> for a11y; UA defaults

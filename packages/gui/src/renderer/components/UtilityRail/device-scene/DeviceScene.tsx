@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { deviceSceneAssetUrl } from "../../../../shared/device-scene.js";
 import type { BanzhuanDeviceState } from "../../../hooks/useDeviceState.js";
 import { useReducedMotion } from "../../../hooks/useReducedMotion.js";
@@ -31,7 +31,16 @@ export interface DeviceSceneProps {
   /** true once the scene has presented a frame and owns the card; false
    *  when it cannot (no GPU path, a load failure, a lost device). */
   readonly onLive: (live: boolean) => void;
+  /** A small picture of the live scene (§2.13's frosted glass for the
+   *  next launch): shortly after live, after a theme change, and every
+   *  ten minutes while drawing. */
+  readonly onSnapshot?: (dataUrl: string) => void;
 }
+
+/** After live / a theme flip: past the focus cross-fade and the theme's
+ *  own easing through dusk. */
+const SNAPSHOT_SETTLE_MS = 3000;
+const SNAPSHOT_REFRESH_MS = 10 * 60_000;
 
 /**
  * The 3D device card's canvas (ADR 0057 §4). Mounts a canvas immediately,
@@ -55,7 +64,24 @@ export function DeviceScene(props: DeviceSceneProps): JSX.Element {
   live.current = inputs;
   const onLive = useRef(props.onLive);
   onLive.current = props.onLive;
+  const onSnapshot = useRef(props.onSnapshot);
+  onSnapshot.current = props.onSnapshot;
   const handle = useRef<DeviceSceneHandle | null>(null);
+  const [isLive, setIsLive] = useState(false);
+
+  // The frosted-glass picture: taken from the live scene itself, not the
+  // flat art (§2.13). Never while parked — nothing would have changed.
+  const snapshotTimers = useRef<{
+    settle: ReturnType<typeof setTimeout> | null;
+    refresh: ReturnType<typeof setInterval> | null;
+  }>({ settle: null, refresh: null });
+  const takeSnapshot = useCallback((): void => {
+    const scene = handle.current;
+    if (scene === null || live.current.paused) return;
+    void scene.snapshot().then((url) => {
+      if (url !== null && handle.current === scene) onSnapshot.current?.(url);
+    });
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -108,11 +134,13 @@ export function DeviceScene(props: DeviceSceneProps): JSX.Element {
       // Since the page's time origin — the boot-to-live figure.
       canvas.dataset.liveMs = performance.now().toFixed(0);
       onLive.current(true);
+      setIsLive(true);
     })().catch(() => {
       if (!cancelled) onLive.current(false);
     });
     return () => {
       cancelled = true;
+      setIsLive(false);
       // One dispose: `handle.current` and `built` are the same object once
       // the build has landed; before that only `built` (or nothing) exists.
       const scene = handle.current ?? built;
@@ -126,6 +154,37 @@ export function DeviceScene(props: DeviceSceneProps): JSX.Element {
   useEffect(() => {
     handle.current?.update(live.current);
   }, [props.state, props.theme, props.paused, props.liftPx, reducedMotion]);
+
+  // Snapshots: once settled after live and after each theme flip, then on
+  // a slow refresh so the picture follows the clock loosely.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the theme is a trigger, not a read
+  useEffect(() => {
+    if (!isLive) return;
+    const timers = snapshotTimers.current;
+    if (timers.settle !== null) clearTimeout(timers.settle);
+    timers.settle = setTimeout(takeSnapshot, SNAPSHOT_SETTLE_MS);
+    if (timers.refresh === null) {
+      timers.refresh = setInterval(takeSnapshot, SNAPSHOT_REFRESH_MS);
+    }
+    return () => {
+      if (timers.settle !== null) clearTimeout(timers.settle);
+      timers.settle = null;
+      if (!isLive && timers.refresh !== null) {
+        clearInterval(timers.refresh);
+        timers.refresh = null;
+      }
+    };
+  }, [isLive, props.theme, takeSnapshot]);
+  useEffect(
+    () => () => {
+      const timers = snapshotTimers.current;
+      if (timers.settle !== null) clearTimeout(timers.settle);
+      if (timers.refresh !== null) clearInterval(timers.refresh);
+      timers.settle = null;
+      timers.refresh = null;
+    },
+    [],
+  );
 
   // No aria-hidden: a canvas exposes nothing to assistive tech by itself,
   // and the card's aria-label carries the device state.

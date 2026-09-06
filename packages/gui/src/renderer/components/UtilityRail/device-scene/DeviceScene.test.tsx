@@ -61,6 +61,7 @@ describe("DeviceScene (ADR 0057 §4)", () => {
         firstFrameMs: 3,
         presentMs: 2,
       },
+      snapshot: async () => null,
       update: vi.fn(),
       dispose: vi.fn(),
     };
@@ -138,6 +139,7 @@ describe("DeviceScene (ADR 0057 §4)", () => {
         firstFrameMs: 1,
         presentMs: 1,
       },
+      snapshot: async () => null,
       update: vi.fn(),
       dispose: vi.fn(),
     };

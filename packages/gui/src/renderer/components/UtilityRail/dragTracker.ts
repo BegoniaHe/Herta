@@ -44,8 +44,10 @@ export interface FractionBox {
  * "the draggable area is obviously larger than the device"). Measured from
  * the flat art's alpha: opaque pixels span x 275–842 of 1121 and y
  * 231–1166 of 1403 (agent_device.png, threshold 24/255), i.e. the middle
- * 51 % of the width and 67 % of the height, centred. The 3D device is
- * framed to that same silhouette (ADR 0057 §2.4), so one box serves both.
+ * 51 % of the width and 67 % of the height, centred. The 3D model was
+ * built from the art, not traced from it, but it is framed to the same
+ * box: its projected extent measured within a pixel of this one on every
+ * edge (2026-09-07), so one box serves both.
  */
 export const DEVICE_SILHOUETTE: FractionBox = {
   left: 275 / 1121,

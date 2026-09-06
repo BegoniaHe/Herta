@@ -154,7 +154,43 @@ export interface DeviceSceneStats {
 export interface DeviceSceneHandle {
   readonly stats: DeviceSceneStats;
   update(inputs: DeviceSceneInputs): void;
+  /** A small JPEG data URL of what the card shows right now — the frame
+   *  rendered once more into an offscreen target at a quarter of the
+   *  buffer and read back (§2.13's frosted glass for the next launch).
+   *  Null when the scene is gone or the backend cannot read back. */
+  snapshot(): Promise<string | null>;
   dispose(): void;
+}
+
+/** The snapshot's size as a fraction of the drawing buffer: ~126 × 123
+ *  for the card, ~4 KB as a JPEG; it is shown under an 8 px blur. */
+const SNAPSHOT_DIVISOR = 4;
+
+/** RGBA bytes → an opaque JPEG data URL. The WebGPU readback is top-down,
+ *  and its rows may be padded to 256 bytes (a diagonal smear if read as
+ *  tight rows): the stride is taken from the buffer's own length. */
+function encodeSnapshot(
+  pixels: Uint8Array,
+  width: number,
+  height: number,
+): string | null {
+  const out = document.createElement("canvas");
+  out.width = width;
+  out.height = height;
+  const ctx = out.getContext("2d");
+  if (ctx === null) return null;
+  const rowBytes = width * 4;
+  // three sizes the readback as (height − 1) × paddedRow + rowBytes.
+  const paddedRow = Math.ceil(rowBytes / 256) * 256;
+  const stride =
+    pixels.length >= (height - 1) * paddedRow + rowBytes ? paddedRow : rowBytes;
+  const rgba = new Uint8ClampedArray(rowBytes * height);
+  for (let y = 0; y < height; y += 1) {
+    rgba.set(pixels.subarray(y * stride, y * stride + rowBytes), y * rowBytes);
+  }
+  for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
+  ctx.putImageData(new ImageData(rgba, width, height), 0, 0);
+  return out.toDataURL("image/jpeg", 0.72);
 }
 
 // ── Baked material ──────────────────────────────────────────────────────────
@@ -888,6 +924,7 @@ export async function createDeviceScene(
   });
   device.scene.scale.setScalar(1 / UNIT);
   assembly.add(device.scene);
+  expose("__view", { camera, device: device.scene });
 
   const space = await gltfLoader.loadAsync(assetUrl("alcove.glb"));
   const alcove = space.scene;
@@ -1295,8 +1332,52 @@ export async function createDeviceScene(
   ready = true;
   wake(1400);
 
+  const snapshot = async (): Promise<string | null> => {
+    if (disposed || !ready || stageWidth === 0) return null;
+    const ratio = renderer.getPixelRatio();
+    const width = Math.max(
+      1,
+      Math.round((stageWidth * ratio) / SNAPSHOT_DIVISOR),
+    );
+    const height = Math.max(
+      1,
+      Math.round((stageHeight * ratio) / SNAPSHOT_DIVISOR),
+    );
+    const target = new THREE.RenderTarget(width, height, {
+      depthBuffer: false,
+    });
+    try {
+      // The post graph renders wherever the renderer's target points; the
+      // pass nodes restore it after their own targets. One extra frame.
+      renderer.setRenderTarget(target);
+      graph.render();
+      renderer.setRenderTarget(null);
+      const pixels = await renderer.readRenderTargetPixelsAsync(
+        target,
+        0,
+        0,
+        width,
+        height,
+      );
+      if (disposed) return null;
+      return encodeSnapshot(
+        pixels instanceof Uint8Array
+          ? pixels
+          : new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength),
+        width,
+        height,
+      );
+    } catch {
+      return null;
+    } finally {
+      renderer.setRenderTarget(null);
+      target.dispose();
+    }
+  };
+
   return {
     stats: { backend, loadMs, compileMs, firstFrameMs, presentMs },
+    snapshot,
     update(next) {
       const prev = inputs;
       inputs = next;

@@ -6,17 +6,31 @@ import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
 import { DeviceCard, SCENE_PATIENCE_MS } from "./DeviceCard.js";
 import { resetDeviceSceneBackendForTest } from "./device-scene/capability.js";
 import { resetDeviceScenePrefForTest } from "./device-scene/device-scene-prefs.js";
+import {
+  clearFrostForTest,
+  readFrost,
+  writeFrost,
+} from "./device-scene/frost-store.js";
 import { IDLE_MOUNT_SETTLE_MS } from "./device-scene/use-idle-mount.js";
 
-// A scene stand-in that hands its `onLive` to the test: what the card
+// A scene stand-in that hands its callbacks to the test: what the card
 // shows while the real one builds is the subject here (ADR 0057 §2.13).
-const latest: { onLive: ((live: boolean) => void) | null } = { onLive: null };
+const latest: {
+  onLive: ((live: boolean) => void) | null;
+  onSnapshot: ((dataUrl: string) => void) | null;
+} = { onLive: null, onSnapshot: null };
 vi.mock("./device-scene/DeviceScene.js", () => ({
-  DeviceScene: (props: { onLive: (live: boolean) => void }) => {
+  DeviceScene: (props: {
+    onLive: (live: boolean) => void;
+    onSnapshot?: (dataUrl: string) => void;
+  }) => {
     latest.onLive = props.onLive;
+    latest.onSnapshot = props.onSnapshot ?? null;
     return <canvas className="device-scene-canvas" />;
   },
 }));
+
+const FROST = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
 
 const sceneAttr = (container: HTMLElement): string | null =>
   container.querySelector(".device-card")?.getAttribute("data-scene") ?? null;
@@ -25,6 +39,8 @@ describe("DeviceCard — what shows while the 3D scene builds (ADR 0057 §2.13)"
   beforeEach(() => {
     vi.useFakeTimers();
     latest.onLive = null;
+    latest.onSnapshot = null;
+    clearFrostForTest();
   });
   afterEach(() => {
     // No automatic RTL cleanup here: a card left mounted keeps re-rendering
@@ -33,6 +49,57 @@ describe("DeviceCard — what shows while the 3D scene builds (ADR 0057 §2.13)"
     vi.useRealTimers();
     resetDeviceScenePrefForTest();
     resetDeviceSceneBackendForTest();
+    clearFrostForTest();
+  });
+
+  it("with a stored picture of the scene, the glass is that picture and the flat art is not shown; the scene's snapshot stores the next one per theme", async () => {
+    writeFrost("light", FROST);
+    const mock = createMockHertaBridge({ deviceSceneResult: true });
+    const { container } = renderWithLocale(
+      <HertaBridgeProvider bridge={mock.bridge}>
+        <DeviceCard />
+      </HertaBridgeProvider>,
+    );
+    expect(sceneAttr(container)).toBe("pending");
+    const card = container.querySelector(".device-card");
+    expect(card?.classList.contains("has-frost")).toBe(true);
+    const img = container.querySelector("img.device-frost");
+    expect(img?.getAttribute("src")).toBe(FROST);
+    // The scene arrives and, settled, hands over a fresh picture.
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(IDLE_MOUNT_SETTLE_MS);
+    });
+    act(() => {
+      latest.onLive?.(true);
+    });
+    expect(sceneAttr(container)).toBe("live");
+    const fresh = "data:image/jpeg;base64,/9j/AAAA";
+    act(() => {
+      latest.onSnapshot?.(fresh);
+    });
+    expect(readFrost("light")).toBe(fresh);
+    expect(readFrost("dark")).toBeNull();
+    // Live keeps the picture in the DOM for its fade; the CSS hides it.
+    expect(
+      container.querySelector("img.device-frost")?.getAttribute("src"),
+    ).toBe(fresh);
+  });
+
+  it("without a stored picture the card has no glass image (the flat art blurs instead)", () => {
+    const mock = createMockHertaBridge({ deviceSceneResult: true });
+    const { container } = renderWithLocale(
+      <HertaBridgeProvider bridge={mock.bridge}>
+        <DeviceCard />
+      </HertaBridgeProvider>,
+    );
+    expect(sceneAttr(container)).toBe("pending");
+    expect(container.querySelector("img.device-frost")).toBeNull();
+    expect(
+      container.querySelector(".device-card")?.classList.contains("has-frost"),
+    ).toBe(false);
   });
 
   it("holds the device back from the first paint while the setting is unknown or on, then fades the 3D in on its first frame", async () => {

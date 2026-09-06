@@ -24,6 +24,7 @@ import {
   loadDeviceScenePref,
   useDeviceScenePref,
 } from "./device-scene/device-scene-prefs.js";
+import { readFrost, writeFrost } from "./device-scene/frost-store.js";
 import { useIdleMount } from "./device-scene/use-idle-mount.js";
 import { useDragToLift } from "./useDragToLift.js";
 
@@ -121,6 +122,20 @@ export function DeviceCard(): JSX.Element {
   const onSceneLive = useCallback((live: boolean) => {
     setSceneState(live ? "live" : "flat");
   }, []);
+  // The frosted-glass picture is the scene's OWN last rendering, kept per
+  // theme across launches (frost-store.ts); the flat art, a different
+  // drawing of the device, is the glass only until one exists.
+  const [frost, setFrost] = useState<string | null>(() => readFrost(theme));
+  useEffect(() => {
+    setFrost(readFrost(theme));
+  }, [theme]);
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
+  const onSnapshot = useCallback((dataUrl: string) => {
+    writeFrost(themeRef.current, dataUrl);
+    setFrost(dataUrl);
+  }, []);
+  const frostShown = sceneState !== "flat" && frost !== null;
   // A workspace error belongs to the session it happened in — don't resurface
   // a stale one in the next session's menu. (This hand-written reset is what
   // `useSessionScoped` generalizes; migrated 2026-07-24.)
@@ -181,7 +196,7 @@ export function DeviceCard(): JSX.Element {
   };
   return (
     <section
-      className="device-card"
+      className={`device-card${frostShown ? " has-frost" : ""}`}
       data-state={state}
       data-scene={sceneState === "flat" ? undefined : sceneState}
       aria-label={t("device.ariaLabel", { state: t(STATE_KEY[state]) })}
@@ -193,7 +208,11 @@ export function DeviceCard(): JSX.Element {
           paused={paused}
           liftPx={liftPx}
           onLive={onSceneLive}
+          onSnapshot={onSnapshot}
         />
+      )}
+      {frostShown && (
+        <img className="device-frost" src={frost} alt="" aria-hidden="true" />
       )}
       <CardMenu
         cardKind="device"

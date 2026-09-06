@@ -9,7 +9,10 @@ import {
   dFdy,
   dot,
   emissive,
+  Fn,
   faceDirection,
+  float,
+  If,
   materialRoughness,
   max,
   mix,
@@ -32,6 +35,7 @@ import type { BanzhuanDeviceState } from "../../../hooks/useDeviceState.js";
 import type { ResolvedTheme } from "../../../hooks/useResolvedTheme.js";
 import { advanceLift, createLiftPose } from "./lift.js";
 import {
+  applyCloudy,
   cardHourFor,
   hourDelta,
   lightingAt,
@@ -206,6 +210,8 @@ function makeUniforms() {
     /** Contact-shadow strength (0 = none) and its centre, world metres. */
     contact: uniform(0),
     contactBase: uniform(new THREE.Vector3(0, 0, 0)),
+    /** The weather's tint on the baked daylight bounce (§2.11). */
+    daylightTint: uniform(new THREE.Color(1, 1, 1)),
   };
 }
 type BakeUniforms = ReturnType<typeof makeUniforms>;
@@ -394,7 +400,11 @@ function makeDeviceMaterial(
     ? localRing
     : mix(localRing, texture(tex["lamp-device"], st).rgb, u.roomStrength);
   const ring = lamp.mul(u.ringColor).mul(u.ringStrength);
-  mat.bakedIrradiance = bounce.mul(u.bounceStrength).add(ring).mul(Math.PI);
+  mat.bakedIrradiance = bounce
+    .mul(u.bounceStrength)
+    .mul(u.daylightTint)
+    .add(ring)
+    .mul(Math.PI);
   // Derivative-based roughness filtering softens unresolved normal highlights.
   const dx = dFdx(normalView);
   const dy = dFdy(normalView);
@@ -459,8 +469,72 @@ function makeSpaceMaterial(
     ),
     u.weights,
   );
-  mat.bakedIrradiance = bounce.mul(u.bounceStrength).add(ring).mul(Math.PI);
+  mat.bakedIrradiance = bounce
+    .mul(u.bounceStrength)
+    .mul(u.daylightTint)
+    .add(ring)
+    .mul(Math.PI);
   return mat;
+}
+
+/**
+ * The study's cloud field (weather-light.js): a transmission factor on the
+ * key's incoming radiance, evaluated per receiver by projecting it along
+ * the sun ray onto one virtual sky plane, so a cloud is continuous across
+ * the walls, the floor and the moving device. Two low-frequency noise
+ * octaves, filtered by pixel footprint (this camera sees the floor at a
+ * grazing angle), averaged out over the distant ground extension. No
+ * geometry, texture or pass; `depth` 0 skips the noise (the night).
+ * AnalyticLightNode uses a custom colorNode verbatim, so the radiance
+ * carries the light's linear colour times its intensity.
+ */
+function attachCloudField(light: THREE.DirectionalLight) {
+  const radiance = uniform(new THREE.Color());
+  const direction = uniform(new THREE.Vector3(0, 1, 0));
+  const depth = uniform(0);
+  const phase = uniform(0);
+  const transmission = Fn(() => {
+    const result = float(1).toVar();
+    If(depth.greaterThan(0.0001), () => {
+      const p = positionWorld.add(
+        direction.mul(
+          float(0.6).sub(positionWorld.y).div(direction.y.max(0.05)),
+        ),
+      );
+      const q = p.mul(5.5).add(vec3(phase.mul(0.045), 0, phase.mul(0.019)));
+      const dx = dFdx(q);
+      const dy = dFdy(q);
+      const width2 = dot(dx, dx).max(dot(dy, dy)).mul(12);
+      const field = mx_noise_float(q)
+        .mul(0.78)
+        .div(width2.add(1))
+        .add(
+          mx_noise_float(q.mul(2.13).add(4.7))
+            .mul(0.22)
+            .div(width2.mul(2.13 ** 2).add(1)),
+        );
+      const distance2 = dot(positionWorld.xz, positionWorld.xz).div(0.35 ** 2);
+      const localField = field.div(distance2.mul(distance2).add(1));
+      const cover = smoothstep(-0.24, 0.24, localField);
+      result.assign(float(1).sub(cover.mul(depth)));
+    });
+    return result;
+  })();
+  (light as THREE.DirectionalLight & { colorNode: unknown }).colorNode =
+    radiance.mul(transmission);
+  return {
+    /** Per frame, after the light's colour, intensity and position are set. */
+    update(cloudDepth: number, cloudPhase: number): void {
+      radiance.value.copy(light.color).multiplyScalar(light.intensity);
+      // Source and target share the scene's uniform scale; it cancels.
+      direction.value
+        .copy(light.position)
+        .sub(light.target.position)
+        .normalize();
+      depth.value = cloudDepth;
+      phase.value = cloudPhase;
+    },
+  };
 }
 
 // ── Scene ───────────────────────────────────────────────────────────────────
@@ -625,6 +699,7 @@ export async function createDeviceScene(
   key.shadow.radius = 6;
   key.shadow.blurSamples = 12;
   key.target.position.set(0, 1.8, 0);
+  const clouds = attachCloudField(key);
   scene.add(key, key.target);
   const fill = new THREE.DirectionalLight("#c3e6ff", 0.9);
   fill.position.set(4, 3, 4);
@@ -818,6 +893,8 @@ export async function createDeviceScene(
   const shadowDirty = { key: true, contour: true };
   /** What the last drawn frame showed (the render gate's memory). */
   let shown: ShownPicture | null = null;
+  /** The cloud drift, seconds of daylight motion so far. */
+  let cloudPhase = 0;
   // Once-a-second diagnostics on the canvas dataset (a DOM write per
   // second, never per frame): fps, mean CPU submit ms, draw calls, and with
   // `profile` the GPU time of the last resolved frame.
@@ -928,11 +1005,20 @@ export async function createDeviceScene(
     // dusk and a minute's drift is invisible.
     const hourDiff = hourDelta(liveHour, cardHourFor(inputs.theme, new Date()));
     liveHour = (((liveHour + hourDiff * ease) % 24) + 24) % 24;
-    const light = lightingAt(liveHour);
-    background.set(light.background).multiplyScalar(light.external);
+    const motion = !inputs.reducedMotion;
+    // The weather (§2.11): clouds drift while there is daylight and motion
+    // is allowed; frozen clouds are still clouds under reduced motion.
+    const light = applyCloudy(lightingAt(liveHour), cloudPhase);
+    if (motion && light.cloudDepth > 0 && light.external > 0.001) {
+      cloudPhase += dt;
+    }
+    background
+      .set(light.background)
+      .multiplyScalar(light.external * light.backgroundScale);
     key.color.set(light.keyColor);
     key.intensity = light.key;
     key.position.fromArray(light.position as unknown as number[]);
+    clouds.update(light.cloudDepth, cloudPhase);
     fill.intensity = light.fill;
     rim.intensity = light.rim;
     sky.intensity = light.sky;
@@ -946,7 +1032,6 @@ export async function createDeviceScene(
     const target = STATE_TARGETS[inputs.state];
     liveColor.lerp(targetColor, ease);
     liveIntensity = THREE.MathUtils.lerp(liveIntensity, target.intensity, ease);
-    const motion = !inputs.reducedMotion;
     const seconds = (now - stateEntered) / 1000;
     const breath = motion
       ? 1 + Math.sin((now / 1000) * target.hz * Math.PI * 2) * target.depth
@@ -984,6 +1069,7 @@ export async function createDeviceScene(
       color: [liveColor.r, liveColor.g, liveColor.b],
       hour: liveHour,
       lift,
+      cloud: light.cloudDepth > 0 ? cloudPhase : 0,
     };
     let renderMs = 0;
     if (moving || pictureChanged(shown, next)) {
@@ -1038,7 +1124,12 @@ export async function createDeviceScene(
       u.lift.value = lift * UNIT;
       u.weights.value.fromArray(timeWeights(liveHour));
       const poseValidity = Math.exp(-10 * Math.max(lift, 0));
-      u.bounceStrength.value = poseValidity * light.external;
+      u.bounceStrength.value = poseValidity * light.external * light.bounce;
+      u.daylightTint.value.setRGB(
+        1 - 0.16 * light.cool,
+        1 - 0.055 * light.cool,
+        1,
+      );
       u.roomStrength.value = poseValidity;
       u.ringColor.value.copy(liveColor);
       u.ringStrength.value = ringIntensity;

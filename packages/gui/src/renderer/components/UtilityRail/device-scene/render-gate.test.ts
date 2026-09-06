@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { STATE_TARGETS } from "./lighting.js";
 import {
+  CLOUD_VISIBLE_PHASE,
   COLOR_VISIBLE_DELTA,
   HOUR_VISIBLE_DELTA,
   pictureChanged,
@@ -13,15 +14,18 @@ const still = (over: Partial<ShownPicture> = {}): ShownPicture => ({
   color: [0.2, 0.6, 0.9],
   hour: 12,
   lift: 0,
+  cloud: 0,
   ...over,
 });
 
-/** Runs the loop's breath for `seconds` at `tickHz` through the gate and
- *  returns how many ticks would have drawn, per second. */
+/** Runs the loop's breath (and, with `clouds`, the daytime cloud drift)
+ *  for `seconds` at `tickHz` through the gate and returns how many ticks
+ *  would have drawn, per second. */
 function drawsPerSecond(
   state: keyof typeof STATE_TARGETS,
   seconds: number,
   tickHz = 20,
+  clouds = false,
 ): number {
   const target = STATE_TARGETS[state];
   let shown: ShownPicture | null = null;
@@ -30,7 +34,10 @@ function drawsPerSecond(
   for (let i = 0; i < ticks; i += 1) {
     const t = i / tickHz;
     const breath = 1 + Math.sin(t * target.hz * Math.PI * 2) * target.depth;
-    const next = still({ ring: target.intensity * breath });
+    const next = still({
+      ring: target.intensity * breath,
+      cloud: clouds ? t : 0,
+    });
     if (pictureChanged(shown, next)) {
       draws += 1;
       shown = next;
@@ -49,6 +56,19 @@ describe("the render gate (ADR 0057 §2.10)", () => {
     const perSecond = drawsPerSecond("idle", 30);
     expect(perSecond).toBeGreaterThan(5);
     expect(perSecond).toBeLessThan(9);
+  });
+
+  it("passing clouds add about four draws a second to the idle breath (§2.11)", () => {
+    const withClouds = drawsPerSecond("idle", 30, 20, true);
+    expect(withClouds).toBeGreaterThan(drawsPerSecond("idle", 30));
+    expect(withClouds).toBeLessThan(12);
+    // A quarter second of drift is the step; less is the same picture.
+    expect(
+      pictureChanged(still(), still({ cloud: CLOUD_VISIBLE_PHASE / 2 })),
+    ).toBe(false);
+    expect(pictureChanged(still(), still({ cloud: CLOUD_VISIBLE_PHASE }))).toBe(
+      true,
+    );
   });
 
   it("a working state's breath is fast enough to draw most ticks (only the crests are skipped)", () => {

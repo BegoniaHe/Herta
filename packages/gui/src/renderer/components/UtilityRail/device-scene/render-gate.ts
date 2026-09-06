@@ -18,6 +18,8 @@ export interface ShownPicture {
   readonly hour: number;
   /** The device's lift in design units. */
   readonly lift: number;
+  /** The cloud drift in seconds of motion (0 while there are no clouds). */
+  readonly cloud: number;
 }
 
 /** The lamp must move by this fraction of its shown intensity. 1 % is
@@ -30,6 +32,12 @@ export const COLOR_VISIBLE_DELTA = 1 / 255;
 /** The clock must move by a hundredth of a card hour (~40 s of real time
  *  at the fold's rate): the key's elevation changes under 0.3°. */
 export const HOUR_VISIBLE_DELTA = 0.01;
+/** The cloud field must have drifted about two canvas pixels: it moves
+ *  0.045 / 5.5 m per second of phase (scene.ts), 8 mm/s, and the card
+ *  shows ~950 px per metre, so a quarter second is ~2 px. Cloud edges are
+ *  a smoothstep over low-frequency noise; a 2 px step is under their
+ *  softness. Four draws a second while clouds pass. */
+export const CLOUD_VISIBLE_PHASE = 0.25;
 
 /** Whether drawing `next` would look different from `shown`. `null` is
  *  "nothing drawn yet" and always draws. */
@@ -39,6 +47,7 @@ export function pictureChanged(
 ): boolean {
   if (shown === null) return true;
   if (next.lift !== shown.lift) return true;
+  if (Math.abs(next.cloud - shown.cloud) >= CLOUD_VISIBLE_PHASE) return true;
   const ringBase = Math.max(Math.abs(shown.ring), 1e-3);
   if (Math.abs(next.ring - shown.ring) / ringBase >= RING_VISIBLE_DELTA) {
     return true;

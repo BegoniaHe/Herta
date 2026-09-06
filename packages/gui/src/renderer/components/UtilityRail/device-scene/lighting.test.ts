@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyCloudy,
+  CLOUDY,
+  CLOUDY_KEY_COLOR,
   cardHourFor,
   DARK_HOUR,
   externalLightAt,
@@ -144,6 +147,44 @@ describe("device-scene lighting tables (ADR 0057 §2.1b, the pale room)", () => 
     expect(night.contour).toBeCloseTo(0.003, 6);
     expect(night.adaptation).toBe(12);
     expect(night.exposure).toBeCloseTo(0.87 * 12, 6);
+  });
+
+  it("the cloudy weather scales the daylight, cools the key, and leaves the night alone (§2.11)", () => {
+    const day = lightingAt(12);
+    const cloudy = applyCloudy(day);
+    expect(cloudy.key).toBeCloseTo(day.key * CLOUDY.key, 9);
+    expect(cloudy.softbox).toBeCloseTo(day.softbox * CLOUDY.key, 9);
+    expect(cloudy.fill).toBeCloseTo(day.fill * CLOUDY.fill, 9);
+    expect(cloudy.rim).toBeCloseTo(day.rim * CLOUDY.rim, 9);
+    expect(cloudy.sky).toBeCloseTo(day.sky * CLOUDY.sky, 9);
+    expect(cloudy.environment).toBeCloseTo(
+      day.environment * CLOUDY.environment,
+      9,
+    );
+    expect(cloudy.backgroundScale).toBe(CLOUDY.background);
+    expect(cloudy.cool).toBe(CLOUDY.cool);
+    expect(cloudy.cloudDepth).toBe(CLOUDY.cloudDepth);
+    expect(cloudy.keyColor).toBe(
+      mixHexColor(day.keyColor, CLOUDY_KEY_COLOR, CLOUDY.cool),
+    );
+    // The bounce breathes with the sky, within its 7 %.
+    const bounces = [0, 5, 10, 16.5, 25].map((p) => applyCloudy(day, p).bounce);
+    for (const b of bounces) {
+      expect(b).toBeLessThanOrEqual(CLOUDY.bounce + 1e-9);
+      expect(b).toBeGreaterThanOrEqual(CLOUDY.bounce * 0.93 - 1e-9);
+    }
+    expect(new Set(bounces.map((b) => b.toFixed(6))).size).toBeGreaterThan(1);
+    // Untouched: exposure, rotation, the outline, and everything at night.
+    expect(cloudy.exposure).toBe(day.exposure);
+    expect(cloudy.contour).toBe(day.contour);
+    const night = applyCloudy(lightingAt(DARK_HOUR), 40);
+    expect(night).toEqual({
+      ...lightingAt(DARK_HOUR),
+      backgroundScale: 1,
+      bounce: 1,
+      cool: 0,
+      cloudDepth: 0,
+    });
   });
 
   it("interpolates anchors continuously across the midnight seam", () => {

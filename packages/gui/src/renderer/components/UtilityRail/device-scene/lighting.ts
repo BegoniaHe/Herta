@@ -316,6 +316,63 @@ export function lightingAt(hour: number): Lighting {
   };
 }
 
+/** The card's weather is the study's "Passing clouds", fixed (ADR 0057
+ *  §2.11; WEATHER-STUDY.md, weather.js): ratios of the sunny daylight, a
+ *  cooler key, dimmer baked bounce, and a cloud field of this darkness
+ *  drifting across the key (scene.ts). The lamp is never weather. */
+export const CLOUDY = {
+  key: 0.96,
+  fill: 1.02,
+  rim: 0.86,
+  sky: 1.16,
+  environment: 0.86,
+  bounce: 0.82,
+  background: 0.9,
+  /** How far the key is mixed toward CLOUDY_KEY_COLOR, and the daylight
+   *  bounce's tint (1 − 0.16c, 1 − 0.055c, 1). */
+  cool: 0.32,
+  cloudDepth: 0.76,
+} as const;
+export const CLOUDY_KEY_COLOR = "#dbe7f2";
+
+export interface WeatheredLighting extends Lighting {
+  /** Multiplier on the background colour (the study scales the colour,
+   *  not the anchor). */
+  readonly backgroundScale: number;
+  /** Multiplier on the baked daylight bounce. */
+  readonly bounce: number;
+  /** 0 = sunny daylight, 1 = fully cooled. */
+  readonly cool: number;
+  /** The cloud field's darkness on the key, 0 = none. */
+  readonly cloudDepth: number;
+}
+
+/** The cloudy recipe over the sunny one. After hours there is no daylight
+ *  to cloud: the night outline and the lamp are untouched. `phase` is the
+ *  cloud drift in seconds; the baked bounce breathes with it slowly (a
+ *  33 s cycle of up to 7 %), the study's stand-in for a changing sky over
+ *  bakes that were not re-baked per weather. */
+export function applyCloudy(light: Lighting, phase = 0): WeatheredLighting {
+  if (light.afterHours) {
+    return { ...light, backgroundScale: 1, bounce: 1, cool: 0, cloudDepth: 0 };
+  }
+  const sky = 0.5 + 0.5 * Math.sin(phase * 0.19);
+  return {
+    ...light,
+    keyColor: mixHexColor(light.keyColor, CLOUDY_KEY_COLOR, CLOUDY.cool),
+    key: light.key * CLOUDY.key,
+    fill: light.fill * CLOUDY.fill,
+    rim: light.rim * CLOUDY.rim,
+    sky: light.sky * CLOUDY.sky,
+    environment: light.environment * CLOUDY.environment,
+    softbox: light.softbox * CLOUDY.key,
+    backgroundScale: CLOUDY.background,
+    bounce: CLOUDY.bounce * (1 - 0.07 * sky),
+    cool: CLOUDY.cool,
+    cloudDepth: CLOUDY.cloudDepth,
+  };
+}
+
 /** Weights of the three baked daylight presets (morning, midday, evening)
  *  plus the textureless night slot, blended by hour. Sums to 1. */
 export function timeWeights(hour: number): [number, number, number, number] {

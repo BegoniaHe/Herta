@@ -38,6 +38,7 @@ import {
   STATE_TARGETS,
   timeWeights,
 } from "./lighting.js";
+import { pictureChanged, type ShownPicture } from "./render-gate.js";
 
 /**
  * The 3D device card's scene (ADR 0057 §2, amended §2.1b: the pale room):
@@ -75,11 +76,12 @@ const DEVICE_HEIGHT_PX = (270 * 934) / 1403;
  *  cap the long edge at 768 px. */
 const MAX_LONG_EDGE_PX = 768;
 /** Idle governor (after DeviceGlow / AuraVisual, which breathe at 30): the
- *  breath renders at 20 fps — every third vsync; its fastest cycle is
- *  1.35 s, so a frame moves the lamp under 1/255 of its range — motion at
- *  60, and the loop parks after 5 s unfocused. Every calm frame is a full
- *  scene render on the GPU, so the calm rate is the power lever (ADR 0057
- *  §2.9: 30 → 20 took a third off the idle GPU share). */
+ *  loop TICKS at 20 Hz while breathing — every third vsync; its fastest
+ *  cycle is 1.35 s, so a tick moves the lamp under 1/255 of its range —
+ *  and DRAWS only the ticks that would change the picture (render-gate.ts,
+ *  §2.10: about a third of them at idle). Motion draws at 60, and the loop
+ *  parks after 5 s unfocused. Every drawn frame is a full scene render on
+ *  the GPU, so the draw rate is the power lever (ADR 0057 §2.9). */
 const CALM_FPS = 20;
 const MOVING_FPS = 60;
 /** Both shadow maps: the key's 10-unit frustum at 512² is a 0.02-unit
@@ -814,6 +816,8 @@ export async function createDeviceScene(
   const pose = createLiftPose();
   let shadowStamp: number[] = [];
   const shadowDirty = { key: true, contour: true };
+  /** What the last drawn frame showed (the render gate's memory). */
+  let shown: ShownPicture | null = null;
   // Once-a-second diagnostics on the canvas dataset (a DOM write per
   // second, never per frame): fps, mean CPU submit ms, draw calls, and with
   // `profile` the GPU time of the last resolved frame.
@@ -961,13 +965,6 @@ export async function createDeviceScene(
         ) * 1.3;
     }
     const ringIntensity = liveIntensity * breath + flash;
-    for (const mat of ringMaterials) {
-      mat.emissive.copy(liveColor);
-      mat.emissiveIntensity = ringIntensity;
-      mat.color.copy(liveColor);
-    }
-    (bloomNode.strength as { value: number }).value =
-      (0.065 + light.night * 0.1) / Math.sqrt(light.adaptation);
 
     const held = inputs.liftPx > 0;
     const liftMoving = advanceLift(pose, dt, held);
@@ -975,58 +972,84 @@ export async function createDeviceScene(
     const lift =
       (pose.liftPx * (camera.top - camera.bottom)) /
       (Math.max(1, stageHeight) * UNIT);
-    assembly.position.y = lift;
-    // The contact shadow stays on the floor and fades as the device rises
-    // (gone by the 12 px ceiling), and goes with the daylight at night.
-    u.contact.value =
-      CONTACT_STRENGTH * Math.max(0, 1 - pose.liftPx / 12) * light.external;
+    // A flash is motion too: it draws at the moving rate for its half
+    // second, not at the calm one.
+    const moving = held || liftMoving || now < activeUntil || flash > 0;
 
-    // Pulsing the indicator does not move the silhouette: shadow maps are
-    // reused until the key or the device has moved by about a shadow texel.
-    // (The clock drifts the key every frame; a finer threshold re-rendered
-    // the shadow — three passes at 1024² — on most frames of the day.)
-    const nextStamp = [
-      key.position.x,
-      key.position.y,
-      key.position.z,
-      assembly.position.y,
-    ];
-    const changed = nextStamp.map(
-      (v, i) =>
-        Math.abs(v - (shadowStamp[i] ?? Number.POSITIVE_INFINITY)) >
-        SHADOW_MOVE_UNITS,
-    );
-    if (changed.some(Boolean)) {
-      shadowDirty.key = true;
-      if (changed[3] === true) shadowDirty.contour = true;
-      shadowStamp = nextStamp;
+    // The gate (§2.10): the state above advances every tick; the GPU is
+    // asked only when the picture would change. At idle that is a third
+    // of the ticks.
+    const next: ShownPicture = {
+      ring: ringIntensity,
+      color: [liveColor.r, liveColor.g, liveColor.b],
+      hour: liveHour,
+      lift,
+    };
+    let renderMs = 0;
+    if (moving || pictureChanged(shown, next)) {
+      for (const mat of ringMaterials) {
+        mat.emissive.copy(liveColor);
+        mat.emissiveIntensity = ringIntensity;
+        mat.color.copy(liveColor);
+      }
+      (bloomNode.strength as { value: number }).value =
+        (0.065 + light.night * 0.1) / Math.sqrt(light.adaptation);
+      assembly.position.y = lift;
+      // The contact shadow stays on the floor and fades as the device
+      // rises (gone by the 12 px ceiling), and goes with the daylight at
+      // night.
+      u.contact.value =
+        CONTACT_STRENGTH * Math.max(0, 1 - pose.liftPx / 12) * light.external;
+
+      // Pulsing the indicator does not move the silhouette: shadow maps
+      // are reused until the key or the device has moved by about a
+      // shadow texel. (The clock drifts the key every frame; a finer
+      // threshold re-rendered the shadow — three passes at 1024² — on
+      // most frames of the day.)
+      const nextStamp = [
+        key.position.x,
+        key.position.y,
+        key.position.z,
+        assembly.position.y,
+      ];
+      const changed = nextStamp.map(
+        (v, i) =>
+          Math.abs(v - (shadowStamp[i] ?? Number.POSITIVE_INFINITY)) >
+          SHADOW_MOVE_UNITS,
+      );
+      if (changed.some(Boolean)) {
+        shadowDirty.key = true;
+        if (changed[3] === true) shadowDirty.contour = true;
+        shadowStamp = nextStamp;
+      }
+      for (const [name, l] of [
+        ["key", key],
+        ["contour", contour],
+      ] as const) {
+        const explicit = l.shadow.needsUpdate;
+        if (explicit) shadowDirty[name] = true;
+        l.shadow.needsUpdate =
+          shadowDirty[name] && (l.intensity > 0 || explicit);
+        if (l.shadow.needsUpdate) shadowDirty[name] = false;
+      }
+
+      // Bake weights: daylight bounce by hour, faded as the device leaves
+      // its baked pose; ring transport scaled by the live indicator.
+      u.lift.value = lift * UNIT;
+      u.weights.value.fromArray(timeWeights(liveHour));
+      const poseValidity = Math.exp(-10 * Math.max(lift, 0));
+      u.bounceStrength.value = poseValidity * light.external;
+      u.roomStrength.value = poseValidity;
+      u.ringColor.value.copy(liveColor);
+      u.ringStrength.value = ringIntensity;
+
+      const renderStart = performance.now();
+      graph.render();
+      renderMs = performance.now() - renderStart;
+      report(now, renderMs);
+      shown = next;
     }
-    for (const [name, l] of [
-      ["key", key],
-      ["contour", contour],
-    ] as const) {
-      const explicit = l.shadow.needsUpdate;
-      if (explicit) shadowDirty[name] = true;
-      l.shadow.needsUpdate = shadowDirty[name] && (l.intensity > 0 || explicit);
-      if (l.shadow.needsUpdate) shadowDirty[name] = false;
-    }
 
-    // Bake weights: daylight bounce by hour, faded as the device leaves its
-    // baked pose; ring transport scaled by the live indicator.
-    u.lift.value = lift * UNIT;
-    u.weights.value.fromArray(timeWeights(liveHour));
-    const poseValidity = Math.exp(-10 * Math.max(lift, 0));
-    u.bounceStrength.value = poseValidity * light.external;
-    u.roomStrength.value = poseValidity;
-    u.ringColor.value.copy(liveColor);
-    u.ringStrength.value = ringIntensity;
-
-    const renderStart = performance.now();
-    graph.render();
-    const renderMs = performance.now() - renderStart;
-    report(now, renderMs);
-
-    const moving = held || liftMoving || now < activeUntil;
     if (motion || moving || Math.abs(hourDiff) > 0.005) {
       const fps = moving ? MOVING_FPS : CALM_FPS;
       schedule(Math.max(0, 1000 / fps - renderMs - 2));

@@ -121,6 +121,14 @@ const ANCHORS: readonly Anchor[] = [
     rotation: -0.3,
     night: 0.65,
   },
+  // The daytime keys sit front-left and lowish ON PURPOSE (the study's were
+  // [-4, 5, 4] and [-2, 7, 3]): the back wall is 6 cm behind the device and
+  // the left wall runs 33 cm forward, so a key from the far left throws the
+  // left wall's shadow over the lower back wall and swallows the device's
+  // own. From [-1.1, 4.1, 6] the device's shadow lands on the lit wall
+  // beside it while the left wall's shadow stops at the device's chamfered
+  // edge instead of banding its front — measured against the alcove GLB,
+  // 2026-09-06.
   {
     h: 8,
     background: "#e2e9e7",
@@ -131,7 +139,7 @@ const ANCHORS: readonly Anchor[] = [
     sky: 0.64,
     environment: 0.72,
     exposure: 1.08,
-    position: [-4, 5, 4],
+    position: [-1.1, 4.1, 6],
     rotation: -0.15,
     night: 0,
   },
@@ -145,7 +153,7 @@ const ANCHORS: readonly Anchor[] = [
     sky: 0.9,
     environment: 0.83,
     exposure: 1.03,
-    position: [-2, 7, 3],
+    position: [-0.9, 5.2, 6],
     rotation: 0.18,
     night: 0,
   },

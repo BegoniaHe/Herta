@@ -530,13 +530,17 @@ export async function createDeviceScene(
   const key = new THREE.DirectionalLight("#ffe4bd", 2.8);
   key.castShadow = true;
   key.shadow.mapSize.set(1024, 1024);
+  // The shadow camera is placed in WORLD space from the light's position,
+  // so these extents are metres (UNIT × design units) around the target —
+  // wide enough for the device's shadow on the back wall and the floor
+  // behind it, from a front-left key.
   Object.assign(key.shadow.camera, {
-    left: -3.5 * UNIT,
-    right: 3.5 * UNIT,
-    top: 4.5 * UNIT,
-    bottom: -3.5 * UNIT,
+    left: -5 * UNIT,
+    right: 5 * UNIT,
+    top: 6 * UNIT,
+    bottom: -4 * UNIT,
     near: 0.1 * UNIT,
-    far: 22 * UNIT,
+    far: 30 * UNIT,
   });
   key.shadow.bias = -0.00008;
   key.shadow.normalBias = 0.00012;

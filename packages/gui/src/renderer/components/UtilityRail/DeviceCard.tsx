@@ -174,7 +174,7 @@ export function DeviceCard(): JSX.Element {
       />
       <button
         type="button"
-        className="agent-preview"
+        className={`agent-preview${transform !== null ? " is-lifting" : ""}`}
         onMouseDown={onMouseDown}
         tabIndex={-1}
         aria-label={t("device.dragHint")}

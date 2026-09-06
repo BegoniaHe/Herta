@@ -1798,9 +1798,25 @@ button.agent-preview {
   -webkit-appearance: none;
   font: inherit;
   color: inherit;
+  cursor: default;
+}
+/* The grab cursor only over the DEVICE (owner 2026-09-07: "the draggable
+   area is obviously larger than the device"): the drag hook ignores a
+   press off the silhouette, and the cursor says the same. The box is
+   DEVICE_SILHOUETTE in dragTracker.ts — the flat art's opaque extent,
+   which the 3D device is framed to. A pseudo-element carries the cursor
+   so the button stays one element for events and a11y. */
+.agent-preview::after {
+  content: "";
+  position: absolute;
+  left: 24.53%;
+  top: 16.46%;
+  width: 50.67%;
+  height: 66.71%;
   cursor: grab;
 }
-button.agent-preview:active {
+.agent-preview.is-lifting,
+.agent-preview.is-lifting::after {
   cursor: grabbing;
 }
 
@@ -6246,6 +6262,9 @@ button.session-item__badge--dismiss {
 .settings-bz-card .agent-preview {
   width: 132px;
   height: 165px;
+  cursor: default;
+}
+.settings-bz-card .agent-preview::after {
   cursor: default;
 }
 .settings-bz-caption {

@@ -31,6 +31,38 @@ const NO_LIFT: DragResult = {
   liftPx: 0,
 };
 
+/** A rectangle as fractions of the preview box (0..1 from its top-left). */
+export interface FractionBox {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+}
+
+/**
+ * Where the device actually is inside `.agent-preview` (owner 2026-09-07:
+ * "the draggable area is obviously larger than the device"). Measured from
+ * the flat art's alpha: opaque pixels span x 275–842 of 1121 and y
+ * 231–1166 of 1403 (agent_device.png, threshold 24/255), i.e. the middle
+ * 51 % of the width and 67 % of the height, centred. The 3D device is
+ * framed to that same silhouette (ADR 0057 §2.4), so one box serves both.
+ */
+export const DEVICE_SILHOUETTE: FractionBox = {
+  left: 275 / 1121,
+  top: 231 / 1403,
+  right: 843 / 1121,
+  bottom: 1167 / 1403,
+};
+
+/** Whether a point, as fractions of the preview box, is over the device. */
+export function pointOverDevice(
+  fx: number,
+  fy: number,
+  box: FractionBox = DEVICE_SILHOUETTE,
+): boolean {
+  return fx >= box.left && fx <= box.right && fy >= box.top && fy <= box.bottom;
+}
+
 /**
  * Pure drag-to-lift computation. No side effects, no React. The
  * React-side hook (useDragToLift) handles event wiring + roll-the-dice.

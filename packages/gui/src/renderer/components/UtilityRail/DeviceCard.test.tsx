@@ -358,6 +358,46 @@ describe("DeviceCard", () => {
     vi.unstubAllGlobals();
   });
 
+  it("a press outside the device's silhouette starts no lift; one on it does (owner 2026-09-07)", () => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    const mock = createMockHertaBridge();
+    const { container } = renderWithLocale(
+      <HertaBridgeProvider bridge={mock.bridge}>
+        <DeviceCard />
+      </HertaBridgeProvider>,
+    );
+    const preview = container.querySelector(".agent-preview") as HTMLElement;
+    // jsdom lays nothing out: give the preview the card's real box.
+    preview.getBoundingClientRect = () =>
+      ({ left: 100, top: 100, width: 216, height: 270 }) as DOMRect;
+    const lift = container.querySelector(".agent-lift-group") as HTMLElement;
+
+    // The top-left corner: the wall behind the device.
+    fireEvent.mouseDown(preview, { clientX: 110, clientY: 110 });
+    act(() => {
+      fireEvent(window, new MouseEvent("mousemove", { clientY: 80 }));
+    });
+    expect(lift.style.transform).toBe("");
+    expect(mock.calls.maybePlayEasterEgg).toBe(0);
+    fireEvent.mouseUp(window);
+
+    // The device's centre.
+    fireEvent.mouseDown(preview, { clientX: 208, clientY: 235 });
+    act(() => {
+      fireEvent(window, new MouseEvent("mousemove", { clientY: 215 }));
+    });
+    expect(lift.style.transform).toMatch(/translateY/);
+    expect(mock.calls.maybePlayEasterEgg).toBe(1);
+    fireEvent.mouseUp(window);
+    randomSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
   it("resets the workspace to default", () => {
     const mock = createMockHertaBridge();
     renderWithLocale(

@@ -1,5 +1,41 @@
 import { describe, expect, it } from "vitest";
-import { computeDragResult } from "./dragTracker.js";
+import {
+  computeDragResult,
+  DEVICE_SILHOUETTE,
+  pointOverDevice,
+} from "./dragTracker.js";
+
+describe("pointOverDevice (owner 2026-09-07: the drag area was larger than the device)", () => {
+  it("the silhouette is the centred middle of the preview box, about half its width and two thirds its height", () => {
+    const w = DEVICE_SILHOUETTE.right - DEVICE_SILHOUETTE.left;
+    const h = DEVICE_SILHOUETTE.bottom - DEVICE_SILHOUETTE.top;
+    expect(w).toBeGreaterThan(0.5);
+    expect(w).toBeLessThan(0.52);
+    expect(h).toBeGreaterThan(0.66);
+    expect(h).toBeLessThan(0.68);
+    expect((DEVICE_SILHOUETTE.left + DEVICE_SILHOUETTE.right) / 2).toBeCloseTo(
+      0.5,
+      2,
+    );
+    expect((DEVICE_SILHOUETTE.top + DEVICE_SILHOUETTE.bottom) / 2).toBeCloseTo(
+      0.5,
+      2,
+    );
+  });
+
+  it("the centre and the device's own edges are over it; the box's corners and margins are not", () => {
+    expect(pointOverDevice(0.5, 0.5)).toBe(true);
+    expect(pointOverDevice(DEVICE_SILHOUETTE.left, DEVICE_SILHOUETTE.top)).toBe(
+      true,
+    );
+    expect(pointOverDevice(0.02, 0.02)).toBe(false);
+    expect(pointOverDevice(0.98, 0.98)).toBe(false);
+    expect(pointOverDevice(0.5, 0.05)).toBe(false); // above the device
+    expect(pointOverDevice(0.5, 0.95)).toBe(false); // the floor under it
+    expect(pointOverDevice(0.1, 0.5)).toBe(false); // the wall beside it
+    expect(pointOverDevice(0.9, 0.5)).toBe(false);
+  });
+});
 
 describe("computeDragResult", () => {
   const base = {

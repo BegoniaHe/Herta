@@ -7,7 +7,7 @@ import {
   useState,
 } from "react";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
-import { computeDragResult } from "./dragTracker.js";
+import { computeDragResult, pointOverDevice } from "./dragTracker.js";
 
 export interface UseDragToLiftOpts {
   readonly threshold?: number;
@@ -115,6 +115,20 @@ export function useDragToLift(
     if (reducedMotionRef.current) return;
     const handlers = handlersRef.current;
     if (handlers === null) return;
+    // Only a press ON the device starts a lift: the preview box is wider
+    // and taller than the silhouette. A box without size (jsdom) cannot be
+    // tested against and is let through.
+    const box = e.currentTarget.getBoundingClientRect();
+    if (
+      box.width > 0 &&
+      box.height > 0 &&
+      !pointOverDevice(
+        (e.clientX - box.left) / box.width,
+        (e.clientY - box.top) / box.height,
+      )
+    ) {
+      return;
+    }
     startY.current = e.clientY;
     chance.current = Math.random();
     triggered.current = false;

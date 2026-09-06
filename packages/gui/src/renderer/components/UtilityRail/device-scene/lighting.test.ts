@@ -1,15 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  externalLightAt,
-  hourDelta,
-  lightingAt,
+  lightingFor,
   mixHexColor,
   STATE_TARGETS,
-  THEME_HOUR,
-  timeWeights,
+  THEME_DAYLIGHT,
 } from "./lighting.js";
 
-describe("device-scene lighting tables (ADR 0057 §2)", () => {
+describe("device-scene lighting tables (ADR 0057 §2, no room)", () => {
   it("covers every device state the flat card knows", () => {
     const states = [
       "idle",
@@ -28,53 +25,50 @@ describe("device-scene lighting tables (ADR 0057 §2)", () => {
     }
   });
 
-  it("daylight is off after hours and full in the day, with smooth ramps", () => {
-    expect(externalLightAt(0)).toBe(0);
-    expect(externalLightAt(23)).toBe(0);
-    expect(externalLightAt(5)).toBe(0);
-    expect(externalLightAt(6.5)).toBeCloseTo(0.5, 5);
-    expect(externalLightAt(12)).toBe(1);
-    expect(externalLightAt(20)).toBeCloseTo(0.5, 5);
-    expect(externalLightAt(22)).toBe(0);
-    expect(externalLightAt(-1)).toBe(0); // wraps
-  });
-
-  it("the light theme is a morning and the dark theme is after hours", () => {
-    const day = lightingAt(THEME_HOUR.light);
-    expect(day.afterHours).toBe(false);
+  it("the light theme is the white studio and the dark theme is the night", () => {
+    const day = lightingFor(THEME_DAYLIGHT.light);
     expect(day.external).toBe(1);
     expect(day.adaptation).toBe(1);
     expect(day.contour).toBe(0);
-    expect(day.key).toBeGreaterThan(2);
-    const night = lightingAt(THEME_HOUR.dark);
-    expect(night.afterHours).toBe(true);
+    expect(day.key).toBeCloseTo(3.1, 9);
+    expect(day.keyColor).toBe("#ffffff");
+    expect(day.exposure).toBeCloseTo(1.02, 9);
+    expect(day.softbox).toBe(1);
+    expect(day.bloom).toBeCloseTo(0.055, 9);
+    const night = lightingFor(THEME_DAYLIGHT.dark);
+    expect(night.external).toBe(0);
     expect(night.key).toBe(0);
+    expect(night.fill).toBe(0);
+    expect(night.rim).toBe(0);
     expect(night.sky).toBe(0);
     expect(night.environment).toBe(0);
-    expect(night.contour).toBeCloseTo(0.003, 6);
+    expect(night.softbox).toBe(0);
+    expect(night.contour).toBeCloseTo(0.003, 9);
     expect(night.adaptation).toBe(12);
     // Adaptation scales exposure, never the ring: 0.87 × 12.
     expect(night.exposure).toBeCloseTo(0.87 * 12, 6);
+    expect(night.keyColor).toBe("#9abef4");
   });
 
-  it("interpolates anchors continuously across the midnight seam", () => {
-    const before = lightingAt(23.999);
-    const after = lightingAt(0.001);
-    expect(Math.abs(before.rotation - after.rotation)).toBeLessThan(1e-3);
-    expect(before.background).toBe(after.background);
+  it("a half-daylight frame keeps the key × exposure near the studio's (no flash mid-flip)", () => {
+    const day = lightingFor(1);
+    const mid = lightingFor(0.5);
+    const ratio = (mid.key * mid.exposure) / (day.key * day.exposure);
+    expect(ratio).toBeGreaterThan(0.8);
+    expect(ratio).toBeLessThan(1.1);
   });
 
-  it("time weights sum to one and pick the right preset", () => {
-    for (const h of [0, 3, 6.5, 8, 10, 13, 15.5, 18, 20, 22, 23.9]) {
-      const w = timeWeights(h);
-      expect(w.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 9);
+  it("clamps the input and stays monotone in daylight", () => {
+    expect(lightingFor(-1)).toEqual(lightingFor(0));
+    expect(lightingFor(2)).toEqual(lightingFor(1));
+    let prev = lightingFor(0);
+    for (let t = 0.1; t <= 1.0001; t += 0.1) {
+      const cur = lightingFor(t);
+      expect(cur.key).toBeGreaterThanOrEqual(prev.key);
+      expect(cur.contour).toBeLessThanOrEqual(prev.contour);
+      expect(cur.adaptation).toBeLessThanOrEqual(prev.adaptation);
+      prev = cur;
     }
-    expect(timeWeights(8)).toEqual([1, 0, 0, 0]);
-    expect(timeWeights(13)).toEqual([0, 1, 0, 0]);
-    expect(timeWeights(18)).toEqual([0, 0, 1, 0]);
-    expect(timeWeights(0)).toEqual([0, 0, 0, 1]);
-    // The light theme's hour is nearly pure morning.
-    expect(timeWeights(THEME_HOUR.light)[0]).toBeGreaterThan(0.95);
   });
 
   it("mixes colours in linear light and clamps", () => {
@@ -86,12 +80,5 @@ describe("device-scene lighting tables (ADR 0057 §2)", () => {
       16,
     );
     expect(mid).toBeGreaterThan(128);
-  });
-
-  it("hourDelta takes the short way around the clock", () => {
-    expect(hourDelta(8.5, 0)).toBeCloseTo(-8.5, 9);
-    expect(hourDelta(0, 8.5)).toBeCloseTo(8.5, 9);
-    expect(hourDelta(22, 2)).toBeCloseTo(4, 9);
-    expect(hourDelta(2, 22)).toBeCloseTo(-4, 9);
   });
 });

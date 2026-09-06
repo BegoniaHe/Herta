@@ -1767,6 +1767,26 @@ body:after{
   display: contents;
 }
 
+/* 3D device card (ADR 0057): one canvas filling the card's content box —
+   the baked room is the card's background, the device framed to the flat
+   render's silhouette height. Stacked under .agent-preview (z2, the drag
+   surface) and .card-menu (z5), over the card's own frost. The flat stack
+   stays in the DOM and is hidden only while the scene is LIVE (a frame has
+   been presented), so the card is never blank: no GPU path, a load failure
+   or a lost device drops the attribute and the renders return. */
+.device-scene-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+}
+.device-card[data-scene="live"] .agent-lift-group,
+.device-card[data-scene="live"] .agent-shadow {
+  visibility: hidden;
+}
+
 /* Slice 3 addition — reset UA button styles on .agent-preview (Task 13
    changed the element from <div> to <button> for a11y; UA defaults
    would otherwise distort the 4-layer composite). */

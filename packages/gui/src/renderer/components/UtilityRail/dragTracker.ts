@@ -20,7 +20,16 @@ export interface DragResult {
   readonly transform: string | null;
   /** Inline style for the shadow layer (scale + opacity). */
   readonly shadowStyle: CSSProperties | undefined;
+  /** The lift in CSS px (0 when no lift) — the 3D card's spring target
+   *  (ADR 0057); the flat card reads the transform instead. */
+  readonly liftPx: number;
 }
+
+const NO_LIFT: DragResult = {
+  transform: null,
+  shadowStyle: undefined,
+  liftPx: 0,
+};
 
 /**
  * Pure drag-to-lift computation. No side effects, no React. The
@@ -28,17 +37,13 @@ export interface DragResult {
  */
 export function computeDragResult(input: DragTrackerInput): DragResult {
   // Reduced motion short-circuits everything.
-  if (input.reducedMotion) return { transform: null, shadowStyle: undefined };
+  if (input.reducedMotion) return NO_LIFT;
   // Direction gate: only upward drags lift.
-  if (input.dragDeltaY >= 0) return { transform: null, shadowStyle: undefined };
+  if (input.dragDeltaY >= 0) return NO_LIFT;
   // Threshold gate: small jitter doesn't count.
-  if (Math.abs(input.dragDeltaY) < input.threshold) {
-    return { transform: null, shadowStyle: undefined };
-  }
+  if (Math.abs(input.dragDeltaY) < input.threshold) return NO_LIFT;
   // Chance gate: only the lucky drags lift.
-  if (input.chance >= input.liftProbability) {
-    return { transform: null, shadowStyle: undefined };
-  }
+  if (input.chance >= input.liftProbability) return NO_LIFT;
   const liftPx = Math.min(Math.abs(input.dragDeltaY), input.maxLiftPx);
   const shadowScale = 1 - liftPx * 0.01;
   const shadowOpacity = 0.85 - liftPx * 0.02;
@@ -48,5 +53,6 @@ export function computeDragResult(input: DragTrackerInput): DragResult {
       transform: `scale(${shadowScale.toFixed(3)})`,
       opacity: shadowOpacity.toFixed(3),
     },
+    liftPx,
   };
 }

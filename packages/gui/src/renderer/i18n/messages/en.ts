@@ -165,6 +165,9 @@ export const en = {
     "No bash was found on this machine; Minimal will run as Standard. Install Git for Windows and restart to enable it.",
   "banzhuan.contract.standard": "Standard",
   "banzhuan.contract.minimal": "Minimal",
+  "banzhuan.scene": "3D device",
+  "banzhuan.sceneDesc":
+    "Renders the Brick as a lit 3D object that follows the theme. Uses the GPU while the card is on screen; off shows the flat renders. Applies at once.",
   "approval.title": "Permission request",
   "approval.allow": "Allow",
   "approval.alwaysAllow": "Allow for this task",

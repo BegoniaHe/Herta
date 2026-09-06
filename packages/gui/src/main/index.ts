@@ -17,6 +17,11 @@ import {
   type WindowStateSnapshot,
 } from "./app-global-settings.js";
 import {
+  registerAssetProtocol,
+  registerAssetScheme,
+  resolveDeviceSceneRoot,
+} from "./asset-protocol.js";
+import {
   registerAttachmentProtocol,
   registerAttachmentScheme,
 } from "./attachment-protocol.js";
@@ -43,10 +48,12 @@ import { applyWindowsPath } from "./win-path.js";
 import { captureWindowState, restoreWindowBounds } from "./window-state.js";
 
 // Privileged-scheme registration MUST happen before app ready (Electron
-// requirement), so the `herta-voice` audio scheme and the `herta-attachment`
-// image scheme (ADR 0048) are declared at module load.
+// requirement), so the `herta-voice` audio scheme, the `herta-attachment`
+// image scheme (ADR 0048) and the `herta-asset` scene-asset scheme (ADR
+// 0057) are declared at module load.
 registerVoiceScheme();
 registerAttachmentScheme();
+registerAssetScheme();
 
 /**
  * The dev-server URL — ONLY in a non-packaged build (audit 2026-08-05, S2).
@@ -566,6 +573,16 @@ void app.whenReady().then(async () => {
   // afterwards. Falls back to the app workspace before any session exists.
   registerAttachmentProtocol(
     () => mainService?.backendWorkspace() ?? appWorkspaceRoot(),
+  );
+  // Serve the 3D device card's bundled assets over herta-asset:// (ADR 0057):
+  // Vite copies src/renderer/public into out/renderer, which is what the
+  // package carries; an `electron-vite dev` run never populates that copy,
+  // so the source directory is the fallback root.
+  registerAssetProtocol(
+    resolveDeviceSceneRoot([
+      join(__dirname, "../renderer/device-scene"),
+      join(__dirname, "../../src/renderer/public/device-scene"),
+    ]),
   );
   createWindow();
   // Auto-update: created after the window so state pushes have a target.

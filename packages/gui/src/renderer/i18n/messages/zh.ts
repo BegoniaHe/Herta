@@ -152,6 +152,11 @@ export const zh = {
     "本机未检测到 bash，选极简也会按标准运行；装上 Git for Windows 后重启即可用。",
   "banzhuan.contract.standard": "标准",
   "banzhuan.contract.minimal": "极简",
+  // 3D device card (ADR 0057). Same register as the rows above: what it is,
+  // the one trade-off, apply semantics.
+  "banzhuan.scene": "立体板砖",
+  "banzhuan.sceneDesc":
+    "把板砖渲染成随主题打光的立体实物。卡片在屏幕上时会占用显卡；关闭则显示平面图。立即生效。",
   "approval.title": "请求权限",
   "approval.allow": "同意",
   "approval.alwaysAllow": "任务内同意",

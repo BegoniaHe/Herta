@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { DEVICE_SCENE_DEFAULT } from "../../../shared/device-scene.js";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useDemoDeviceCycle } from "../../hooks/useDemoDeviceCycle.js";
 import type { BanzhuanDeviceState } from "../../hooks/useDeviceState.js";
@@ -9,8 +10,14 @@ import type {
   BackendThinking,
 } from "../../ipc/bridge-types.js";
 import { BanzhuanDemoCard } from "../UtilityRail/BanzhuanDemoCard.js";
+import {
+  loadDeviceScenePref,
+  setDeviceScenePrefLocal,
+  useDeviceScenePref,
+} from "../UtilityRail/device-scene/device-scene-prefs.js";
 import { Select } from "./Select.js";
 import { SettingRow } from "./SettingRow.js";
+import { Toggle } from "./Toggle.js";
 
 type DemoState =
   | "idle"
@@ -168,6 +175,31 @@ export function BanzhuanSettings(): JSX.Element {
     });
   };
 
+  // 3D device row (ADR 0057). Shares the live pref module with the rail
+  // card, so a flip here re-renders the card at once; hides when the bridge
+  // has no surface (fakes / the website demo). Optimistic + latest-wins like
+  // the rows above. The demo card below stays on the flat renders on
+  // purpose — one GPU scene per app, in the rail.
+  const scenePref = useDeviceScenePref();
+  const sceneSupported = bridge.setDeviceScene !== undefined;
+  const [sceneFailed, setSceneFailed] = useState(false);
+  const sceneSeqRef = useRef(0);
+  useEffect(() => {
+    void loadDeviceScenePref(bridge);
+  }, [bridge]);
+  const onScene = (next: boolean): void => {
+    const prev = scenePref ?? DEVICE_SCENE_DEFAULT;
+    sceneSeqRef.current += 1;
+    const seq = sceneSeqRef.current;
+    setDeviceScenePrefLocal(next);
+    setSceneFailed(false);
+    void bridge.setDeviceScene?.(next).catch(() => {
+      if (seq !== sceneSeqRef.current) return;
+      setDeviceScenePrefLocal(prev);
+      setSceneFailed(true);
+    });
+  };
+
   const onThinking = (next: BackendThinking): void => {
     // Optimistic: show the pick now, persist async. On a failed write, snap
     // back so the row never claims a state that didn't reach disk.
@@ -247,12 +279,29 @@ export function BanzhuanSettings(): JSX.Element {
           }
         />
       )}
-      {thinkingSupported && (failed || contractFailed) && (
+      {sceneSupported && (
+        <SettingRow
+          title={t("banzhuan.scene")}
+          description={t("banzhuan.sceneDesc")}
+          control={
+            <Toggle
+              checked={scenePref ?? DEVICE_SCENE_DEFAULT}
+              ariaLabel={t("banzhuan.scene")}
+              onChange={onScene}
+            />
+          }
+        />
+      )}
+      {((thinkingSupported && (failed || contractFailed)) || sceneFailed) && (
         <p className="settings-note">{t("common.couldntSave")}</p>
       )}
-      {thinkingSupported && !failed && !contractFailed && loadFailed && (
-        <p className="settings-note">{t("settings.loadFailed")}</p>
-      )}
+      {thinkingSupported &&
+        !failed &&
+        !contractFailed &&
+        !sceneFailed &&
+        loadFailed && (
+          <p className="settings-note">{t("settings.loadFailed")}</p>
+        )}
 
       <div className="settings-bz-demo">
         <BanzhuanDemoCard state={state} onHoverChange={setPaused} />

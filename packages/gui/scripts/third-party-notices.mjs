@@ -223,6 +223,45 @@ const entries = [...packages.values()]
       a.name.localeCompare(b.name) || a.version.localeCompare(b.version),
   );
 
+// ---- files shipped OUTSIDE the bundles --------------------------------------
+
+/**
+ * The 3D device card's Basis Universal transcoder (ADR 0057) is copied from
+ * three's examples into `src/renderer/public/device-scene/basis/`, which
+ * Vite carries into out/renderer as-is — never rendered into a chunk, so the
+ * manifest above cannot see it. Listed by hand, gated on the file actually
+ * being in the build output, with the Apache-2.0 text kept beside it in
+ * resources/licenses (three's package ships only a README pointer).
+ */
+const BASIS_WASM = resolve(
+  HERE,
+  "../out/renderer/device-scene/basis/basis_transcoder.wasm",
+);
+const extras = [];
+if (existsSync(BASIS_WASM)) {
+  const three = readJson(resolve(HERE, "../node_modules/three/package.json"));
+  const text = readFileSync(
+    resolve(HERE, "../resources/licenses/basis-universal-LICENSE.txt"),
+    "utf8",
+  )
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+$/gm, "")
+    .trim();
+  extras.push({
+    name: "basis_universal (KTX2 transcoder)",
+    version: `as vendored by three ${three?.version ?? "unknown"}`,
+    license: "Apache-2.0",
+    author: "Binomial LLC",
+    url: "https://github.com/BinomialLLC/basis_universal",
+    sections: new Set(["renderer"]),
+    shipped: "renderer assets (out/renderer/device-scene/basis/)",
+    files: [{ name: "LICENSE", text }],
+  });
+}
+const listed = [...entries, ...extras].sort(
+  (a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version),
+);
+
 // ---- render ----------------------------------------------------------------
 
 const where = (s) =>
@@ -256,18 +295,22 @@ md +=
 md += "## Summary\n\n";
 md += "| Package | Version | License | Bundled into |\n";
 md += "|---|---|---|---|\n";
-for (const e of entries) {
-  md += `| ${e.name} | ${e.version} | ${e.license} | ${where(e.sections)} |\n`;
+for (const e of listed) {
+  md += `| ${e.name} | ${e.version} | ${e.license} | ${e.shipped ?? where(e.sections)} |\n`;
 }
 md += "\n";
 
 md += "## Licenses\n\n";
-for (const e of entries) {
+for (const e of listed) {
   md += `### ${e.name} ${e.version} — ${e.license}\n\n`;
   const meta = [];
   if (e.author) meta.push(`Author: ${e.author}`);
   if (e.url) meta.push(`Source: ${e.url}`);
-  meta.push(`Bundled into: ${where(e.sections)}`);
+  meta.push(
+    e.shipped
+      ? `Shipped as: ${e.shipped}`
+      : `Bundled into: ${where(e.sections)}`,
+  );
   md += `${meta.map((m) => `- ${m}`).join("\n")}\n\n`;
   for (const f of e.files) {
     if (e.files.length > 1) md += `**${f.name}**\n\n`;
@@ -287,22 +330,22 @@ if (CHECK) {
   if (current !== md) {
     console.error(
       `third-party-notices: ${OUTPUT} is STALE against the current bundle ` +
-        `(${entries.length} packages). Regenerate with\n` +
+        `(${listed.length} packages). Regenerate with\n` +
         "  node packages/gui/scripts/third-party-notices.mjs\n" +
         "and commit the result — a dependency shipped without its notice.",
     );
     process.exit(1);
   }
   console.log(
-    `third-party-notices: up to date (${entries.length} packages: ` +
-      `${entries.map((e) => e.name).join(", ")})`,
+    `third-party-notices: up to date (${listed.length} packages: ` +
+      `${listed.map((e) => e.name).join(", ")})`,
   );
 } else {
   writeFileSync(OUTPUT, md);
   console.log(
-    `third-party-notices: wrote ${OUTPUT} (${entries.length} packages)`,
+    `third-party-notices: wrote ${OUTPUT} (${listed.length} packages)`,
   );
-  for (const e of entries) {
+  for (const e of listed) {
     console.log(
       `  ${e.name}@${e.version}  ${e.license}  [${where(e.sections)}]`,
     );

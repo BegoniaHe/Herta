@@ -64,7 +64,16 @@ export interface CspOptions {
  */
 export function buildCsp(opts: CspOptions): string {
   const scriptSrc = opts.isPackaged
-    ? ["'self'", ...inlineScriptHashes(opts.indexHtmlPath)]
+    ? // 'wasm-unsafe-eval' (ADR 0057 §3): the 3D device card's KTX2 transcoder
+      // and meshopt decoder are WebAssembly, and Chromium gates WASM
+      // compilation behind this keyword (or the far broader 'unsafe-eval').
+      // It permits ONLY WebAssembly.compile/instantiate — string eval, Function
+      // and inline scripts stay refused, so the hash-only script policy holds.
+      [
+        "'self'",
+        "'wasm-unsafe-eval'",
+        ...inlineScriptHashes(opts.indexHtmlPath),
+      ]
     : // Vite injects its client and uses eval for HMR; the dev origin serves
       // the module graph over http.
       ["'self'", "'unsafe-inline'", "'unsafe-eval'", opts.devOrigin ?? ""];
@@ -73,9 +82,12 @@ export function buildCsp(opts: CspOptions): string {
     ? // The renderer talks to the main process over IPC, never over the
       // network. The DeepSeek call lives in the MAIN process, so nothing here
       // needs an outbound origin — this is the directive that would stop an
-      // injected script exfiltrating a transcript.
-      ["'none'"]
-    : ["'self'", opts.devOrigin ?? "", "ws:", "wss:"];
+      // injected script exfiltrating a transcript. The ONE opening is the
+      // read-only asset scheme the 3D device card loads its meshes and
+      // atlases over (ADR 0057 §3). Scheme-scoped on purpose: 'self' on this
+      // file:// document would match every file: URL, i.e. any local file.
+      ["herta-asset:"]
+    : ["'self'", opts.devOrigin ?? "", "ws:", "wss:", "herta-asset:"];
 
   return [
     "default-src 'none'",
@@ -86,10 +98,12 @@ export function buildCsp(opts: CspOptions): string {
     // least dangerous of the inline allowances, since style injection here has
     // no sink to reach.
     "style-src 'self' 'unsafe-inline'",
-    // Bundled art plus the small assets Vite inlines as data: URIs, and the
+    // Bundled art plus the small assets Vite inlines as data: URIs, the
     // custom scheme attachment images are served over (ADR 0048) — stored
-    // pictures stay on disk instead of riding the record as data: URIs.
-    "img-src 'self' data: blob: herta-attachment:",
+    // pictures stay on disk instead of riding the record as data: URIs —
+    // and the 3D device card's scheme (ADR 0057): its two scalar PNG maps
+    // load through an image element, not fetch.
+    "img-src 'self' data: blob: herta-attachment: herta-asset:",
     // The custom scheme the voice clips are served over.
     "media-src 'self' herta-voice: data: blob:",
     "font-src 'self' data:",

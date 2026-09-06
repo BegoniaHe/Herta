@@ -449,6 +449,12 @@ export interface HertaBridge {
   /** Persist the appearance preference; the renderer's theme controller
    *  applies it live (no restart). */
   setTheme?(theme: ThemePref): Promise<void>;
+  /** Read whether the 3D device card is on (ADR 0057; Settings →
+   *  差分协处理器). OPTIONAL — fakes and the website demo omit it, and the
+   *  card then stays on its flat renders with the row hidden. */
+  getDeviceScene?(): Promise<boolean>;
+  /** Persist the 3D device card toggle; the card applies it live. */
+  setDeviceScene?(enabled: boolean): Promise<void>;
   /** Read the masked DeepSeek key status (Settings → DeepSeek). */
   getDeepSeekKeyStatus(): Promise<DeepSeekKeyStatus>;
   /** Validate a DeepSeek key (a cheap token-free auth check), and on success

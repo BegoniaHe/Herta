@@ -92,6 +92,12 @@ export interface MockHertaBridgeOpts {
   readonly failSetCloseToTray?: boolean;
   /** Seed for getTheme (Settings → Window appearance). Default "light". */
   readonly themeResult?: ThemePref;
+  /** Seed for getDeviceScene (Settings → 差分协处理器 → 3D device, ADR
+   *  0057). UNDEFINED (the default) omits the surface entirely — the row
+   *  hides and the rail card stays flat, like the website demo's bridge. */
+  readonly deviceSceneResult?: boolean;
+  /** When true, setDeviceScene rejects (simulates a failed settings write). */
+  readonly failSetDeviceScene?: boolean;
   /** Seed for getInteractionLanguage (Settings → Language, slice 4).
    *  Default "follow" (no stored choice). Mutated by setInteractionLanguage
    *  so tests observe the round-trip. */
@@ -163,6 +169,7 @@ export interface MockHertaBridge {
     getCloseToTray: number;
     setCloseToTray: boolean[];
     setTheme: ThemePref[];
+    setDeviceScene: boolean[];
     getInteractionLanguage: number;
     setInteractionLanguage: InteractionLanguageChoice[];
     windowMinimize: number;
@@ -243,6 +250,7 @@ export function createMockHertaBridge(
     getCloseToTray: 0,
     setCloseToTray: [],
     setTheme: [],
+    setDeviceScene: [],
     getInteractionLanguage: 0,
     setInteractionLanguage: [],
     windowMinimize: 0,
@@ -523,6 +531,17 @@ export function createMockHertaBridge(
     setTheme: async (theme) => {
       calls.setTheme.push(theme);
     },
+    ...(opts.deviceSceneResult !== undefined
+      ? {
+          getDeviceScene: async () => opts.deviceSceneResult === true,
+          setDeviceScene: async (enabled: boolean) => {
+            calls.setDeviceScene.push(enabled);
+            if (opts.failSetDeviceScene === true) {
+              throw new Error("write failed");
+            }
+          },
+        }
+      : {}),
     getInteractionLanguage: async () => {
       calls.getInteractionLanguage += 1;
       return interactionLanguage;

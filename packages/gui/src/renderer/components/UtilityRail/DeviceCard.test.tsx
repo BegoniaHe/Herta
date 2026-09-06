@@ -1,11 +1,59 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { HertaBridgeProvider } from "../../context/HertaBridgeContext.js";
 import { renderWithLocale } from "../../i18n/test-util.js";
 import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
 import { DeviceCard } from "./DeviceCard.js";
+import { resetDeviceSceneBackendForTest } from "./device-scene/capability.js";
+import { resetDeviceScenePrefForTest } from "./device-scene/device-scene-prefs.js";
+
+// The 3D pref and GPU probe are module-level caches (ADR 0057); every spec
+// starts from "unknown" so a seeded bridge in one cannot leak into the next.
+afterEach(() => {
+  resetDeviceScenePrefForTest();
+  resetDeviceSceneBackendForTest();
+});
 
 describe("DeviceCard", () => {
+  it("mounts the 3D scene canvas only when the bridge reports the setting on, and keeps the flat stack authoritative until a frame exists (ADR 0057)", async () => {
+    // jsdom has no WebGL2: silence its "not implemented" and take the
+    // no-GPU path, which is the honest one here.
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(
+      (() => null) as typeof HTMLCanvasElement.prototype.getContext,
+    );
+    const off = createMockHertaBridge(); // no surface at all
+    const first = renderWithLocale(
+      <HertaBridgeProvider bridge={off.bridge}>
+        <DeviceCard />
+      </HertaBridgeProvider>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(first.container.querySelector(".device-scene-canvas")).toBeNull();
+    first.unmount();
+    resetDeviceScenePrefForTest();
+
+    const on = createMockHertaBridge({ deviceSceneResult: true });
+    const { container } = renderWithLocale(
+      <HertaBridgeProvider bridge={on.bridge}>
+        <DeviceCard />
+      </HertaBridgeProvider>,
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".device-scene-canvas")).not.toBeNull(),
+    );
+    await act(async () => {
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+    // No GPU path → never live: the flat renders and the glow stay in charge.
+    const card = container.querySelector(".device-card");
+    expect(card?.getAttribute("data-scene")).toBeNull();
+    expect(container.querySelector("img.agent-device-img")).not.toBeNull();
+    expect(container.querySelector(".device-glow-canvas")).not.toBeNull();
+    vi.restoreAllMocks();
+  });
+
   it("renders the 4-layer composite (2 imgs + 2 divs) inside .agent-preview", () => {
     const mock = createMockHertaBridge();
     const { container } = renderWithLocale(

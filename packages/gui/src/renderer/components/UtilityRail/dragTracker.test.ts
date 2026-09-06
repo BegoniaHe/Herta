@@ -44,6 +44,15 @@ describe("computeDragResult", () => {
     expect(out.transform).toBeNull();
   });
 
+  it("reports the lift in px beside the transform — 0 whenever there is no lift (ADR 0057)", () => {
+    // base drags 20 px; the 12 px ceiling wins.
+    expect(computeDragResult(base).liftPx).toBe(12);
+    expect(computeDragResult({ ...base, dragDeltaY: -10 }).liftPx).toBe(10);
+    expect(computeDragResult({ ...base, dragDeltaY: 20 }).liftPx).toBe(0);
+    expect(computeDragResult({ ...base, chance: 0.9 }).liftPx).toBe(0);
+    expect(computeDragResult({ ...base, reducedMotion: true }).liftPx).toBe(0);
+  });
+
   it("shadow style scales down and dims when device is lifted", () => {
     const out = computeDragResult(base);
     // Shadow should be slightly smaller + slightly less opaque to

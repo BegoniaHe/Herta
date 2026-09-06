@@ -44,6 +44,8 @@ export const CMD = {
   setAutoUpdate: "settings:setAutoUpdate",
   getTheme: "settings:getTheme",
   setTheme: "settings:setTheme",
+  getDeviceScene: "settings:getDeviceScene",
+  setDeviceScene: "settings:setDeviceScene",
   getDeepSeekKeyStatus: "settings:getDeepSeekKeyStatus",
   setDeepSeekKey: "settings:setDeepSeekKey",
   clearDeepSeekKey: "settings:clearDeepSeekKey",

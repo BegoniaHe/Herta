@@ -36,8 +36,12 @@ describe("buildCsp (audit BL2)", () => {
     const csp = packaged();
     expect(csp).toContain("default-src 'none'");
     // The directive that stops an injected script exfiltrating a transcript —
-    // the renderer never talks to the network, the main process does.
-    expect(csp).toContain("connect-src 'none'");
+    // the renderer never talks to the network, the main process does. The one
+    // opening is the read-only asset scheme (ADR 0057 §3); no origin, no
+    // 'self' (which on a file:// document would match every local file).
+    expect(csp).toMatch(/connect-src herta-asset:(;|$)/);
+    expect(csp).not.toMatch(/connect-src[^;]*'self'/);
+    expect(csp).not.toMatch(/connect-src[^;]*(https?:|ws)/);
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain("base-uri 'none'");
@@ -46,8 +50,14 @@ describe("buildCsp (audit BL2)", () => {
 
   it("packaged: hashes the inline script instead of allowing inline scripts", () => {
     const csp = packaged();
-    expect(csp).toMatch(/script-src 'self' 'sha256-[A-Za-z0-9+/=]+'/);
-    expect(csp).not.toContain("script-src 'self' 'unsafe-inline'");
+    expect(csp).toMatch(
+      /script-src 'self' 'wasm-unsafe-eval' 'sha256-[A-Za-z0-9+/=]+'/,
+    );
+    // (style-src keeps its inline allowance for React's style attributes;
+    // the script directive must not.)
+    expect(csp).not.toMatch(/script-src[^;]*'unsafe-inline'/);
+    // 'wasm-unsafe-eval' permits WebAssembly compilation only (ADR 0057 §3);
+    // the string-eval keyword must stay out of the packaged policy.
     expect(csp).not.toContain("'unsafe-eval'");
   });
 
@@ -83,8 +93,11 @@ describe("buildCsp (audit BL2)", () => {
     // Voice clips are served over the custom scheme.
     expect(csp).toContain("herta-voice:");
     // Vite inlines small assets as data: URIs; attachment images ride their
-    // own scheme (ADR 0048) rather than the record.
-    expect(csp).toContain("img-src 'self' data: blob: herta-attachment:");
+    // own scheme (ADR 0048) rather than the record; the 3D device card's
+    // scalar maps load as images over its scheme (ADR 0057).
+    expect(csp).toContain(
+      "img-src 'self' data: blob: herta-attachment: herta-asset:",
+    );
     // The viewer's PDF renderer runs pdf.js's worker from the bundle (ADR
     // 0054 §5) — the one directive that opened since the audit; workers
     // from anywhere else stay refused.
@@ -97,6 +110,8 @@ describe("buildCsp (audit BL2)", () => {
     expect(csp).toContain("'unsafe-eval'"); // HMR
     expect(csp).toContain("http://localhost:5173");
     expect(csp).toContain("ws:"); // HMR socket
+    // The asset scheme is a fixture of both policies, not a dev relaxation.
+    expect(csp).toMatch(/connect-src[^;]*herta-asset:/);
     // Still no plugins/frames even in dev.
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("frame-ancestors 'none'");

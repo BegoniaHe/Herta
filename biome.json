@@ -12,6 +12,7 @@
       "!**/reference_UX_design",
       "!**/src/renderer/reference",
       "!**/src/renderer/assets/openings",
+      "!**/src/renderer/public",
       "!**/src/renderer/styles/reference-ux.css",
       "!**/.herta",
       "!**/.claude",

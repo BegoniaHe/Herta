@@ -41,6 +41,10 @@ export interface GlobalSettings {
    *  ABSENT = follow the UI locale (`resolveInteractionLang`); an explicit
    *  "zh"/"en" persists. EN sessions have no opening voice in v1. */
   readonly interactionLanguage?: InteractionLang;
+  /** The 3D device card (ADR 0057). ABSENT = the shipped default
+   *  (`DEVICE_SCENE_DEFAULT`); the Settings → 差分协处理器 toggle writes an
+   *  explicit boolean. Live-applied in the renderer; no restart. */
+  readonly deviceScene?: boolean;
 }
 
 export interface WindowStateSnapshot {
@@ -72,6 +76,7 @@ export async function readGlobalSettings(
       theme,
       windowState,
       interactionLanguage,
+      deviceScene,
     } = parsed as {
       locale?: unknown;
       closeToTray?: unknown;
@@ -79,7 +84,11 @@ export async function readGlobalSettings(
       theme?: unknown;
       windowState?: unknown;
       interactionLanguage?: unknown;
+      deviceScene?: unknown;
     };
+    if (deviceScene !== undefined && typeof deviceScene !== "boolean") {
+      return {};
+    }
     if (locale !== undefined && locale !== "zh" && locale !== "en") return {};
     if (
       interactionLanguage !== undefined &&

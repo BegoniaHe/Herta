@@ -21,6 +21,9 @@ export interface UseDragToLiftResult {
   readonly onMouseDown: (e: MouseEvent<HTMLElement>) => void;
   readonly transform: string | null;
   readonly shadowStyle: CSSProperties | undefined;
+  /** The current lift in CSS px, 0 when not lifting — what the 3D card
+   *  springs toward (ADR 0057). */
+  readonly liftPx: number;
 }
 
 const DEFAULT_THRESHOLD = 8;
@@ -35,6 +38,7 @@ export function useDragToLift(
   const [shadowStyle, setShadowStyle] = useState<CSSProperties | undefined>(
     undefined,
   );
+  const [liftPx, setLiftPx] = useState(0);
 
   const startY = useRef<number | null>(null);
   const chance = useRef<number>(0);
@@ -71,6 +75,7 @@ export function useDragToLift(
       });
       setTransform(result.transform);
       setShadowStyle(result.shadowStyle);
+      setLiftPx(result.liftPx);
       if (result.transform !== null && !triggered.current) {
         triggered.current = true;
         o.onSuccessfulLift?.();
@@ -85,6 +90,7 @@ export function useDragToLift(
       triggered.current = false;
       setTransform(null);
       setShadowStyle(undefined);
+      setLiftPx(0);
     };
     handlersRef.current = { move, up };
   }
@@ -116,5 +122,5 @@ export function useDragToLift(
     window.addEventListener("mouseup", handlers.up);
   }, []);
 
-  return { onMouseDown, transform, shadowStyle };
+  return { onMouseDown, transform, shadowStyle, liftPx };
 }

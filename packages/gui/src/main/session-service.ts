@@ -31,6 +31,7 @@ import type {
   SessionOpenFailure,
   SessionSnapshot,
 } from "../renderer/ipc/bridge-types.js";
+import { DEVICE_SCENE_DEFAULT } from "../shared/device-scene.js";
 import {
   type InteractionLang,
   type Locale,
@@ -994,6 +995,18 @@ export function createSessionService(
         theme,
       }));
       hooks.onThemeChanged?.(theme);
+    });
+    // Settings → 差分协处理器 → 3D device card (ADR 0057). The renderer
+    // applies it live; main only persists. Absent = the shipped default.
+    handle(CMD.getDeviceScene, async () => {
+      const s = await readGlobalSettings(app.getPath("userData"));
+      return s.deviceScene ?? DEVICE_SCENE_DEFAULT;
+    });
+    handle(CMD.setDeviceScene, async (_e, enabled: boolean) => {
+      await updateGlobalSettings(app.getPath("userData"), (s) => ({
+        ...s,
+        deviceScene: enabled === true,
+      }));
     });
     // Settings → DeepSeek key. The secure store is the single source of truth;
     // `host.setDeepSeekKey` mirrors it to the running session's live key so the

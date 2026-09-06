@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import agentDevice from "../../assets/agent_device.png";
 import agentDeviceNight from "../../assets/agent_device_night.png";
 import agentShadow from "../../assets/agent_shadow.png";
@@ -8,6 +8,7 @@ import {
   useDeviceState,
 } from "../../hooks/useDeviceState.js";
 import { useDisconnected } from "../../hooks/useDisconnected.js";
+import { useResolvedTheme } from "../../hooks/useResolvedTheme.js";
 import { useSessionScoped } from "../../hooks/useSessionScoped.js";
 import {
   shallowEqualObjects,
@@ -18,6 +19,11 @@ import { useT } from "../../i18n/LocaleProvider.js";
 import { useRailParked } from "../FileViewer/file-viewer-context.js";
 import { CardMenu } from "./CardMenu.js";
 import { DeviceGlow } from "./DeviceGlow.js";
+import { DeviceScene } from "./device-scene/DeviceScene.js";
+import {
+  loadDeviceScenePref,
+  useDeviceScenePref,
+} from "./device-scene/device-scene-prefs.js";
 import { useDragToLift } from "./useDragToLift.js";
 
 const STATE_KEY: Record<BanzhuanDeviceState, MessageKey> = {
@@ -55,11 +61,27 @@ export function DeviceCard(): JSX.Element {
   // the glow loop stops for as long as the panel stays open.
   const disconnected = useDisconnected();
   const railParked = useRailParked();
+  const paused = disconnected || railParked;
   // Easter egg: a successful upward lift may play a voice clip. The active
   // session owns the 50% roll + per-session hourly throttle (fire-and-forget).
-  const { onMouseDown, transform, shadowStyle } = useDragToLift({
+  const { onMouseDown, transform, shadowStyle, liftPx } = useDragToLift({
     onSuccessfulLift: () => void bridge.maybePlayEasterEgg(),
   });
+  // The 3D device (ADR 0057). The setting lives in main; null means the
+  // bridge has no surface for it (fakes, the website demo) and the card
+  // stays on its flat renders. The scene mounts only while wanted, and the
+  // flat stack stays in the DOM underneath until the scene has presented a
+  // frame (`data-scene="live"` hides it), then returns on any fallback.
+  const theme = useResolvedTheme();
+  const scenePref = useDeviceScenePref();
+  useEffect(() => {
+    void loadDeviceScenePref(bridge);
+  }, [bridge]);
+  const wantScene = scenePref === true;
+  const [sceneLive, setSceneLive] = useState(false);
+  useEffect(() => {
+    if (!wantScene) setSceneLive(false);
+  }, [wantScene]);
   // A workspace error belongs to the session it happened in — don't resurface
   // a stale one in the next session's menu. (This hand-written reset is what
   // `useSessionScoped` generalizes; migrated 2026-07-24.)
@@ -122,8 +144,18 @@ export function DeviceCard(): JSX.Element {
     <section
       className="device-card"
       data-state={state}
+      data-scene={sceneLive ? "live" : undefined}
       aria-label={t("device.ariaLabel", { state: t(STATE_KEY[state]) })}
     >
+      {wantScene && (
+        <DeviceScene
+          state={state}
+          theme={theme}
+          paused={paused}
+          liftPx={liftPx}
+          onLive={setSceneLive}
+        />
+      )}
       <CardMenu
         cardKind="device"
         activeWorkspace={snap.backendWorkspace ?? undefined}
@@ -174,7 +206,10 @@ export function DeviceCard(): JSX.Element {
             alt=""
             aria-hidden="true"
           />
-          <DeviceGlow state={state} paused={disconnected || railParked} />
+          {/* The glow loop also parks while the 3D scene owns the card: its
+              canvas is hidden then, and the ring's light comes from the
+              scene's own bake. */}
+          <DeviceGlow state={state} paused={paused || sceneLive} />
         </div>
       </button>
     </section>

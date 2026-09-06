@@ -166,8 +166,7 @@ export const en = {
   "banzhuan.contract.standard": "Standard",
   "banzhuan.contract.minimal": "Minimal",
   "banzhuan.scene": "3D device",
-  "banzhuan.sceneDesc":
-    "Renders the Brick as a lit 3D object that follows the theme. Uses the GPU while the card is on screen; off shows the flat renders. Applies at once.",
+  "banzhuan.sceneDesc": "A lit 3D object; off shows the flat renders.",
   "approval.title": "Permission request",
   "approval.allow": "Allow",
   "approval.alwaysAllow": "Allow for this task",

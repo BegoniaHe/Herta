@@ -237,61 +237,66 @@ export function BanzhuanSettings(): JSX.Element {
         {introParts[1] ?? ""}
       </p>
 
-      {thinkingSupported && (
-        <SettingRow
-          title={t("banzhuan.thinking")}
-          description={t("banzhuan.thinkingDesc")}
-          control={
-            <Select<BackendThinking>
-              value={thinking}
-              ariaLabel={t("banzhuan.thinking")}
-              options={[
-                { value: "low", label: t("banzhuan.thinking.low") },
-                { value: "high", label: t("banzhuan.thinking.high") },
-                { value: "max", label: t("banzhuan.thinking.max") },
-              ]}
-              onChange={onThinking}
-            />
-          }
-        />
-      )}
-      {thinkingSupported && contractKnown && (
-        <SettingRow
-          title={t("banzhuan.contract")}
-          description={
-            bashFound === false
-              ? `${t("banzhuan.contractDesc")} ${t("banzhuan.contract.noBash")}`
-              : t("banzhuan.contractDesc")
-          }
-          control={
-            <Select<BackendContractChoice>
-              value={contract}
-              ariaLabel={t("banzhuan.contract")}
-              options={[
-                {
-                  value: "standard",
-                  label: t("banzhuan.contract.standard"),
-                },
-                { value: "minimal", label: t("banzhuan.contract.minimal") },
-              ]}
-              onChange={onContract}
-            />
-          }
-        />
-      )}
-      {sceneSupported && (
-        <SettingRow
-          title={t("banzhuan.scene")}
-          description={t("banzhuan.sceneDesc")}
-          control={
-            <Toggle
-              checked={scenePref ?? DEVICE_SCENE_DEFAULT}
-              ariaLabel={t("banzhuan.scene")}
-              onChange={onScene}
-            />
-          }
-        />
-      )}
+      {/* The option rows scroll inside a fixed-height pane (owner
+          2026-09-06): a third row had made this section taller than the
+          card's floor and the card grew on every switch into it. */}
+      <div className="settings-rows">
+        {thinkingSupported && (
+          <SettingRow
+            title={t("banzhuan.thinking")}
+            description={t("banzhuan.thinkingDesc")}
+            control={
+              <Select<BackendThinking>
+                value={thinking}
+                ariaLabel={t("banzhuan.thinking")}
+                options={[
+                  { value: "low", label: t("banzhuan.thinking.low") },
+                  { value: "high", label: t("banzhuan.thinking.high") },
+                  { value: "max", label: t("banzhuan.thinking.max") },
+                ]}
+                onChange={onThinking}
+              />
+            }
+          />
+        )}
+        {thinkingSupported && contractKnown && (
+          <SettingRow
+            title={t("banzhuan.contract")}
+            description={
+              bashFound === false
+                ? `${t("banzhuan.contractDesc")} ${t("banzhuan.contract.noBash")}`
+                : t("banzhuan.contractDesc")
+            }
+            control={
+              <Select<BackendContractChoice>
+                value={contract}
+                ariaLabel={t("banzhuan.contract")}
+                options={[
+                  {
+                    value: "standard",
+                    label: t("banzhuan.contract.standard"),
+                  },
+                  { value: "minimal", label: t("banzhuan.contract.minimal") },
+                ]}
+                onChange={onContract}
+              />
+            }
+          />
+        )}
+        {sceneSupported && (
+          <SettingRow
+            title={t("banzhuan.scene")}
+            description={t("banzhuan.sceneDesc")}
+            control={
+              <Toggle
+                checked={scenePref ?? DEVICE_SCENE_DEFAULT}
+                ariaLabel={t("banzhuan.scene")}
+                onChange={onScene}
+              />
+            }
+          />
+        )}
+      </div>
       {((thinkingSupported && (failed || contractFailed)) || sceneFailed) && (
         <p className="settings-note">{t("common.couldntSave")}</p>
       )}

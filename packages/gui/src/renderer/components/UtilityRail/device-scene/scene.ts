@@ -13,6 +13,7 @@ import {
   faceDirection,
   float,
   If,
+  materialColor,
   materialRoughness,
   max,
   mix,
@@ -92,6 +93,8 @@ const MOVING_FPS = 60;
  *  texel, about one canvas pixel, under the VSM blur; 1024² cost four times
  *  the depth and blur passes for no visible gain (ADR 0057 §2.9). */
 const SHADOW_MAP_SIZE = 512;
+/** The scene pass's MSAA (§2.9: the study's 4× halved). */
+const SCENE_MSAA_SAMPLES = 2;
 const PARK_UNFOCUSED_MS = 5000;
 /** How often a resting loop is nudged to follow the clock. A breathing
  *  card re-reads the clock every frame anyway; this is for reduced motion,
@@ -126,6 +129,10 @@ export interface DeviceSceneOptions {
    *  beside the always-on fps / submitMs / draws. Costs a little per frame;
    *  off unless a developer asks (localStorage `herta.deviceScene.profile`). */
   readonly profile?: boolean;
+  /** Awaited between the asynchronous pipeline compile and the synchronous
+   *  first frame (§2.12): the compile takes seconds, so whatever quiet the
+   *  caller waited for before building is over — this lets it wait again. */
+  readonly awaitQuiet?: () => Promise<void>;
   /** The scene can no longer draw (device lost, context lost). The caller
    *  returns the card to its flat renders; the handle is already disposed. */
   readonly onFallback: (reason: string) => void;
@@ -135,7 +142,10 @@ export interface DeviceSceneStats {
   readonly backend: "webgpu" | "webgl2";
   /** Renderer init → assets loaded, ms. */
   readonly loadMs: number;
-  /** Assets loaded → first frame presented, ms (pipeline compilation). */
+  /** The scene materials' asynchronous pipeline compilation, ms (§2.12:
+   *  on Dawn's worker threads, the app stays responsive meanwhile). */
+  readonly compileMs: number;
+  /** The synchronous first frame, ms (shadow and post pipelines, uploads). */
   readonly firstFrameMs: number;
 }
 
@@ -441,6 +451,9 @@ function makeSpaceMaterial(
           : "left"
     ];
   const [cr, cg, cb] = surface.color;
+  // The colour rides the material's own uniform, not a literal: a literal
+  // made three textually different shaders for the three walls, and each
+  // costs DXC half a second (§2.12). Same code → one program.
   mat.color.setRGB(cr, cg, cb);
   mat.roughness = surface.roughness;
   mat.metalness = 0;
@@ -454,7 +467,9 @@ function makeSpaceMaterial(
     .sub(u.contactBase)
     .div(vec3(CONTACT_REACH.x, CONTACT_REACH.y, CONTACT_REACH.z));
   const occlusion = u.contact.mul(smoothstep(0, 1, dot(q, q)).oneMinus());
-  mat.colorNode = vec3(cr, cg, cb).mul(occlusion.oneMinus());
+  mat.colorNode = (materialColor as unknown as Vec3Node).mul(
+    occlusion.oneMinus(),
+  );
   const st = uv(1).flipY();
   // The ring's light on the room, and the room's own daylight bounce —
   // both colour-excluded bakes, so the white surfaces above receive them
@@ -613,6 +628,17 @@ export async function createDeviceScene(
     trackTimestamp: profile,
   });
   await renderer.init();
+  if (profile) {
+    // Profiling only: lets a devtools probe read the renderer's caches.
+    Object.defineProperty(canvas, "__renderer", {
+      value: renderer,
+      configurable: true,
+    });
+  }
+  const expose = (name: string, value: unknown): void => {
+    if (profile)
+      Object.defineProperty(canvas, name, { value, configurable: true });
+  };
   const backend: DeviceSceneStats["backend"] =
     (renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend === true
       ? "webgpu"
@@ -740,7 +766,7 @@ export async function createDeviceScene(
   // ran 4×; on an Intel iGPU that pass cost 9 ms a frame against 5.7 at 2×
   // with no difference SMAA did not cover (ADR 0057 §2.9). The emissive
   // lane is free: measured within noise of a single attachment.
-  const scenePass = pass(scene, camera, { samples: 2 });
+  const scenePass = pass(scene, camera, { samples: SCENE_MSAA_SAMPLES });
   scenePass.setMRT(mrt({ output, emissive }));
   const graph = new THREE.RenderPipeline(renderer);
   const sceneColor = scenePass.getTextureNode("output");
@@ -752,6 +778,7 @@ export async function createDeviceScene(
   );
   const smaaNode = smaa(sceneColor.add(bloomNode));
   graph.outputNode = smaaNode;
+  expose("__scenePass", scenePass);
 
   // ── assets ──
   const u = makeUniforms();
@@ -1210,13 +1237,26 @@ export async function createDeviceScene(
     fallback(`device lost: ${info.reason ?? "unknown"}`);
   };
 
-  // First frame before the card swaps its flat renders for the canvas, so
-  // pipeline compilation never shows as a black card.
-  // (PassNode.compileAsync was tried here and rejected: it took 2 s of
-  // yielding node builds and the sync first frame still cost 0.4 s — the
-  // post and shadow materials are the bulk, and the pass's own render
-  // context is a different one anyway. ADR 0057 §2.9.)
+  // The scene's pipelines are compiled ASYNCHRONOUSLY before the first
+  // frame (ADR 0057 §2.12). A synchronous createRenderPipeline is
+  // compiled on the GPU process's main thread — the thread that also
+  // presents every window frame — and each of these material shaders
+  // takes DXC about a second on an Intel laptop: the traced boot showed
+  // 1–2.6 s freezes of the WHOLE app, one per material, for eight seconds
+  // after the first frame (the owner's "first click lags"). The async
+  // variant compiles on Dawn's worker threads. PassNode.setup() would set
+  // the target's sample count later; it is set here first so the async
+  // pipelines carry the pass's own render state and the first frame finds
+  // them in the cache. The shadow and post pipelines are small shaders
+  // and stay on the synchronous first frame.
   resize();
+  scenePass.renderTarget.samples = SCENE_MSAA_SAMPLES;
+  const tCompile = performance.now();
+  await scenePass.compileAsync(renderer);
+  const compileMs = performance.now() - tCompile;
+  if (disposed) throw new Error("disposed during compile");
+  if (opts.awaitQuiet !== undefined) await opts.awaitQuiet();
+  if (disposed) throw new Error("disposed while waiting");
   const t1 = performance.now();
   graph.render();
   const firstFrameMs = performance.now() - t1;
@@ -1224,7 +1264,7 @@ export async function createDeviceScene(
   wake(1400);
 
   return {
-    stats: { backend, loadMs, firstFrameMs },
+    stats: { backend, loadMs, compileMs, firstFrameMs },
     update(next) {
       const prev = inputs;
       inputs = next;

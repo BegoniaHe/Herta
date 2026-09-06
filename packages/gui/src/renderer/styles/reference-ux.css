@@ -6031,6 +6031,42 @@ button.session-item__badge--dismiss {
   background: var(--ink-a22);
   background-clip: padding-box;
 }
+/* A pane whose option rows scroll (owner 2026-09-06: the Coprocessor pane
+   had grown past the floor with its third row, so the card resized on
+   every switch into it). The pane becomes a column; every child keeps its
+   size except .settings-rows, which gives way and scrolls — with the same
+   slim pill bar as the pane, never the OS bar. Flex items do not collapse
+   margins, so the intro→rows gap is carried by the intro alone. On a
+   short window the floor shrinks with the card and the rows give way
+   first, down to about one row; past that the pane itself scrolls. */
+.settings-content:has(> .settings-rows) {
+  display: flex;
+  flex-direction: column;
+  /* Floor AND ceiling: the pane is exactly the floor (its stretched height
+     was otherwise its own content's, and the rows never had to give way). */
+  min-height: min(630px, calc(100vh - 98px));
+  max-height: min(630px, calc(100vh - 98px));
+}
+.settings-content:has(> .settings-rows) > * { flex: none; }
+.settings-content > .settings-rows {
+  flex: 0 1 auto;
+  min-height: 84px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.settings-rows > .settings-row:first-child { margin-top: 0; }
+.settings-rows::-webkit-scrollbar { width: 10px; }
+.settings-rows::-webkit-scrollbar-track { background: transparent; }
+.settings-rows::-webkit-scrollbar-thumb {
+  background: var(--ink-a13);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.settings-rows::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-a22);
+  background-clip: padding-box;
+}
 .settings-close {
   position: absolute;
   right: 13px;
@@ -6194,7 +6230,7 @@ button.session-item__badge--dismiss {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  margin: 2px 0 14px;
+  margin: 2px 0 10px;
 }
 /* Strip the rail card's panel chrome — show only the (scaled) device visual. */
 .device-card.settings-bz-card {
@@ -6214,7 +6250,7 @@ button.session-item__badge--dismiss {
 }
 .settings-bz-caption {
   text-align: center;
-  min-height: 42px;
+  min-height: 40px;
 }
 .settings-bz-caption-name {
   display: block;
@@ -6233,7 +6269,10 @@ button.session-item__badge--dismiss {
   /* 3 columns → the five states fit in two rows (3 + 2). */
   grid-template-columns: repeat(3, 1fr);
   gap: 7px 14px;
-  padding-top: 14px;
+  /* 14 → 11 with the demo's bottom margin 14 → 10 and the caption 42 → 40
+     (2026-09-06): the three-row pane fits the 630 floor in zh exactly, so
+     its rows scroll only where the prose runs longer (EN). */
+  padding-top: 11px;
   border-top: 1px solid var(--hairline);
 }
 .settings-bz-legend-item {

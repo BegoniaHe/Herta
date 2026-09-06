@@ -5,6 +5,12 @@ import { useReducedMotion } from "../../../hooks/useReducedMotion.js";
 import type { ResolvedTheme } from "../../../hooks/useResolvedTheme.js";
 import { detectDeviceSceneBackend } from "./capability.js";
 import type { DeviceSceneHandle, DeviceSceneInputs } from "./scene.js";
+import {
+  IDLE_MOUNT_IDLE_TIMEOUT_MS,
+  IDLE_MOUNT_MAX_WAIT_MS,
+  IDLE_MOUNT_QUIET_MS,
+  scheduleIdle,
+} from "./use-idle-mount.js";
 
 /** A developer's opt-in for GPU timestamps in the canvas dataset. */
 function profileRequested(): boolean {
@@ -71,6 +77,18 @@ export function DeviceScene(props: DeviceSceneProps): JSX.Element {
         assetUrl: deviceSceneAssetUrl,
         initial: live.current,
         profile: profileRequested(),
+        // The synchronous first frame stalls the main thread for ~0.5 s;
+        // after the seconds of asynchronous compile, wait for the user to
+        // be quiet again before taking it (§2.12).
+        awaitQuiet: () =>
+          new Promise<void>((resolve) => {
+            scheduleIdle(resolve, {
+              settleMs: 0,
+              quietMs: IDLE_MOUNT_QUIET_MS,
+              idleTimeoutMs: IDLE_MOUNT_IDLE_TIMEOUT_MS,
+              maxWaitMs: IDLE_MOUNT_MAX_WAIT_MS,
+            });
+          }),
         onFallback: () => {
           handle.current = null;
           onLive.current(false);
@@ -84,6 +102,7 @@ export function DeviceScene(props: DeviceSceneProps): JSX.Element {
       built.update(live.current);
       canvas.dataset.backend = built.stats.backend;
       canvas.dataset.loadMs = built.stats.loadMs.toFixed(0);
+      canvas.dataset.compileMs = built.stats.compileMs.toFixed(0);
       canvas.dataset.firstFrameMs = built.stats.firstFrameMs.toFixed(0);
       // Since the page's time origin — the boot-to-live figure.
       canvas.dataset.liveMs = performance.now().toFixed(0);

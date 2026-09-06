@@ -54,7 +54,7 @@ describe("DeviceScene (ADR 0057 §4)", () => {
     };
     vi.stubGlobal("navigator", { ...navigator, gpu });
     const handle = {
-      stats: { backend: "webgpu", loadMs: 12, firstFrameMs: 3 },
+      stats: { backend: "webgpu", loadMs: 12, compileMs: 5, firstFrameMs: 3 },
       update: vi.fn(),
       dispose: vi.fn(),
     };
@@ -125,7 +125,7 @@ describe("DeviceScene (ADR 0057 §4)", () => {
         : null) as typeof HTMLCanvasElement.prototype.getContext);
     let fallback: (() => void) | null = null;
     const handle = {
-      stats: { backend: "webgl2", loadMs: 1, firstFrameMs: 1 },
+      stats: { backend: "webgl2", loadMs: 1, compileMs: 1, firstFrameMs: 1 },
       update: vi.fn(),
       dispose: vi.fn(),
     };

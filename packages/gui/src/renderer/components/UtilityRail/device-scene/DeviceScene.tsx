@@ -104,6 +104,7 @@ export function DeviceScene(props: DeviceSceneProps): JSX.Element {
       canvas.dataset.loadMs = built.stats.loadMs.toFixed(0);
       canvas.dataset.compileMs = built.stats.compileMs.toFixed(0);
       canvas.dataset.firstFrameMs = built.stats.firstFrameMs.toFixed(0);
+      canvas.dataset.presentMs = built.stats.presentMs.toFixed(0);
       // Since the page's time origin — the boot-to-live figure.
       canvas.dataset.liveMs = performance.now().toFixed(0);
       onLive.current(true);

@@ -43,8 +43,8 @@ const STATE_KEY: Record<BanzhuanDeviceState, MessageKey> = {
 };
 
 /** What the card shows for its device (ADR 0057 §2.13): `pending` — a
- *  scene is expected and not yet drawn, nothing shows; `live` — the 3D
- *  scene; `flat` — the flat renders. */
+ *  scene is expected and not yet drawn, the flat art through frosted
+ *  glass; `live` — the 3D scene; `flat` — the flat renders. */
 type SceneState = "pending" | "live" | "flat";
 /** How long a pending card waits for the scene's first frame before it
  *  shows the flat art instead. The build is ~14 s on the slowest machine
@@ -85,11 +85,13 @@ export function DeviceCard(): JSX.Element {
   //
   // What the card shows meanwhile (§2.13, owner 2026-09-07: "the card
   // slides out in 2D and then changes to 3D"): while a scene is EXPECTED —
-  // the surface exists and the setting is on or not yet known — the
-  // device is held back (`data-scene="pending"` hides the flat stack and
-  // the canvas) and the 3D fades in on its first frame; the flat art
-  // appears only when the scene will not come (setting off, no GPU path,
-  // a failure) or has not come within SCENE_PATIENCE_MS.
+  // the surface exists and the setting is on or not yet known — the flat
+  // art shows through frosted glass (`data-scene="pending"`, an 8 px
+  // blur, the lamp still breathing) and on the scene's first frame the
+  // glass clears into the 3D (a 700 ms focus cross-fade, reference-ux.css);
+  // the flat art itself appears only when the scene will not come
+  // (setting off, no GPU path, a failure) or has not come within
+  // SCENE_PATIENCE_MS.
   const theme = useResolvedTheme();
   const scenePref = useDeviceScenePref();
   useEffect(() => {
@@ -246,7 +248,7 @@ export function DeviceCard(): JSX.Element {
           {/* The glow loop also parks while the 3D scene owns the card: its
               canvas is hidden then, and the ring's light comes from the
               scene's own bake. */}
-          <DeviceGlow state={state} paused={paused || sceneState !== "flat"} />
+          <DeviceGlow state={state} paused={paused || sceneState === "live"} />
         </div>
       </button>
     </section>

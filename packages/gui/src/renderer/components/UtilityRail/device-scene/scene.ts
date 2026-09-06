@@ -147,6 +147,8 @@ export interface DeviceSceneStats {
   readonly compileMs: number;
   /** The synchronous first frame, ms (shadow and post pipelines, uploads). */
   readonly firstFrameMs: number;
+  /** Submission → the frame on screen, ms (the GPU's own compile tail). */
+  readonly presentMs: number;
 }
 
 export interface DeviceSceneHandle {
@@ -600,6 +602,26 @@ function gpuPassBreakdown(renderer: THREE.WebGPURenderer): number[] {
     }
   }
   return passes.sort((a, b) => a[0] - b[0]).map((p) => p[1]);
+}
+
+/** Resolves once the GPU has finished the submitted work (WebGPU's queue
+ *  promise; capped at 5 s) and the compositor has presented a frame after
+ *  it. The WebGL2 backend has no queue promise and gets the frame alone. */
+async function firstFramePresented(
+  renderer: THREE.WebGPURenderer,
+): Promise<void> {
+  const device = (
+    renderer.backend as {
+      device?: { queue: { onSubmittedWorkDone(): Promise<void> } };
+    }
+  ).device;
+  if (device !== undefined) {
+    await Promise.race([
+      device.queue.onSubmittedWorkDone().catch(() => undefined),
+      new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+    ]);
+  }
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 }
 
 function disposeMaterial(mat: THREE.Material): void {
@@ -1260,11 +1282,21 @@ export async function createDeviceScene(
   const t1 = performance.now();
   graph.render();
   const firstFrameMs = performance.now() - t1;
+  // "Live" means the first frame is ON SCREEN, not merely submitted: the
+  // GPU still compiles the last synchronous pipeline (~1 s, §2.12) after
+  // this returns, and while it does the compositor presents nothing —
+  // CSS transitions started meanwhile freeze and then skip to their end
+  // (the focus cross-fade of §2.13 "suddenly changed"). So wait for the
+  // queue to drain and for one presented frame before reporting.
+  const tPresent = performance.now();
+  await firstFramePresented(renderer);
+  const presentMs = performance.now() - tPresent;
+  if (disposed) throw new Error("disposed while presenting");
   ready = true;
   wake(1400);
 
   return {
-    stats: { backend, loadMs, compileMs, firstFrameMs },
+    stats: { backend, loadMs, compileMs, firstFrameMs, presentMs },
     update(next) {
       const prev = inputs;
       inputs = next;

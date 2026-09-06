@@ -1782,18 +1782,44 @@ body:after{
   z-index: 1;
   pointer-events: none;
 }
-/* While a scene is EXPECTED the device is held back (§2.13): no flat art
-   that a 3D swap would then replace. The canvas fades in on its first
-   frame; the flat stack returns only for "flat" (no attribute). */
-.device-card[data-scene="live"] .agent-lift-group,
-.device-card[data-scene="live"] .agent-shadow,
+/* While a scene is EXPECTED (§2.13) the flat device shows THROUGH FROSTED
+   GLASS — an 8 px blur of the art that is already there, the lamp still
+   breathing behind it — so the card is never blank, and on the scene's
+   first frame the glass clears: the flat stack sharpens and fades out
+   over the 3D canvas fading in, the same silhouette, so it reads as the
+   device coming into focus (owner 2026-09-07: an empty white card that
+   "suddenly changed" to 3D). A prepared blurred 3D picture would have to
+   match the live scene's theme, hour, weather and lamp, and go stale with
+   every lighting tune; the live art matches by construction. Visibility
+   follows the fade so the hidden stack costs nothing afterwards. */
 .device-card[data-scene="pending"] .agent-lift-group,
 .device-card[data-scene="pending"] .agent-shadow {
+  filter: blur(8px);
+  opacity: 0.92;
+}
+.device-card[data-scene="live"] .agent-lift-group,
+.device-card[data-scene="live"] .agent-shadow {
+  filter: blur(0);
+  opacity: 0;
   visibility: hidden;
+}
+.device-card[data-scene] .agent-lift-group {
+  transition:
+    transform 300ms ease-out,
+    filter 700ms ease,
+    opacity 700ms ease,
+    visibility 0s linear 700ms;
+}
+.device-card[data-scene] .agent-shadow {
+  transition:
+    transform 300ms ease-out,
+    filter 700ms ease,
+    opacity 700ms ease,
+    visibility 0s linear 700ms;
 }
 .device-scene-canvas {
   opacity: 0;
-  transition: opacity 420ms ease;
+  transition: opacity 700ms ease;
 }
 .device-card[data-scene="live"] .device-scene-canvas {
   opacity: 1;

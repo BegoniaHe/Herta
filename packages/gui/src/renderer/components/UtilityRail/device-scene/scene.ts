@@ -33,10 +33,10 @@ import type { BanzhuanDeviceState } from "../../../hooks/useDeviceState.js";
 import type { ResolvedTheme } from "../../../hooks/useResolvedTheme.js";
 import { advanceLift, createLiftPose } from "./lift.js";
 import {
+  cardHourFor,
   hourDelta,
   lightingAt,
   STATE_TARGETS,
-  THEME_HOUR,
   timeWeights,
 } from "./lighting.js";
 
@@ -58,7 +58,8 @@ import {
  * time slider and day playback, the compare wipe, the quality and
  * asset-profile selectors, the source-texture fallbacks (a machine that
  * cannot transcode KTX2 keeps the flat card). Time of day follows the
- * THEME (lighting.ts).
+ * CLOCK in the light theme, folded so the card never leaves daylight, and
+ * is the study's midnight in the dark theme (lighting.ts `cardHourFor`).
  *
  * Loaded lazily by DeviceScene.tsx — three.js stays out of the boot bundle.
  */
@@ -77,6 +78,10 @@ const MAX_LONG_EDGE_PX = 768;
 const CALM_FPS = 30;
 const MOVING_FPS = 60;
 const PARK_UNFOCUSED_MS = 5000;
+/** How often a resting loop is nudged to follow the clock. A breathing
+ *  card re-reads the clock every frame anyway; this is for reduced motion,
+ *  where the loop stops between events. */
+const CLOCK_WAKE_MS = 60_000;
 
 /** The room's surfaces (linear RGB, roughness), a white room: the card's
  *  frost is about 0.9 linear, the walls sit just under it so the key's
@@ -754,8 +759,7 @@ export async function createDeviceScene(
   let stateEntered = performance.now();
   let stageWidth = 0;
   let stageHeight = 0;
-  let liveHour = THEME_HOUR[inputs.theme];
-  let targetHour = liveHour;
+  let liveHour = cardHourFor(inputs.theme, new Date());
   let liveIntensity = STATE_TARGETS[inputs.state].intensity;
   const liveColor = new THREE.Color(STATE_TARGETS[inputs.state].color);
   const targetColor = new THREE.Color(STATE_TARGETS[inputs.state].color);
@@ -828,7 +832,9 @@ export async function createDeviceScene(
     lastTime = now;
     const ease = 1 - Math.exp(-dt * 5.5);
 
-    const hourDiff = hourDelta(liveHour, targetHour);
+    // The clock, folded per theme; eased so a theme flip passes through
+    // dusk and a minute's drift is invisible.
+    const hourDiff = hourDelta(liveHour, cardHourFor(inputs.theme, new Date()));
     liveHour = (((liveHour + hourDiff * ease) % 24) + 24) % 24;
     const light = lightingAt(liveHour);
     background.set(light.background).multiplyScalar(light.external);
@@ -953,11 +959,15 @@ export async function createDeviceScene(
   window.addEventListener("focus", onFocus);
   window.addEventListener("blur", onBlur);
   document.addEventListener("visibilitychange", onVisibility);
+  const clockTimer = setInterval(() => {
+    if (inputs.theme === "light") wake(1100);
+  }, CLOCK_WAKE_MS);
 
   const dispose = (): void => {
     if (disposed) return;
     disposed = true;
     stopLoop();
+    clearInterval(clockTimer);
     observer.disconnect();
     window.removeEventListener("focus", onFocus);
     window.removeEventListener("blur", onBlur);
@@ -1013,10 +1023,7 @@ export async function createDeviceScene(
         targetColor.set(STATE_TARGETS[next.state].color);
         wake(1800);
       }
-      if (next.theme !== prev.theme) {
-        targetHour = THEME_HOUR[next.theme];
-        wake(1100);
-      }
+      if (next.theme !== prev.theme) wake(1100);
       if (next.liftPx !== prev.liftPx) {
         pose.targetLiftPx = next.liftPx;
         wake(400);

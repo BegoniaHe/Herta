@@ -10,8 +10,10 @@ import type { BanzhuanDeviceState } from "../../../hooks/useDeviceState.js";
  * and interpolation, no three.js, so the theme mapping and the day/night
  * blend unit-test in node.
  *
- * Time of day is the study's parameter; the app drives it from the THEME
- * (light → a soft morning, dark → midnight), never from the clock.
+ * Time of day is the study's parameter. In the light theme it follows the
+ * CLOCK, folded so the card never leaves daylight (`cardHourFor`); the dark
+ * theme is the study's midnight, static — its night has no daylight term
+ * left to move (owner, 2026-09-06).
  */
 
 /** Ring indicator targets per device state: colour, emissive strength, the
@@ -45,12 +47,67 @@ export const STATE_TARGETS: Record<BanzhuanDeviceState, StateTarget> = {
   failed: { color: "#f99586", intensity: 2.6, hz: 1 / 4, depth: 0.025 },
 };
 
-/** The hour each theme resolves to: the study's morning, and its midnight
- *  (ring and outline), which is also what the flat night render shows. */
-export const THEME_HOUR: Record<"light" | "dark", number> = {
-  light: 8.5,
-  dark: 0,
-};
+/** The dark theme's hour: the study's midnight (ring and outline), which is
+ *  also what the flat night render shows. The light theme's hour comes from
+ *  the clock (`cardHourFor`). */
+export const DARK_HOUR = 0;
+
+/** The card's daylight window. It starts at 07:00, not 06:00: the study's
+ *  dawn ramp runs 05:00–08:00, so 06:00 is a quarter lit and 07:00 three
+ *  quarters — the light theme must never look like night. Dusk is 18:00,
+ *  the last full-daylight hour before the study's evening ramp. */
+const CARD_DAWN = 7;
+const CARD_DUSK = 18;
+
+/**
+ * The card's hour for a theme and a real clock time.
+ *
+ * Light theme: daylight around the whole clock. Twenty-four real hours
+ * fold onto the eleven daylight ones at real dawn and dusk — during the
+ * real day (06:00–18:00) the card runs from its dawn to its dusk with the
+ * real sun, and through the real night it runs back from dusk to dawn, so
+ * real midnight is card noon-ish (12:30). Continuous at 06:00, 18:00 and
+ * midnight; the card's sun reverses at dusk and dawn, which nobody watches
+ * happen.
+ *
+ * Dark theme: midnight, always.
+ */
+export function cardHourFor(theme: "light" | "dark", date: Date): number {
+  if (theme === "dark") return DARK_HOUR;
+  const t = date.getHours() + date.getMinutes() / 60 + date.getSeconds() / 3600;
+  const span = (CARD_DUSK - CARD_DAWN) / 12;
+  if (t >= 6 && t <= 18) return CARD_DAWN + (t - 6) * span;
+  const sinceDusk = t > 18 ? t - 18 : t + 6;
+  return CARD_DUSK - sinceDusk * span;
+}
+
+/** The key's path across the day, in the study's design units around the
+ *  device (metres × 20). The AZIMUTH is pinned ~10° left of the camera's
+ *  front: further left, the left wall's shadow bands the device's front;
+ *  any less, or from the right, the device's own shadow hides behind the
+ *  device (measured against the alcove GLB, 2026-09-06). Only the
+ *  ELEVATION travels — 12° at dawn and dusk, 20° at the accepted 08:30
+ *  morning, 50° at noon — so the shadow on the wall runs long → short →
+ *  long and stays in view all day. */
+const KEY_DISTANCE = 6.48;
+const KEY_AZIMUTH = Math.atan2(1.1, 6);
+const KEY_TARGET = [0, 1.9, 0] as const;
+
+export function keyElevationAt(hour: number): number {
+  const h = Math.min(18, Math.max(6, wrapHour(hour)));
+  const arc = Math.sin((Math.PI * (h - 6)) / 12);
+  return ((12 + 38 * arc ** 3) * Math.PI) / 180;
+}
+
+export function keyPositionAt(hour: number): [number, number, number] {
+  const elevation = keyElevationAt(hour);
+  const flat = Math.cos(elevation);
+  return [
+    KEY_TARGET[0] - KEY_DISTANCE * flat * Math.sin(KEY_AZIMUTH),
+    KEY_TARGET[1] + KEY_DISTANCE * Math.sin(elevation),
+    KEY_TARGET[2] + KEY_DISTANCE * flat * Math.cos(KEY_AZIMUTH),
+  ];
+}
 
 export interface Lighting {
   readonly background: string;
@@ -65,7 +122,7 @@ export interface Lighting {
   readonly exposure: number;
   readonly rotation: number;
   readonly night: number;
-  /** Key light position in the study's design units (metres × 20). */
+  /** Key light position in the study's design units (`keyPositionAt`). */
   readonly position: readonly [number, number, number];
   /** Daylight presence, 0 after hours (22:00–05:00) → 1 in the day, with
    *  smooth dawn/dusk ramps. */
@@ -87,11 +144,14 @@ interface Anchor {
   readonly sky: number;
   readonly environment: number;
   readonly exposure: number;
-  readonly position: readonly [number, number, number];
   readonly rotation: number;
   readonly night: number;
 }
 
+/** The study's anchors: colour, intensities, exposure and environment
+ *  rotation by hour. The key's POSITION is not theirs any more — it comes
+ *  from `keyPositionAt` (see there for why the study's positions could not
+ *  stay). */
 const ANCHORS: readonly Anchor[] = [
   {
     h: 0,
@@ -103,7 +163,6 @@ const ANCHORS: readonly Anchor[] = [
     sky: 0.16,
     environment: 0.18,
     exposure: 0.87,
-    position: [-4, 5, 4],
     rotation: -0.2,
     night: 1,
   },
@@ -117,18 +176,9 @@ const ANCHORS: readonly Anchor[] = [
     sky: 0.25,
     environment: 0.3,
     exposure: 0.95,
-    position: [-5, 3, 2],
     rotation: -0.3,
     night: 0.65,
   },
-  // The daytime keys sit front-left and lowish ON PURPOSE (the study's were
-  // [-4, 5, 4] and [-2, 7, 3]): the back wall is 6 cm behind the device and
-  // the left wall runs 33 cm forward, so a key from the far left throws the
-  // left wall's shadow over the lower back wall and swallows the device's
-  // own. From [-1.1, 4.1, 6] the device's shadow lands on the lit wall
-  // beside it while the left wall's shadow stops at the device's chamfered
-  // edge instead of banding its front — measured against the alcove GLB,
-  // 2026-09-06.
   {
     h: 8,
     background: "#e2e9e7",
@@ -139,7 +189,6 @@ const ANCHORS: readonly Anchor[] = [
     sky: 0.64,
     environment: 0.72,
     exposure: 1.08,
-    position: [-1.1, 4.1, 6],
     rotation: -0.15,
     night: 0,
   },
@@ -153,7 +202,6 @@ const ANCHORS: readonly Anchor[] = [
     sky: 0.9,
     environment: 0.83,
     exposure: 1.03,
-    position: [-0.9, 5.2, 6],
     rotation: 0.18,
     night: 0,
   },
@@ -167,7 +215,6 @@ const ANCHORS: readonly Anchor[] = [
     sky: 0.42,
     environment: 0.53,
     exposure: 1.02,
-    position: [4, 3, 2.5],
     rotation: 0.7,
     night: 0.12,
   },
@@ -181,7 +228,6 @@ const ANCHORS: readonly Anchor[] = [
     sky: 0.22,
     environment: 0.25,
     exposure: 0.91,
-    position: [-3, 5, 4],
     rotation: 0.1,
     night: 0.88,
   },
@@ -195,7 +241,6 @@ const ANCHORS: readonly Anchor[] = [
     sky: 0.16,
     environment: 0.18,
     exposure: 0.87,
-    position: [-4, 5, 4],
     rotation: -0.2,
     night: 1,
   },
@@ -243,7 +288,7 @@ export function lightingAt(hour: number): Lighting {
   const b = ANCHORS[next] as Anchor;
   const t = smooth((h - a.h) / (b.h - a.h));
   const lerp = (
-    k: keyof Omit<Anchor, "h" | "background" | "keyColor" | "position">,
+    k: keyof Omit<Anchor, "h" | "background" | "keyColor">,
   ): number => a[k] + (b[k] - a[k]) * t;
   const external = externalLightAt(h);
   const adaptation = 12 / (1 + 11 * external);
@@ -260,11 +305,7 @@ export function lightingAt(hour: number): Lighting {
     exposure: lerp("exposure") * adaptation,
     rotation: lerp("rotation"),
     night: lerp("night"),
-    position: [
-      a.position[0] + (b.position[0] - a.position[0]) * t,
-      a.position[1] + (b.position[1] - a.position[1]) * t,
-      a.position[2] + (b.position[2] - a.position[2]) * t,
-    ],
+    position: keyPositionAt(h),
     external,
     afterHours: external === 0,
     contour: 0.003 * (1 - external) ** 2,

@@ -6,6 +6,7 @@ import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
 import { DeviceCard } from "./DeviceCard.js";
 import { resetDeviceSceneBackendForTest } from "./device-scene/capability.js";
 import { resetDeviceScenePrefForTest } from "./device-scene/device-scene-prefs.js";
+import { IDLE_MOUNT_SETTLE_MS } from "./device-scene/use-idle-mount.js";
 
 // The 3D pref and GPU probe are module-level caches (ADR 0057); every spec
 // starts from "unknown" so a seeded bridge in one cannot leak into the next.
@@ -34,15 +35,23 @@ describe("DeviceCard", () => {
     first.unmount();
     resetDeviceScenePrefForTest();
 
+    vi.useFakeTimers();
     const on = createMockHertaBridge({ deviceSceneResult: true });
     const { container } = renderWithLocale(
       <HertaBridgeProvider bridge={on.bridge}>
         <DeviceCard />
       </HertaBridgeProvider>,
     );
-    await waitFor(() =>
-      expect(container.querySelector(".device-scene-canvas")).not.toBeNull(),
-    );
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    // The setting is on, but the scene waits for the boot to settle (§2.9):
+    // nothing mounts before the idle gate's delay.
+    expect(container.querySelector(".device-scene-canvas")).toBeNull();
+    await act(async () => {
+      vi.advanceTimersByTime(IDLE_MOUNT_SETTLE_MS);
+    });
+    expect(container.querySelector(".device-scene-canvas")).not.toBeNull();
     await act(async () => {
       for (let i = 0; i < 6; i += 1) await Promise.resolve();
     });
@@ -51,6 +60,7 @@ describe("DeviceCard", () => {
     expect(card?.getAttribute("data-scene")).toBeNull();
     expect(container.querySelector("img.agent-device-img")).not.toBeNull();
     expect(container.querySelector(".device-glow-canvas")).not.toBeNull();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 

@@ -24,6 +24,7 @@ import {
   loadDeviceScenePref,
   useDeviceScenePref,
 } from "./device-scene/device-scene-prefs.js";
+import { useIdleMount } from "./device-scene/use-idle-mount.js";
 import { useDragToLift } from "./useDragToLift.js";
 
 const STATE_KEY: Record<BanzhuanDeviceState, MessageKey> = {
@@ -78,6 +79,10 @@ export function DeviceCard(): JSX.Element {
     void loadDeviceScenePref(bridge);
   }, [bridge]);
   const wantScene = scenePref === true;
+  // The scene is heavy to start (three.js chunk, assets, transcoder
+  // workers, a synchronous first frame): it mounts after the boot has
+  // settled and in an idle slot, never in the boot's way (§2.9).
+  const mountScene = useIdleMount(wantScene);
   const [sceneLive, setSceneLive] = useState(false);
   useEffect(() => {
     if (!wantScene) setSceneLive(false);
@@ -147,7 +152,7 @@ export function DeviceCard(): JSX.Element {
       data-scene={sceneLive ? "live" : undefined}
       aria-label={t("device.ariaLabel", { state: t(STATE_KEY[state]) })}
     >
-      {wantScene && (
+      {mountScene && (
         <DeviceScene
           state={state}
           theme={theme}

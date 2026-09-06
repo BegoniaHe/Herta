@@ -6,6 +6,15 @@ import type { ResolvedTheme } from "../../../hooks/useResolvedTheme.js";
 import { detectDeviceSceneBackend } from "./capability.js";
 import type { DeviceSceneHandle, DeviceSceneInputs } from "./scene.js";
 
+/** A developer's opt-in for GPU timestamps in the canvas dataset. */
+function profileRequested(): boolean {
+  try {
+    return localStorage.getItem("herta.deviceScene.profile") === "1";
+  } catch {
+    return false;
+  }
+}
+
 export interface DeviceSceneProps {
   readonly state: BanzhuanDeviceState;
   readonly theme: ResolvedTheme;
@@ -61,6 +70,7 @@ export function DeviceScene(props: DeviceSceneProps): JSX.Element {
         forceWebGL: backend === "webgl2",
         assetUrl: deviceSceneAssetUrl,
         initial: live.current,
+        profile: profileRequested(),
         onFallback: () => {
           handle.current = null;
           onLive.current(false);
@@ -75,6 +85,8 @@ export function DeviceScene(props: DeviceSceneProps): JSX.Element {
       canvas.dataset.backend = built.stats.backend;
       canvas.dataset.loadMs = built.stats.loadMs.toFixed(0);
       canvas.dataset.firstFrameMs = built.stats.firstFrameMs.toFixed(0);
+      // Since the page's time origin — the boot-to-live figure.
+      canvas.dataset.liveMs = performance.now().toFixed(0);
       onLive.current(true);
     })().catch(() => {
       if (!cancelled) onLive.current(false);

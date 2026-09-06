@@ -1,5 +1,4 @@
 import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
-import { RectAreaLightTexturesLib } from "three/addons/lights/RectAreaLightTexturesLib.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { KTX2Loader } from "three/addons/loaders/KTX2Loader.js";
 import { bloom } from "three/addons/tsl/display/BloomNode.js";
@@ -51,8 +50,10 @@ import {
  * illumination and daylight bounce, the alcove (its pale-room light
  * exchange bakes), the live key / fill / rim / sky / softbox lights with
  * VSM shadows on the device and the room, the night outline spotlight and
- * exposure adaptation, the satin-mineral surface refinement, 4× MSAA +
- * emissive bloom + SMAA, on-demand rendering with an idle governor.
+ * exposure adaptation, the satin-mineral surface refinement, MSAA (2×, the
+ * study's 4× halved for an iGPU, §2.9) + emissive bloom + SMAA, on-demand
+ * rendering with an idle governor. The study's LTC softbox is a
+ * directional light here (§2.9).
  *
  * Dropped: the mineral-room material noise and shaped light, weather, the
  * time slider and day playback, the compare wipe, the quality and
@@ -73,10 +74,18 @@ const DEVICE_HEIGHT_PX = (270 * 934) / 1403;
 /** The study's card-mode buffer policy: ≥1.5× at DPR 1, honour up to 2×,
  *  cap the long edge at 768 px. */
 const MAX_LONG_EDGE_PX = 768;
-/** Idle governor (mirrors DeviceGlow / AuraVisual): the breath renders at
- *  30 fps, motion at 60, and the loop parks after 5 s unfocused. */
-const CALM_FPS = 30;
+/** Idle governor (after DeviceGlow / AuraVisual, which breathe at 30): the
+ *  breath renders at 20 fps — every third vsync; its fastest cycle is
+ *  1.35 s, so a frame moves the lamp under 1/255 of its range — motion at
+ *  60, and the loop parks after 5 s unfocused. Every calm frame is a full
+ *  scene render on the GPU, so the calm rate is the power lever (ADR 0057
+ *  §2.9: 30 → 20 took a third off the idle GPU share). */
+const CALM_FPS = 20;
 const MOVING_FPS = 60;
+/** Both shadow maps: the key's 10-unit frustum at 512² is a 0.02-unit
+ *  texel, about one canvas pixel, under the VSM blur; 1024² cost four times
+ *  the depth and blur passes for no visible gain (ADR 0057 §2.9). */
+const SHADOW_MAP_SIZE = 512;
 const PARK_UNFOCUSED_MS = 5000;
 /** How often a resting loop is nudged to follow the clock. A breathing
  *  card re-reads the clock every frame anyway; this is for reduced motion,
@@ -107,6 +116,10 @@ export interface DeviceSceneOptions {
   readonly forceWebGL: boolean;
   readonly assetUrl: (file: string) => string;
   readonly initial: DeviceSceneInputs;
+  /** Enable GPU timestamp queries and report `gpuMs` in the canvas dataset
+   *  beside the always-on fps / submitMs / draws. Costs a little per frame;
+   *  off unless a developer asks (localStorage `herta.deviceScene.profile`). */
+  readonly profile?: boolean;
   /** The scene can no longer draw (device lost, context lost). The caller
    *  returns the card to its flat renders; the handle is already disposed. */
   readonly onFallback: (reason: string) => void;
@@ -470,6 +483,33 @@ const CONTACT_STRENGTH = 0.45;
  *  (measured: a 1 m reach at full strength darkened the floor down to
  *  ~30 px below the base line, 2026-09-06). */
 const CONTACT_REACH = new THREE.Vector3(0.11, 0.05, 0.4);
+/** How far (design units) the key or the device moves before the shadow
+ *  maps are re-rendered: about one texel of the key's 10-unit frustum at
+ *  512², under a canvas pixel — the VSM edge is 6 texels soft. */
+const SHADOW_MOVE_UNITS = 0.02;
+
+/** The last resolved frame's render passes in submission order, ms each
+ *  (profiling only). three keys each pass's query by `r:<call>:<ctx>:f<n>`. */
+function gpuPassBreakdown(renderer: THREE.WebGPURenderer): number[] {
+  const pool = (
+    renderer.backend as {
+      timestampQueryPool?: {
+        render?: { timestamps: Map<string, number>; frames: number[] };
+      };
+    }
+  ).timestampQueryPool?.render;
+  if (pool === undefined) return [];
+  const last = pool.frames[pool.frames.length - 1];
+  if (last === undefined) return [];
+  const passes: Array<[number, number]> = [];
+  for (const [uid, ms] of pool.timestamps) {
+    const m = /^r:(\d+):\d+:f(\d+)$/.exec(uid);
+    if (m !== null && Number(m[2]) === last) {
+      passes.push([Number(m[1]), Math.round(ms * 100) / 100]);
+    }
+  }
+  return passes.sort((a, b) => a[0] - b[0]).map((p) => p[1]);
+}
 
 function disposeMaterial(mat: THREE.Material): void {
   for (const value of Object.values(mat)) {
@@ -486,6 +526,7 @@ export async function createDeviceScene(
   const { canvas, assetUrl } = opts;
   const t0 = performance.now();
 
+  const profile = opts.profile === true;
   const renderer = new THREE.WebGPURenderer({
     canvas,
     antialias: true,
@@ -493,6 +534,7 @@ export async function createDeviceScene(
     // A decoration must never wake a laptop's discrete GPU.
     powerPreference: "low-power",
     forceWebGL: opts.forceWebGL,
+    trackTimestamp: profile,
   });
   await renderer.init();
   const backend: DeviceSceneStats["backend"] =
@@ -561,7 +603,7 @@ export async function createDeviceScene(
 
   const key = new THREE.DirectionalLight("#ffe4bd", 2.8);
   key.castShadow = true;
-  key.shadow.mapSize.set(1024, 1024);
+  key.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
   // The shadow camera is placed in WORLD space from the light's position,
   // so these extents are metres (UNIT × design units) around the target —
   // wide enough for the device's shadow on the back wall and the floor
@@ -590,18 +632,21 @@ export async function createDeviceScene(
   scene.add(rim);
   const sky = new THREE.HemisphereLight("#d9edf7", "#7f8b91", 0.9);
   scene.add(sky);
-  THREE.RectAreaLightNode.setLTC(RectAreaLightTexturesLib.init());
-  const softbox = new THREE.RectAreaLight("#ffffff", 1.3, 5 * UNIT, 5 * UNIT);
+  // The study's softbox was a 5×5 RectAreaLight (LTC). As a directional
+  // light from the same place it reads the same on these satin surfaces,
+  // and the scene pass lost a third of its cost on an iGPU (ADR 0057 §2.9).
+  // Its strength rides lighting.ts's SOFTBOX_PER_KEY.
+  const softbox = new THREE.DirectionalLight("#ffffff", 0);
   softbox.position.set(-3.5, 5.5, 6);
-  softbox.lookAt(0, 1.9, 0);
-  scene.add(softbox);
+  softbox.target.position.set(0, 1.9, 0);
+  scene.add(softbox, softbox.target);
   // The weak night outline: grazes the upper-right edge through the open
   // side, casting live shadows; fades out with daylight.
   const contour = new THREE.SpotLight("#b6cced", 0, 0.9, 0.65, 1, 2);
   contour.position.set(4.8, 5.4, 2.4);
   contour.target.position.set(0, 1.9, 0);
   contour.castShadow = true;
-  contour.shadow.mapSize.set(1024, 1024);
+  contour.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
   contour.shadow.camera.near = 0.01;
   contour.shadow.camera.far = 0.9;
   contour.shadow.bias = -0.001;
@@ -612,10 +657,13 @@ export async function createDeviceScene(
   contour.shadow.needsUpdate = true;
   scene.add(contour, contour.target);
 
-  // Post: 4× MSAA scene pass with an emissive MRT lane → bloom on the lamp
+  // Post: 2× MSAA scene pass with an emissive MRT lane → bloom on the lamp
   // only → SMAA over the composed picture (an opaque canvas: the room is
-  // the card's content, so SMAA's alpha handling is moot here).
-  const scenePass = pass(scene, camera, { samples: 4 });
+  // the card's content, so SMAA's alpha handling is moot here). The study
+  // ran 4×; on an Intel iGPU that pass cost 9 ms a frame against 5.7 at 2×
+  // with no difference SMAA did not cover (ADR 0057 §2.9). The emissive
+  // lane is free: measured within noise of a single attachment.
+  const scenePass = pass(scene, camera, { samples: 2 });
   scenePass.setMRT(mrt({ output, emissive }));
   const graph = new THREE.RenderPipeline(renderer);
   const sceneColor = scenePass.getTextureNode("output");
@@ -766,6 +814,46 @@ export async function createDeviceScene(
   const pose = createLiftPose();
   let shadowStamp: number[] = [];
   const shadowDirty = { key: true, contour: true };
+  // Once-a-second diagnostics on the canvas dataset (a DOM write per
+  // second, never per frame): fps, mean CPU submit ms, draw calls, and with
+  // `profile` the GPU time of the last resolved frame.
+  let statFrames = 0;
+  let statSubmit = 0;
+  let statSince = performance.now();
+  let gpuPending = false;
+  let gpuUnresolved = 0;
+  const report = (now: number, renderMs: number): void => {
+    statFrames += 1;
+    statSubmit += renderMs;
+    gpuUnresolved += 1;
+    const elapsed = now - statSince;
+    const tick = elapsed >= 1000;
+    if (tick) {
+      canvas.dataset.fps = ((statFrames * 1000) / elapsed).toFixed(1);
+      canvas.dataset.submitMs = (statSubmit / statFrames).toFixed(2);
+      canvas.dataset.draws = String(renderer.info.render.drawCalls);
+      canvas.dataset.tris = String(renderer.info.render.triangles);
+      statFrames = 0;
+      statSubmit = 0;
+      statSince = now;
+    }
+    // The query pool holds ~50 frames of passes: resolve well before that.
+    if (profile && !gpuPending && (tick || gpuUnresolved >= 16)) {
+      gpuPending = true;
+      gpuUnresolved = 0;
+      renderer
+        .resolveTimestampsAsync(THREE.TimestampQuery.RENDER)
+        .then((ms) => {
+          if (!tick) return;
+          if (ms !== undefined && ms > 0) canvas.dataset.gpuMs = ms.toFixed(2);
+          canvas.dataset.gpuPasses = JSON.stringify(gpuPassBreakdown(renderer));
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          gpuPending = false;
+        });
+    }
+  };
 
   const stopLoop = (): void => {
     if (raf !== null) cancelAnimationFrame(raf);
@@ -894,7 +982,9 @@ export async function createDeviceScene(
       CONTACT_STRENGTH * Math.max(0, 1 - pose.liftPx / 12) * light.external;
 
     // Pulsing the indicator does not move the silhouette: shadow maps are
-    // reused until the key or the device moves.
+    // reused until the key or the device has moved by about a shadow texel.
+    // (The clock drifts the key every frame; a finer threshold re-rendered
+    // the shadow — three passes at 1024² — on most frames of the day.)
     const nextStamp = [
       key.position.x,
       key.position.y,
@@ -903,7 +993,8 @@ export async function createDeviceScene(
     ];
     const changed = nextStamp.map(
       (v, i) =>
-        Math.abs(v - (shadowStamp[i] ?? Number.POSITIVE_INFINITY)) > 1e-5,
+        Math.abs(v - (shadowStamp[i] ?? Number.POSITIVE_INFINITY)) >
+        SHADOW_MOVE_UNITS,
     );
     if (changed.some(Boolean)) {
       shadowDirty.key = true;
@@ -933,6 +1024,7 @@ export async function createDeviceScene(
     const renderStart = performance.now();
     graph.render();
     const renderMs = performance.now() - renderStart;
+    report(now, renderMs);
 
     const moving = held || liftMoving || now < activeUntil;
     if (motion || moving || Math.abs(hourDiff) > 0.005) {
@@ -1006,6 +1098,10 @@ export async function createDeviceScene(
 
   // First frame before the card swaps its flat renders for the canvas, so
   // pipeline compilation never shows as a black card.
+  // (PassNode.compileAsync was tried here and rejected: it took 2 s of
+  // yielding node builds and the sync first frame still cost 0.4 s — the
+  // post and shadow materials are the bulk, and the pass's own render
+  // context is a different one anyway. ADR 0057 §2.9.)
   resize();
   const t1 = performance.now();
   graph.render();

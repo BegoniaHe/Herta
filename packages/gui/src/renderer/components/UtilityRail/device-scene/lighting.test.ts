@@ -132,7 +132,8 @@ describe("device-scene lighting tables (ADR 0057 §2.1b, the pale room)", () => 
     expect(day.contour).toBe(0);
     expect(day.key).toBeGreaterThan(2);
     expect(day.fill).toBeGreaterThan(0.7);
-    expect(day.softbox).toBeCloseTo(day.key * 0.32, 9);
+    // The directional stand-in for the study's LTC panel: 0.45 × 0.32 × key.
+    expect(day.softbox).toBeCloseTo(day.key * 0.144, 9);
     expect(day.position).toEqual(keyPositionAt(8.5));
     const night = lightingAt(DARK_HOUR);
     expect(night.afterHours).toBe(true);

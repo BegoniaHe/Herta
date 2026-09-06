@@ -6,7 +6,7 @@ import type { BanzhuanDeviceState } from "../../../hooks/useDeviceState.js";
  * banzhuan-3d-demo: study-model.js anchors, webgpu-lighting.js daylight and
  * adaptation, baked-material.js#timeWeights) in its "Previous · pale room"
  * configuration — the anchor key positions as authored, fill / rim / sky /
- * environment at full strength, the softbox at 0.32 × key. Pure numbers
+ * environment at full strength, the softbox a fraction of the key. Pure numbers
  * and interpolation, no three.js, so the theme mapping and the day/night
  * blend unit-test in node.
  *
@@ -117,7 +117,7 @@ export interface Lighting {
   readonly rim: number;
   readonly sky: number;
   readonly environment: number;
-  /** The auxiliary softbox: 0.32 × key in the pale room. */
+  /** The auxiliary softbox: SOFTBOX_PER_KEY × key in the pale room. */
   readonly softbox: number;
   readonly exposure: number;
   readonly rotation: number;
@@ -246,7 +246,10 @@ const ANCHORS: readonly Anchor[] = [
   },
 ];
 
-const SOFTBOX_PER_KEY = 0.32;
+/** The study's 5×5 LTC panel ran at 0.32 × key; the card's softbox is a
+ *  directional light from the same place, matched by eye at 0.45 of that
+ *  (ADR 0057 §2.9). */
+const SOFTBOX_PER_KEY = 0.144;
 
 const smooth = (t: number): number => t * t * (3 - 2 * t);
 const wrapHour = (hour: number): number => ((hour % 24) + 24) % 24;

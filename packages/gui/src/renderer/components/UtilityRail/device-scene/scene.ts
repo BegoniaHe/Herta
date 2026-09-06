@@ -183,6 +183,9 @@ function makeUniforms() {
     bounceStrength: uniform(0),
     roomStrength: uniform(0),
     lift: uniform(0),
+    /** Contact-shadow strength (0 = none) and its centre, world metres. */
+    contact: uniform(0),
+    contactBase: uniform(new THREE.Vector3(0, 0, 0)),
   };
 }
 type BakeUniforms = ReturnType<typeof makeUniforms>;
@@ -411,6 +414,17 @@ function makeSpaceMaterial(
   mat.color.setRGB(cr, cg, cb);
   mat.roughness = surface.roughness;
   mat.metalness = 0;
+  // The contact shadow, in the room's own albedo: an ellipsoid of
+  // occlusion around the device's base darkens the floor under it and the
+  // wall behind it, and fades as the device lifts. In the material rather
+  // than as an overlay — the transparent overlays tried first came
+  // through this MSAA + MRT pass either near-invisible (canvas alpha) or
+  // as a light rectangle (multiply blending), bisected live 2026-09-06.
+  const q = positionWorld
+    .sub(u.contactBase)
+    .div(vec3(CONTACT_REACH.x, CONTACT_REACH.y, CONTACT_REACH.z));
+  const occlusion = u.contact.mul(smoothstep(0, 1, dot(q, q)).oneMinus());
+  mat.colorNode = vec3(cr, cg, cb).mul(occlusion.oneMinus());
   const st = uv(1).flipY();
   // The ring's light on the room, and the room's own daylight bounce —
   // both colour-excluded bakes, so the white surfaces above receive them
@@ -438,6 +452,19 @@ function renderPixelRatio(width: number, height: number, dpr: number): number {
     Math.min(2, desired, MAX_LONG_EDGE_PX / Math.max(width, height, 1)),
   );
 }
+
+/** The contact shadow's strength at rest: how dark the floor and the wall
+ *  get right at the device's base (the flat card's shadow layer peaks at
+ *  0.72 × 0.85). Fades as the device lifts. */
+const CONTACT_STRENGTH = 0.45;
+/** Its reach from the base, metres: a little past the footprint sideways,
+ *  a few centimetres up the wall behind, and a long way FORWARD along the
+ *  floor — this camera looks along the floor at 2°, so a centimetre of
+ *  floor in front of the device is a third of a pixel; 40 cm of reach
+ *  reads as a soft band about a dozen pixels tall under the base
+ *  (measured: a 1 m reach at full strength darkened the floor down to
+ *  ~30 px below the base line, 2026-09-06). */
+const CONTACT_REACH = new THREE.Vector3(0.11, 0.05, 0.4);
 
 function disposeMaterial(mat: THREE.Material): void {
   for (const value of Object.values(mat)) {
@@ -855,6 +882,10 @@ export async function createDeviceScene(
       (pose.liftPx * (camera.top - camera.bottom)) /
       (Math.max(1, stageHeight) * UNIT);
     assembly.position.y = lift;
+    // The contact shadow stays on the floor and fades as the device rises
+    // (gone by the 12 px ceiling), and goes with the daylight at night.
+    u.contact.value =
+      CONTACT_STRENGTH * Math.max(0, 1 - pose.liftPx / 12) * light.external;
 
     // Pulsing the indicator does not move the silhouette: shadow maps are
     // reused until the key or the device moves.

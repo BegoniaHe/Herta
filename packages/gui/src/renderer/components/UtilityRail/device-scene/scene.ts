@@ -3,6 +3,7 @@ import { RectAreaLightTexturesLib } from "three/addons/lights/RectAreaLightTextu
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { KTX2Loader } from "three/addons/loaders/KTX2Loader.js";
 import { bloom } from "three/addons/tsl/display/BloomNode.js";
+import { smaa } from "three/addons/tsl/display/SMAANode.js";
 import {
   cross,
   dFdx,
@@ -26,33 +27,38 @@ import {
   uniform,
   uv,
   vec3,
-  vec4,
 } from "three/tsl";
 import * as THREE from "three/webgpu";
 import type { BanzhuanDeviceState } from "../../../hooks/useDeviceState.js";
 import type { ResolvedTheme } from "../../../hooks/useResolvedTheme.js";
 import { advanceLift, createLiftPose } from "./lift.js";
-import { lightingFor, STATE_TARGETS, THEME_DAYLIGHT } from "./lighting.js";
+import {
+  hourDelta,
+  lightingAt,
+  STATE_TARGETS,
+  THEME_HOUR,
+  timeWeights,
+} from "./lighting.js";
 
 /**
- * The 3D device card's scene (ADR 0057 §2, amended 2026-09-06: no room):
+ * The 3D device card's scene (ADR 0057 §2, amended §2.1b: the pale room):
  * the owner's Cycles-baked HRT-001 study (reference_UX_design/
  * banzhuan-3d-demo, main-webgpu.js + baked-material.js + device-surface.js)
- * reduced to what the app card needs — the device alone, on the card.
+ * reduced to what the app card needs, in the study's "Previous · pale
+ * room" configuration with the room's surfaces taken to the card's white.
  *
  * Kept from the study: the compact mesh and its atlases, the baked ring
- * illumination, the "PNG match" white-studio lights (key / fill / rim /
- * sky / softbox with VSM shadows) and its lights-off night with the weak
- * outline spotlight and exposure adaptation, the soft contact shadow the
- * flat render has under the device, the satin-mineral surface refinement,
- * 4× MSAA + emissive bloom, on-demand rendering with an idle governor.
+ * illumination and daylight bounce, the alcove (its pale-room light
+ * exchange bakes), the live key / fill / rim / sky / softbox lights with
+ * VSM shadows on the device and the room, the night outline spotlight and
+ * exposure adaptation, the satin-mineral surface refinement, 4× MSAA +
+ * emissive bloom + SMAA, on-demand rendering with an idle governor.
  *
- * Dropped: the alcove and its light-exchange bakes (the card's own frost is
- * the background — the canvas is transparent), the floor plane (this camera
- * sees it edge-on), SMAA (its blend discards alpha), weather, the time
- * slider, the compare wipe, the quality and asset-profile selectors, the
- * source-texture fallbacks (a machine that cannot transcode KTX2 keeps the
- * flat card). Light follows the THEME (lighting.ts).
+ * Dropped: the mineral-room material noise and shaped light, weather, the
+ * time slider and day playback, the compare wipe, the quality and
+ * asset-profile selectors, the source-texture fallbacks (a machine that
+ * cannot transcode KTX2 keeps the flat card). Time of day follows the
+ * THEME (lighting.ts).
  *
  * Loaded lazily by DeviceScene.tsx — three.js stays out of the boot bundle.
  */
@@ -71,6 +77,16 @@ const MAX_LONG_EDGE_PX = 768;
 const CALM_FPS = 30;
 const MOVING_FPS = 60;
 const PARK_UNFOCUSED_MS = 5000;
+
+/** The room's surfaces (linear RGB, roughness), a white room: the card's
+ *  frost is about 0.9 linear, the walls sit just under it so the key's
+ *  shadow and the ring's spill still read on them; the left wall a step
+ *  darker for separation, as in the study's pale box. */
+const ROOM_SURFACES = {
+  ground: { color: [0.84, 0.855, 0.86] as const, roughness: 0.88 },
+  back: { color: [0.88, 0.895, 0.9] as const, roughness: 0.9 },
+  left: { color: [0.8, 0.82, 0.83] as const, roughness: 0.92 },
+};
 
 export interface DeviceSceneInputs {
   readonly state: BanzhuanDeviceState;
@@ -163,10 +179,28 @@ function makeUniforms() {
   return {
     ringColor: uniform(new THREE.Color()),
     ringStrength: uniform(0),
+    weights: uniform(new THREE.Vector4(0, 1, 0, 0)),
+    bounceStrength: uniform(0),
+    roomStrength: uniform(0),
     lift: uniform(0),
   };
 }
 type BakeUniforms = ReturnType<typeof makeUniforms>;
+
+/** Σ preset_i · weight_i over the three baked daylight presets. */
+function daylightBounce(
+  nodes: readonly Vec3Node[],
+  weights: BakeUniforms["weights"],
+): Vec3Node {
+  let sum: Vec3Node = vec3(0);
+  const lanes = ["x", "y", "z"] as const;
+  nodes.forEach((node, i) => {
+    const lane = lanes[i];
+    if (lane === undefined) return;
+    sum = sum.add(node.mul(weights[lane]));
+  });
+  return sum;
+}
 
 type DeviceTextures = Record<
   | "basecolor"
@@ -174,13 +208,31 @@ type DeviceTextures = Record<
   | "roughness"
   | "cavity"
   | "ring-diffuse"
-  | "ring-channel",
+  | "ring-channel"
+  | "lamp-device"
+  | "lamp-space"
+  | "device-morning"
+  | "device-midday"
+  | "device-evening"
+  | "space-morning"
+  | "space-midday"
+  | "space-evening",
   THREE.Texture
 >;
 
 const DEVICE_LDR = ["basecolor", "normal"] as const;
 const DEVICE_SCALAR = ["roughness", "cavity"] as const;
 const DEVICE_HDR = ["ring-diffuse", "ring-channel"] as const;
+const SPACE_HDR = [
+  "lamp-device",
+  "lamp-space",
+  "device-morning",
+  "device-midday",
+  "device-evening",
+  "space-morning",
+  "space-midday",
+  "space-evening",
+] as const;
 
 function configureAtlas(tex: THREE.Texture, colorSpace: string): void {
   // EXR-derived atlases were baked bottom-up; the PNG-derived ones and the
@@ -287,6 +339,7 @@ function makeDeviceMaterial(
   lampChannel: boolean,
   tex: DeviceTextures,
   u: BakeUniforms,
+  dayNodes: readonly Vec3Node[],
 ): BakedStandardMaterial {
   const mat = new BakedStandardMaterial();
   copyMaterialBasics(source, mat);
@@ -302,22 +355,23 @@ function makeDeviceMaterial(
     mat.normalScale.set(1, 1);
     mat.metalness = 0.025;
   }
-  // Cavity is deliberately weak; the ring bake already carries the local
-  // self-occlusion around the channel.
+  // Cavity is deliberately weak; the baked GI already carries self-occlusion.
   mat.aoMap = tex.cavity;
   mat.aoMapIntensity = 0.28;
-  // The ring's baked illumination on the device itself: the annulus keeps
-  // its seamless channel bake, every other surface the diffuse one. This is
-  // the study's studio mode — no room, no daylight bounce, the live lights
-  // and the environment supply the rest.
+  const st = uv(1).flipY();
+  // Daylight bounce: the three baked presets mixed by the hour weights.
+  const bounce = daylightBounce(dayNodes, u.weights);
   const localRing = texture(
     tex[lampChannel ? "ring-channel" : "ring-diffuse"],
-    lampChannel ? uv(2).flipY() : uv(1).flipY(),
+    lampChannel ? uv(2).flipY() : st,
   ).rgb;
-  mat.bakedIrradiance = localRing
-    .mul(u.ringColor)
-    .mul(u.ringStrength)
-    .mul(Math.PI);
+  // The annulus keeps its seamless channel bake; larger surfaces interpolate
+  // toward the room-inclusive lamp transport rather than adding it twice.
+  const lamp = lampChannel
+    ? localRing
+    : mix(localRing, texture(tex["lamp-device"], st).rgb, u.roomStrength);
+  const ring = lamp.mul(u.ringColor).mul(u.ringStrength);
+  mat.bakedIrradiance = bounce.mul(u.bounceStrength).add(ring).mul(Math.PI);
   // Derivative-based roughness filtering softens unresolved normal highlights.
   const dx = dFdx(normalView);
   const dy = dFdy(normalView);
@@ -337,6 +391,44 @@ function makeDeviceMaterial(
   return mat;
 }
 
+function makeSpaceMaterial(
+  source: THREE.MeshStandardMaterial,
+  objectName: string,
+  tex: DeviceTextures,
+  u: BakeUniforms,
+): BakedStandardMaterial {
+  const mat = new BakedStandardMaterial();
+  mat.name = source.name;
+  const surface =
+    ROOM_SURFACES[
+      objectName.includes("ground")
+        ? "ground"
+        : objectName.includes("back")
+          ? "back"
+          : "left"
+    ];
+  const [cr, cg, cb] = surface.color;
+  mat.color.setRGB(cr, cg, cb);
+  mat.roughness = surface.roughness;
+  mat.metalness = 0;
+  const st = uv(1).flipY();
+  // The ring's light on the room, and the room's own daylight bounce —
+  // both colour-excluded bakes, so the white surfaces above receive them
+  // like any albedo would.
+  const ring = texture(tex["lamp-space"], st)
+    .rgb.mul(u.ringColor)
+    .mul(u.ringStrength)
+    .mul(u.roomStrength);
+  const bounce = daylightBounce(
+    (["space-morning", "space-midday", "space-evening"] as const).map(
+      (name) => texture(tex[name], st).rgb as unknown as Vec3Node,
+    ),
+    u.weights,
+  );
+  mat.bakedIrradiance = bounce.mul(u.bounceStrength).add(ring).mul(Math.PI);
+  return mat;
+}
+
 // ── Scene ───────────────────────────────────────────────────────────────────
 
 function renderPixelRatio(width: number, height: number, dpr: number): number {
@@ -345,24 +437,6 @@ function renderPixelRatio(width: number, height: number, dpr: number): number {
     1,
     Math.min(2, desired, MAX_LONG_EDGE_PX / Math.max(width, height, 1)),
   );
-}
-
-/** The soft elliptical contact shadow the flat render carries under the
- *  device, as a radial-gradient texture on a ground plane. */
-function makeContactTexture(): THREE.CanvasTexture {
-  const c = document.createElement("canvas");
-  c.width = 256;
-  c.height = 256;
-  const ctx = c.getContext("2d");
-  if (ctx === null) throw new Error("2d context unavailable");
-  const gradient = ctx.createRadialGradient(128, 128, 8, 128, 128, 128);
-  gradient.addColorStop(0, "rgba(0,0,0,.72)");
-  gradient.addColorStop(0.4, "rgba(0,0,0,.42)");
-  gradient.addColorStop(0.75, "rgba(0,0,0,.11)");
-  gradient.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, 256, 256);
-  return new THREE.CanvasTexture(c);
 }
 
 function disposeMaterial(mat: THREE.Material): void {
@@ -383,9 +457,7 @@ export async function createDeviceScene(
   const renderer = new THREE.WebGPURenderer({
     canvas,
     antialias: true,
-    // Transparent: the card's own frost is the background, as under the
-    // flat renders.
-    alpha: true,
+    alpha: false,
     // A decoration must never wake a laptop's discrete GPU.
     powerPreference: "low-power",
     forceWebGL: opts.forceWebGL,
@@ -398,13 +470,13 @@ export async function createDeviceScene(
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
-  renderer.setClearColor(0x000000, 0);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.VSMShadowMap;
 
   const scene = new THREE.Scene();
   scene.scale.setScalar(UNIT);
-  scene.background = null;
+  const background = new THREE.Color("#ffffff");
+  scene.background = background;
   // Real-card framing has a 35 cm vertical span; the camera sits back along
   // its ray so the near plane clears the floor. Orthographic distance changes
   // neither the device scale nor its perspective.
@@ -453,26 +525,9 @@ export async function createDeviceScene(
     (m.material as THREE.Material | undefined)?.dispose();
   });
   scene.environment = environment.texture;
-  scene.environmentIntensity = 0.65;
+  scene.environmentIntensity = 0.8;
 
-  // The shadow is the flat render's: a soft elliptical blob under the
-  // device, facing the camera. No ground plane — this camera looks almost
-  // along the floor (a 2° pitch), so a real floor shadow would be a sliver,
-  // and an orthographic view of an infinite plane covers the whole card.
-  // Sized and placed once the device's bounds are known.
-  const contactShadow = new THREE.Mesh(
-    new THREE.PlaneGeometry(1, 1),
-    new THREE.MeshBasicNodeMaterial({
-      map: makeContactTexture(),
-      transparent: true,
-      opacity: 0.85,
-      depthWrite: false,
-      toneMapped: false,
-    }),
-  );
-  scene.add(contactShadow);
-
-  const key = new THREE.DirectionalLight("#ffffff", 3.1);
+  const key = new THREE.DirectionalLight("#ffe4bd", 2.8);
   key.castShadow = true;
   key.shadow.mapSize.set(1024, 1024);
   Object.assign(key.shadow.camera, {
@@ -487,25 +542,25 @@ export async function createDeviceScene(
   key.shadow.normalBias = 0.00012;
   key.shadow.autoUpdate = false;
   key.shadow.needsUpdate = true;
-  key.shadow.radius = 12;
+  key.shadow.radius = 6;
   key.shadow.blurSamples = 12;
   key.target.position.set(0, 1.8, 0);
   scene.add(key, key.target);
-  const fill = new THREE.DirectionalLight("#ffffff", 0.18);
+  const fill = new THREE.DirectionalLight("#c3e6ff", 0.9);
   fill.position.set(4, 3, 4);
   scene.add(fill);
-  const rim = new THREE.DirectionalLight("#ffffff", 0.24);
+  const rim = new THREE.DirectionalLight("#d9efff", 1.8);
   rim.position.set(2, 5, -4);
   scene.add(rim);
-  const sky = new THREE.HemisphereLight("#ffffff", "#aaaaaa", 0.22);
+  const sky = new THREE.HemisphereLight("#d9edf7", "#7f8b91", 0.9);
   scene.add(sky);
   THREE.RectAreaLightNode.setLTC(RectAreaLightTexturesLib.init());
-  const softbox = new THREE.RectAreaLight("#ffffff", 1.0, 5 * UNIT, 5 * UNIT);
+  const softbox = new THREE.RectAreaLight("#ffffff", 1.3, 5 * UNIT, 5 * UNIT);
   softbox.position.set(-3.5, 5.5, 6);
   softbox.lookAt(0, 1.9, 0);
   scene.add(softbox);
-  // The weak night outline: grazes the upper-right edge, casting live
-  // shadows; fades out with daylight.
+  // The weak night outline: grazes the upper-right edge through the open
+  // side, casting live shadows; fades out with daylight.
   const contour = new THREE.SpotLight("#b6cced", 0, 0.9, 0.65, 1, 2);
   contour.position.set(4.8, 5.4, 2.4);
   contour.target.position.set(0, 1.9, 0);
@@ -522,21 +577,20 @@ export async function createDeviceScene(
   scene.add(contour, contour.target);
 
   // Post: 4× MSAA scene pass with an emissive MRT lane → bloom on the lamp
-  // only. The scene's alpha is carried through explicitly (bloom's own alpha
-  // would make the clear opaque). The study's final SMAA pass is NOT here:
-  // its blend pass discards alpha, which turned the transparent card opaque
-  // (bisected live, 2026-09-06); MSAA carries the edges on its own.
+  // only → SMAA over the composed picture (an opaque canvas: the room is
+  // the card's content, so SMAA's alpha handling is moot here).
   const scenePass = pass(scene, camera, { samples: 4 });
   scenePass.setMRT(mrt({ output, emissive }));
   const graph = new THREE.RenderPipeline(renderer);
   const sceneColor = scenePass.getTextureNode("output");
   const bloomNode = bloom(
     scenePass.getTextureNode("emissive"),
-    0.055,
+    0.075,
     0.32,
     1.6,
   );
-  graph.outputNode = vec4(sceneColor.rgb.add(bloomNode.rgb), sceneColor.a);
+  const smaaNode = smaa(sceneColor.add(bloomNode));
+  graph.outputNode = smaaNode;
 
   // ── assets ──
   const u = makeUniforms();
@@ -582,8 +636,17 @@ export async function createDeviceScene(
         THREE.LinearSRGBColorSpace,
       );
     }),
+    ...SPACE_HDR.map(async (name) => {
+      tex[name] = await loadKtx(
+        `space-v1-${name}.ktx2`,
+        THREE.LinearSRGBColorSpace,
+      );
+    }),
   ]);
   ktx.dispose();
+  const dayNodes: Vec3Node[] = (
+    ["device-morning", "device-midday", "device-evening"] as const
+  ).map((name) => texture(tex[name], uv(1).flipY()).rgb as unknown as Vec3Node);
 
   const gltfLoader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   const device = await gltfLoader.loadAsync(assetUrl("device.glb"));
@@ -604,7 +667,7 @@ export async function createDeviceScene(
       Array.isArray(mesh.material) ? mesh.material : [mesh.material]
     ) as THREE.MeshStandardMaterial[];
     const materials = sources.map((m) =>
-      makeDeviceMaterial(m, lampChannel, tex, u),
+      makeDeviceMaterial(m, lampChannel, tex, u, dayNodes),
     );
     mesh.material = Array.isArray(mesh.material)
       ? materials
@@ -615,6 +678,26 @@ export async function createDeviceScene(
   });
   device.scene.scale.setScalar(1 / UNIT);
   assembly.add(device.scene);
+
+  const space = await gltfLoader.loadAsync(assetUrl("alcove.glb"));
+  const alcove = space.scene;
+  alcove.scale.setScalar(1 / UNIT);
+  alcove.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    if (mesh.geometry.attributes.uv1 === undefined) {
+      throw new Error("missing alcove bake UV");
+    }
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.material = makeSpaceMaterial(
+      mesh.material as THREE.MeshStandardMaterial,
+      mesh.name,
+      tex,
+      u,
+    );
+  });
+  scene.add(alcove);
   scene.updateMatrixWorld(true);
   const bounds = new THREE.Box3()
     .setFromObject(device.scene)
@@ -625,20 +708,6 @@ export async function createDeviceScene(
     bounds.x * Math.abs(basis[1] ?? 0) +
     bounds.y * Math.abs(basis[5] ?? 0) +
     bounds.z * Math.abs(basis[9] ?? 0);
-  // The blob: the flat shadow layer's proportions against the device — a
-  // little wider than the body, a tenth of its height — centred on the
-  // base and pushed a step away from the camera so the feet sit on it.
-  const shadowWidth = (bounds.x / UNIT) * 1.35;
-  const shadowHeight = (bounds.y / UNIT) * 0.12;
-  const viewDirection = new THREE.Vector3(0, 1.9, 0)
-    .sub(new THREE.Vector3(58.5, 6.3, 110))
-    .normalize();
-  const shadowBase = new THREE.Vector3(0, 0.05, 0).add(
-    viewDirection.multiplyScalar(1.2),
-  );
-  contactShadow.position.copy(shadowBase);
-  contactShadow.quaternion.copy(camera.quaternion);
-  contactShadow.scale.set(shadowWidth, shadowHeight, 1);
   const loadMs = performance.now() - t0;
 
   // ── live state ──
@@ -654,8 +723,8 @@ export async function createDeviceScene(
   let stateEntered = performance.now();
   let stageWidth = 0;
   let stageHeight = 0;
-  let liveDaylight = THEME_DAYLIGHT[inputs.theme];
-  let targetDaylight = liveDaylight;
+  let liveHour = THEME_HOUR[inputs.theme];
+  let targetHour = liveHour;
   let liveIntensity = STATE_TARGETS[inputs.state].intensity;
   const liveColor = new THREE.Color(STATE_TARGETS[inputs.state].color);
   const targetColor = new THREE.Color(STATE_TARGETS[inputs.state].color);
@@ -728,20 +797,18 @@ export async function createDeviceScene(
     lastTime = now;
     const ease = 1 - Math.exp(-dt * 5.5);
 
-    const daylightDiff = targetDaylight - liveDaylight;
-    liveDaylight += daylightDiff * ease;
-    const light = lightingFor(liveDaylight);
+    const hourDiff = hourDelta(liveHour, targetHour);
+    liveHour = (((liveHour + hourDiff * ease) % 24) + 24) % 24;
+    const light = lightingAt(liveHour);
+    background.set(light.background).multiplyScalar(light.external);
     key.color.set(light.keyColor);
     key.intensity = light.key;
     key.position.fromArray(light.position as unknown as number[]);
-    if (key.shadow.radius !== light.shadowRadius) {
-      key.shadow.radius = light.shadowRadius;
-      shadowDirty.key = true;
-    }
     fill.intensity = light.fill;
     rim.intensity = light.rim;
     sky.intensity = light.sky;
     softbox.intensity = light.softbox;
+    softbox.color.copy(key.color);
     contour.intensity = light.contour;
     scene.environmentIntensity = light.environment;
     renderer.toneMappingExposure = light.exposure;
@@ -774,7 +841,8 @@ export async function createDeviceScene(
       mat.emissiveIntensity = ringIntensity;
       mat.color.copy(liveColor);
     }
-    (bloomNode.strength as { value: number }).value = light.bloom;
+    (bloomNode.strength as { value: number }).value =
+      (0.065 + light.night * 0.1) / Math.sqrt(light.adaptation);
 
     const held = inputs.liftPx > 0;
     const liftMoving = advanceLift(pose, dt, held);
@@ -783,13 +851,6 @@ export async function createDeviceScene(
       (pose.liftPx * (camera.top - camera.bottom)) /
       (Math.max(1, stageHeight) * UNIT);
     assembly.position.y = lift;
-    // The blob stays grounded and only shrinks and fades as the device
-    // rises — the flat card's shadow rule (scale 1 − 0.01·px, opacity
-    // 0.85 − 0.02·px).
-    const contactMaterial = contactShadow.material as THREE.Material;
-    contactMaterial.opacity = 0.85 - 0.02 * pose.liftPx;
-    const settle = 1 - 0.01 * pose.liftPx;
-    contactShadow.scale.set(shadowWidth * settle, shadowHeight * settle, 1);
 
     // Pulsing the indicator does not move the silhouette: shadow maps are
     // reused until the key or the device moves.
@@ -818,7 +879,13 @@ export async function createDeviceScene(
       if (l.shadow.needsUpdate) shadowDirty[name] = false;
     }
 
+    // Bake weights: daylight bounce by hour, faded as the device leaves its
+    // baked pose; ring transport scaled by the live indicator.
     u.lift.value = lift * UNIT;
+    u.weights.value.fromArray(timeWeights(liveHour));
+    const poseValidity = Math.exp(-10 * Math.max(lift, 0));
+    u.bounceStrength.value = poseValidity * light.external;
+    u.roomStrength.value = poseValidity;
     u.ringColor.value.copy(liveColor);
     u.ringStrength.value = ringIntensity;
 
@@ -827,7 +894,7 @@ export async function createDeviceScene(
     const renderMs = performance.now() - renderStart;
 
     const moving = held || liftMoving || now < activeUntil;
-    if (motion || moving || Math.abs(daylightDiff) > 0.002) {
+    if (motion || moving || Math.abs(hourDiff) > 0.005) {
       const fps = moving ? MOVING_FPS : CALM_FPS;
       schedule(Math.max(0, 1000 / fps - renderMs - 2));
     }
@@ -872,6 +939,7 @@ export async function createDeviceScene(
     for (const t of Object.values(tex)) t.dispose();
     scenePass.dispose();
     bloomNode.dispose();
+    smaaNode.dispose();
     environment.dispose();
     pmrem.dispose();
     graph.dispose();
@@ -911,7 +979,7 @@ export async function createDeviceScene(
         wake(1800);
       }
       if (next.theme !== prev.theme) {
-        targetDaylight = THEME_DAYLIGHT[next.theme];
+        targetHour = THEME_HOUR[next.theme];
         wake(1100);
       }
       if (next.liftPx !== prev.liftPx) {

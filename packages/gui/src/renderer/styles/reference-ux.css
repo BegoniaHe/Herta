@@ -1782,9 +1782,21 @@ body:after{
   z-index: 1;
   pointer-events: none;
 }
+/* While a scene is EXPECTED the device is held back (§2.13): no flat art
+   that a 3D swap would then replace. The canvas fades in on its first
+   frame; the flat stack returns only for "flat" (no attribute). */
 .device-card[data-scene="live"] .agent-lift-group,
-.device-card[data-scene="live"] .agent-shadow {
+.device-card[data-scene="live"] .agent-shadow,
+.device-card[data-scene="pending"] .agent-lift-group,
+.device-card[data-scene="pending"] .agent-shadow {
   visibility: hidden;
+}
+.device-scene-canvas {
+  opacity: 0;
+  transition: opacity 420ms ease;
+}
+.device-card[data-scene="live"] .device-scene-canvas {
+  opacity: 1;
 }
 
 /* Slice 3 addition — reset UA button styles on .agent-preview (Task 13

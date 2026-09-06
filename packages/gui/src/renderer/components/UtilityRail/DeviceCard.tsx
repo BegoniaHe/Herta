@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import agentDevice from "../../assets/agent_device.png";
 import agentDeviceNight from "../../assets/agent_device_night.png";
 import agentShadow from "../../assets/agent_shadow.png";
@@ -42,6 +42,15 @@ const STATE_KEY: Record<BanzhuanDeviceState, MessageKey> = {
   failed: "device.state.error",
 };
 
+/** What the card shows for its device (ADR 0057 §2.13): `pending` — a
+ *  scene is expected and not yet drawn, nothing shows; `live` — the 3D
+ *  scene; `flat` — the flat renders. */
+type SceneState = "pending" | "live" | "flat";
+/** How long a pending card waits for the scene's first frame before it
+ *  shows the flat art instead. The build is ~14 s on the slowest machine
+ *  measured (assets, an asynchronous shader compile, a quiet moment). */
+export const SCENE_PATIENCE_MS = 30_000;
+
 export function DeviceCard(): JSX.Element {
   const t = useT();
   const state = useDeviceState();
@@ -68,25 +77,48 @@ export function DeviceCard(): JSX.Element {
   const { onMouseDown, transform, shadowStyle, liftPx } = useDragToLift({
     onSuccessfulLift: () => void bridge.maybePlayEasterEgg(),
   });
-  // The 3D device (ADR 0057). The setting lives in main; null means the
-  // bridge has no surface for it (fakes, the website demo) and the card
-  // stays on its flat renders. The scene mounts only while wanted, and the
-  // flat stack stays in the DOM underneath until the scene has presented a
-  // frame (`data-scene="live"` hides it), then returns on any fallback.
+  // The 3D device (ADR 0057). The setting lives in main; a bridge without
+  // the surface (fakes, the website demo) keeps the card on its flat
+  // renders. The scene mounts only while wanted; the flat stack stays in
+  // the DOM underneath throughout and is what the card shows on any
+  // fallback.
+  //
+  // What the card shows meanwhile (§2.13, owner 2026-09-07: "the card
+  // slides out in 2D and then changes to 3D"): while a scene is EXPECTED —
+  // the surface exists and the setting is on or not yet known — the
+  // device is held back (`data-scene="pending"` hides the flat stack and
+  // the canvas) and the 3D fades in on its first frame; the flat art
+  // appears only when the scene will not come (setting off, no GPU path,
+  // a failure) or has not come within SCENE_PATIENCE_MS.
   const theme = useResolvedTheme();
   const scenePref = useDeviceScenePref();
   useEffect(() => {
     void loadDeviceScenePref(bridge);
   }, [bridge]);
+  const sceneSupported = bridge.setDeviceScene !== undefined;
+  const sceneExpected = sceneSupported && scenePref !== false;
   const wantScene = scenePref === true;
   // The scene is heavy to start (three.js chunk, assets, transcoder
   // workers, a synchronous first frame): it mounts after the boot has
   // settled and in an idle slot, never in the boot's way (§2.9).
   const mountScene = useIdleMount(wantScene);
-  const [sceneLive, setSceneLive] = useState(false);
+  const [sceneState, setSceneState] = useState<SceneState>(() =>
+    sceneExpected ? "pending" : "flat",
+  );
   useEffect(() => {
-    if (!wantScene) setSceneLive(false);
-  }, [wantScene]);
+    if (!sceneExpected) {
+      setSceneState("flat");
+      return;
+    }
+    setSceneState((s) => (s === "live" ? s : "pending"));
+    const patience = setTimeout(() => {
+      setSceneState((s) => (s === "pending" ? "flat" : s));
+    }, SCENE_PATIENCE_MS);
+    return () => clearTimeout(patience);
+  }, [sceneExpected]);
+  const onSceneLive = useCallback((live: boolean) => {
+    setSceneState(live ? "live" : "flat");
+  }, []);
   // A workspace error belongs to the session it happened in — don't resurface
   // a stale one in the next session's menu. (This hand-written reset is what
   // `useSessionScoped` generalizes; migrated 2026-07-24.)
@@ -149,7 +181,7 @@ export function DeviceCard(): JSX.Element {
     <section
       className="device-card"
       data-state={state}
-      data-scene={sceneLive ? "live" : undefined}
+      data-scene={sceneState === "flat" ? undefined : sceneState}
       aria-label={t("device.ariaLabel", { state: t(STATE_KEY[state]) })}
     >
       {mountScene && (
@@ -158,7 +190,7 @@ export function DeviceCard(): JSX.Element {
           theme={theme}
           paused={paused}
           liftPx={liftPx}
-          onLive={setSceneLive}
+          onLive={onSceneLive}
         />
       )}
       <CardMenu
@@ -214,7 +246,7 @@ export function DeviceCard(): JSX.Element {
           {/* The glow loop also parks while the 3D scene owns the card: its
               canvas is hidden then, and the ring's light comes from the
               scene's own bake. */}
-          <DeviceGlow state={state} paused={paused || sceneLive} />
+          <DeviceGlow state={state} paused={paused || sceneState !== "flat"} />
         </div>
       </button>
     </section>

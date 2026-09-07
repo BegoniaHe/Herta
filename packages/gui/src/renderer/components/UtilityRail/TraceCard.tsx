@@ -1,8 +1,15 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import { useListTransitions } from "../../hooks/useListTransitions.js";
+import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { VERB_KEY } from "../Workspace/step-display.js";
 import type { TraceNote, TraceOp } from "../Workspace/trace-context.js";
 import { useScrollEdges } from "../Workspace/useScrollEdges.js";
+import {
+  CARD_ROW_ENTER_MS,
+  cardRowMotion,
+  rowPhaseClass,
+} from "./card-motion.js";
 import { useTraceCard } from "./useTraceCard.js";
 
 /**
@@ -20,25 +27,54 @@ import { useTraceCard } from "./useTraceCard.js";
  * not), one-line ellipsized rows with a dim result note, and a follow-tail
  * list that tracks the newest op. Per the 2026-07-27 form-not-motion rule
  * the row marks are static (▸ caret = the op in flight); the meter's sweep
- * is the card's single moving element, and `is-waiting` stills it — parked
- * on a permission gate, nothing is being worked (audit 2026-07-26).
+ * is the card's single IDLE moving element, and `is-waiting` stills it —
+ * parked on a permission gate, nothing is being worked (audit 2026-07-26).
+ * Rows move on CHANGE (ADR 0058 §5.7, the family's shared motion): an op
+ * that lands eases in at the tail, a row the sliding window drops eases
+ * out at the head; the first trace lands still with the card's slide.
  */
 export function TraceCard(): JSX.Element | null {
   const t = useT();
-  const { trace, open, waiting } = useTraceCard();
+  const { trace, open, waiting, settled } = useTraceCard();
+  const reduced = useReducedMotion();
   const listRef = useRef<HTMLOListElement>(null);
   const edges = useScrollEdges(listRef, trace);
+
+  // Keyed by the op's ORDINAL within the whole dispatch, not the window
+  // index: once the list trims to its cap the window slides, and index keys
+  // would remount every row per append — replaying the entrance on the
+  // entire list.
+  const keyed = useMemo(
+    () =>
+      (trace?.ops ?? EMPTY).map((op, i) => ({
+        id: String((trace?.firstOrdinal ?? 0) + i),
+        op,
+      })),
+    [trace],
+  );
+  const rows = useListTransitions(
+    keyed,
+    keyOf,
+    cardRowMotion(reduced, settled),
+  );
 
   // Follow the tail: the newest op is the one being watched. A reader who
   // scrolled up to inspect an earlier row keeps their place (the pin releases
   // beyond ~1½ rows of drift) — same courtesy the conversation's own
-  // autoscroll extends.
+  // autoscroll extends. An entering row opens from zero height, so the
+  // tail is followed again once its entrance has ended — otherwise the
+  // scroll stopped short by the row's final height.
   const ops = trace?.ops;
   useEffect(() => {
     const el = listRef.current;
     if (el === null || ops === undefined) return;
-    const drift = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (drift < 40 || el.scrollTop === 0) el.scrollTop = el.scrollHeight;
+    const follow = (): void => {
+      const drift = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (drift < 40 || el.scrollTop === 0) el.scrollTop = el.scrollHeight;
+    };
+    follow();
+    const t = setTimeout(follow, CARD_ROW_ENTER_MS + 20);
+    return () => clearTimeout(t);
   }, [ops]);
 
   if (trace === null) return null;
@@ -94,71 +130,73 @@ export function TraceCard(): JSX.Element | null {
           edges.bottom ? " has-fog-bottom" : ""
         }`}
       >
-        {trace.ops.map((op, i) => (
-          <li
-            // Keyed by the op's ORDINAL within the whole dispatch, not the
-            // window index: once the list trims to its cap the window slides,
-            // and index keys would remount every row per append — replaying
-            // the entrance animation on the entire list.
-            // biome-ignore lint/suspicious/noArrayIndexKey: firstOrdinal + i is the op's stable position in the append-only dispatch, not its position in the sliding window.
-            key={trace.firstOrdinal + i}
-            className={`plan-card__row trace-card__row is-${op.status}`}
-          >
-            <span className="plan-card__mark" aria-hidden="true">
-              {op.status === "ok" && (
-                <svg
-                  viewBox="0 0 10 10"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M1.5 5.2l2.4 2.4L8.5 2.6" />
-                </svg>
-              )}
-              {op.status === "fail" && (
-                <svg
-                  viewBox="0 0 10 10"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  aria-hidden="true"
-                >
-                  <path d="M2 2l6 6M8 2l-6 6" />
-                </svg>
-              )}
-              {op.status === "running" && (
-                <svg
-                  className="plan-card__caret"
-                  viewBox="0 0 8 10"
-                  aria-hidden="true"
-                >
-                  <path d="M1.4 1.6l5.2 3.4-5.2 3.4z" />
-                </svg>
-              )}
-            </span>
-            <span className="trace-card__text" title={opTitle(op, t)}>
-              <span className="trace-card__verb">{verbText(op, t)}</span>{" "}
-              {op.arg}
-            </span>
-            {op.note !== undefined && (
-              <span
-                className={`trace-card__note${
-                  op.status === "fail" ? " is-fail" : ""
-                }`}
-              >
-                {noteText(op.note)}
+        {rows.map((row) => {
+          const op = row.item.op;
+          return (
+            <li
+              key={row.key}
+              className={`plan-card__row trace-card__row is-${op.status}${rowPhaseClass(row.phase)}`}
+              aria-hidden={row.phase === "leave" || undefined}
+            >
+              <span className="plan-card__mark" aria-hidden="true">
+                {op.status === "ok" && (
+                  <svg
+                    viewBox="0 0 10 10"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M1.5 5.2l2.4 2.4L8.5 2.6" />
+                  </svg>
+                )}
+                {op.status === "fail" && (
+                  <svg
+                    viewBox="0 0 10 10"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M2 2l6 6M8 2l-6 6" />
+                  </svg>
+                )}
+                {op.status === "running" && (
+                  <svg
+                    className="plan-card__caret"
+                    viewBox="0 0 8 10"
+                    aria-hidden="true"
+                  >
+                    <path d="M1.4 1.6l5.2 3.4-5.2 3.4z" />
+                  </svg>
+                )}
               </span>
-            )}
-          </li>
-        ))}
+              <span className="trace-card__text" title={opTitle(op, t)}>
+                <span className="trace-card__verb">{verbText(op, t)}</span>{" "}
+                {op.arg}
+              </span>
+              {op.note !== undefined && (
+                <span
+                  className={`trace-card__note${
+                    op.status === "fail" ? " is-fail" : ""
+                  }`}
+                >
+                  {noteText(op.note)}
+                </span>
+              )}
+            </li>
+          );
+        })}
       </ol>
     </section>
   );
 }
+
+const EMPTY: readonly TraceOp[] = [];
+const keyOf = (k: { readonly id: string }): string => k.id;
 
 type T = ReturnType<typeof useT>;
 

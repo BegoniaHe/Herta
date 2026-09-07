@@ -2,6 +2,8 @@ import type { TerminalRecordBlock } from "@herta/app-server";
 import { act } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithSession } from "../../testing/renderWithSession.js";
+import { TRACE_MAX_ROWS } from "../Workspace/trace-context.js";
+import { CARD_ROW_ENTER_MS, CARD_ROW_LEAVE_MS } from "./card-motion.js";
 import { TraceCard } from "./TraceCard.js";
 import { PLAN_HOLD_MS, PLAN_SLIDE_MS } from "./usePlanCard.js";
 
@@ -110,6 +112,51 @@ describe("TraceCard", () => {
     expect(document.querySelector(".plan-card__count")?.textContent).toBe(
       "3 steps · 1 files",
     );
+  });
+
+  it("an appended op enters; the window's dropped head leaves then drops; the first trace lands still (ADR 0058 §5.7)", () => {
+    vi.useFakeTimers();
+    const h = renderWithSession(<TraceCard />);
+    h.openSession();
+    push(h, user(), op("Running", "npm test"), op("Reading", "a.ts"));
+    expect(document.querySelector(".trace-card__row.is-entering")).toBeNull();
+    push(h, op("Writing", "b.ts"));
+    let r = rows();
+    expect(r).toHaveLength(3);
+    expect(r.map((x) => x.classList.contains("is-entering"))).toEqual([
+      false,
+      false,
+      true,
+    ]);
+    act(() => {
+      vi.advanceTimersByTime(CARD_ROW_ENTER_MS + 5);
+    });
+    expect(document.querySelector(".trace-card__row.is-entering")).toBeNull();
+    // Fill the window, then one more: the head slides out, the tail enters.
+    const fill: TerminalRecordBlock[] = [];
+    for (let i = rows().length; i < TRACE_MAX_ROWS; i += 1) {
+      fill.push(op("Reading", `f${i}.ts`));
+    }
+    push(h, ...fill);
+    act(() => {
+      vi.advanceTimersByTime(CARD_ROW_ENTER_MS + 5);
+    });
+    expect(rows()).toHaveLength(TRACE_MAX_ROWS);
+    push(h, op("Reading", "tail.ts"));
+    r = rows();
+    expect(r).toHaveLength(TRACE_MAX_ROWS + 1);
+    expect(r[0]?.classList.contains("is-leaving")).toBe(true);
+    expect(r[0]?.querySelector(".trace-card__text")?.textContent).toContain(
+      "npm test",
+    );
+    expect(r[r.length - 1]?.classList.contains("is-entering")).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(CARD_ROW_LEAVE_MS + 5);
+    });
+    expect(rows()).toHaveLength(TRACE_MAX_ROWS);
+    expect(
+      rows()[0]?.querySelector(".trace-card__text")?.textContent,
+    ).toContain("a.ts");
   });
 
   it("HOLDS past the done-marker with the running tail settled, then slides back and unmounts", () => {

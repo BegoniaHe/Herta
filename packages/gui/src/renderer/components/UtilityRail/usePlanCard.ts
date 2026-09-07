@@ -64,6 +64,10 @@ export interface PlanCardState {
    *  NOT being worked, it is waiting on the user. The card stops claiming
    *  otherwise (the device card beside it already shows 待批准). */
   readonly waiting: boolean;
+  /** A first plan has been on screen: later plans are CHANGES, and their
+   *  rows may move (ADR 0058 §5.7). False again while the card retracts,
+   *  so the next dispatch's plan arrives settled with the card's slide. */
+  readonly settled: boolean;
 }
 
 /**
@@ -90,6 +94,7 @@ export function usePlanCard(): PlanCardState {
 
   const [plan, setPlan] = useSessionScoped<PlanContext | null>(null);
   const [open, setOpen] = useSessionScoped(false);
+  const [settled, setSettled] = useSessionScoped(false);
   /** Mirrors `open` for the effect to read without taking it as a dependency:
    *  the effect must fire on a SCOPE edge only, and depending on `open` would
    *  re-run it on its own result. */
@@ -124,5 +129,13 @@ export function usePlanCard(): PlanCardState {
     }, PLAN_HOLD_MS);
   }, [scope, retract, unmount, setPlan, setOpen, showing]);
 
-  return { plan, open, waiting };
+  // Settled follows what is ON SCREEN, one commit behind it: the render
+  // that first draws an open plan sees `settled` false and lands the rows
+  // still; this effect then arms motion for the plans after it. A retract
+  // disarms, so the next dispatch's first plan is still again.
+  useEffect(() => {
+    setSettled(open && plan !== null);
+  }, [open, plan, setSettled]);
+
+  return { plan, open, waiting, settled };
 }

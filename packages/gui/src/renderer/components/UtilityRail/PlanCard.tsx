@@ -1,6 +1,10 @@
-import { useRef } from "react";
+import { useMemo, useRef } from "react";
+import { useListTransitions } from "../../hooks/useListTransitions.js";
+import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import { useT } from "../../i18n/LocaleProvider.js";
+import type { TodoDigestItem } from "../Workspace/plan-context.js";
 import { useScrollEdges } from "../Workspace/useScrollEdges.js";
+import { cardRowMotion, rowPhaseClass } from "./card-motion.js";
 import { usePlanCard } from "./usePlanCard.js";
 
 /**
@@ -23,10 +27,18 @@ import { usePlanCard } from "./usePlanCard.js";
  * this card is app chrome in 板砖's column, not a projection OF the record, so
  * unlike `ActivityBlock` (ADR 0018/0019) it follows `useT()` like its sibling
  * the device card.
+ *
+ * Rows move on CHANGE (ADR 0058 §5.7, the family's shared motion): a step
+ * 板砖 adds eases in at its place, a step it drops eases out; a status flip
+ * still only eases its colour. The first plan lands still with the card's
+ * slide. Rows are keyed by position — todo_write is full-list replacement,
+ * so item text is neither unique nor stable — which means a reworded row
+ * simply repaints, and only a change in COUNT moves.
  */
 export function PlanCard(): JSX.Element | null {
   const t = useT();
-  const { plan, open, waiting } = usePlanCard();
+  const { plan, open, waiting, settled } = usePlanCard();
+  const reduced = useReducedMotion();
   // Scroll-edge fog, same mechanism as the sidebar list and the conversation:
   // an edge only fogs when content actually overflows it. `plan` is the
   // re-observe signal — the rows are React-minted, so the hook's one-shot
@@ -34,6 +46,20 @@ export function PlanCard(): JSX.Element | null {
   // failure the sidebar hit).
   const listRef = useRef<HTMLOListElement>(null);
   const edges = useScrollEdges(listRef, plan);
+
+  const keyed = useMemo(
+    () =>
+      (plan?.itemsKnown === true ? plan.items : EMPTY).map((item, i) => ({
+        id: String(i),
+        item,
+      })),
+    [plan],
+  );
+  const rows = useListTransitions(
+    keyed,
+    keyOf,
+    cardRowMotion(reduced, settled),
+  );
 
   // Never mounted for a session that has had no plan at all — the rail should
   // not reserve space for a card that has never appeared.
@@ -79,45 +105,48 @@ export function PlanCard(): JSX.Element | null {
             edges.bottom ? " has-fog-bottom" : ""
           }`}
         >
-          {plan.items.map((item, i) => (
-            <li
-              // biome-ignore lint/suspicious/noArrayIndexKey: todo_write is full-list replacement, so item text is neither unique nor stable (板砖 rewords rows mid-run) — position is the only usable identity, and rows carry no per-row state to mis-associate.
-              key={i}
-              className={`plan-card__row is-${item.status.replace("_", "-")}`}
-            >
-              {/* The mark triad mirrors the CLI plan strip's ✓ / ▸ / ·
-                  (plan-strip.ts MARK) — the two frontends point at the
-                  current step the same way. The caret is FORM, not motion:
-                  after the 2026-07-27 dot redesign the record's activity LED
-                  is the one pulsing element during a dispatch, and this card
-                  states its facts statically. */}
-              <span className="plan-card__mark" aria-hidden="true">
-                {item.status === "completed" && (
-                  <svg
-                    viewBox="0 0 10 10"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M1.5 5.2l2.4 2.4L8.5 2.6" />
-                  </svg>
-                )}
-                {item.status === "in_progress" && (
-                  <svg
-                    className="plan-card__caret"
-                    viewBox="0 0 8 10"
-                    aria-hidden="true"
-                  >
-                    <path d="M1.4 1.6l5.2 3.4-5.2 3.4z" />
-                  </svg>
-                )}
-              </span>
-              <span className="plan-card__text">{item.content}</span>
-            </li>
-          ))}
+          {rows.map((row) => {
+            const item = row.item.item;
+            return (
+              <li
+                key={row.key}
+                className={`plan-card__row is-${item.status.replace("_", "-")}${rowPhaseClass(row.phase)}`}
+                aria-hidden={row.phase === "leave" || undefined}
+              >
+                {/* The mark triad mirrors the CLI plan strip's ✓ / ▸ / ·
+                    (plan-strip.ts MARK) — the two frontends point at the
+                    current step the same way. The caret is FORM, not motion:
+                    after the 2026-07-27 dot redesign the record's activity LED
+                    is the one pulsing element during a dispatch, and this card
+                    states its facts statically. */}
+                <span className="plan-card__mark" aria-hidden="true">
+                  {item.status === "completed" && (
+                    <svg
+                      viewBox="0 0 10 10"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M1.5 5.2l2.4 2.4L8.5 2.6" />
+                    </svg>
+                  )}
+                  {item.status === "in_progress" && (
+                    <svg
+                      className="plan-card__caret"
+                      viewBox="0 0 8 10"
+                      aria-hidden="true"
+                    >
+                      <path d="M1.4 1.6l5.2 3.4-5.2 3.4z" />
+                    </svg>
+                  )}
+                </span>
+                <span className="plan-card__text">{item.content}</span>
+              </li>
+            );
+          })}
         </ol>
       ) : (
         // A record persisted before the digest carried its items: the list is
@@ -128,3 +157,6 @@ export function PlanCard(): JSX.Element | null {
     </section>
   );
 }
+
+const EMPTY: readonly TodoDigestItem[] = [];
+const keyOf = (k: { readonly id: string }): string => k.id;

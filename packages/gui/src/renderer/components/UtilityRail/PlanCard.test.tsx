@@ -2,6 +2,7 @@ import type { TerminalRecordBlock } from "@herta/app-server";
 import { act } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithSession } from "../../testing/renderWithSession.js";
+import { CARD_ROW_ENTER_MS, CARD_ROW_LEAVE_MS } from "./card-motion.js";
 import { PlanCard } from "./PlanCard.js";
 import { PLAN_HOLD_MS, PLAN_SLIDE_MS } from "./usePlanCard.js";
 
@@ -103,6 +104,41 @@ describe("PlanCard", () => {
     expect(rows[0]?.querySelector("svg")).not.toBeNull();
     expect(rows[1]?.querySelector(".plan-card__caret")).not.toBeNull();
     expect(rows[2]?.querySelector("svg")).toBeNull();
+  });
+
+  it("rows move on CHANGE, not on the first plan: an added step enters, a dropped step leaves then drops (ADR 0058 §5.7)", () => {
+    vi.useFakeTimers();
+    const h = renderWithSession(<PlanCard />);
+    h.openSession();
+    push(h, todo(1));
+    // The first plan lands still — the card's slide is its entrance.
+    expect(document.querySelector(".plan-card__row.is-entering")).toBeNull();
+    // 板砖 adds a fourth step: only that row enters.
+    push(h, todo(1, [...THREE, { content: "写文档", status: "pending" }]));
+    const grown = [...document.querySelectorAll(".plan-card__row")];
+    expect(grown.map((r) => r.classList.contains("is-entering"))).toEqual([
+      false,
+      false,
+      false,
+      true,
+    ]);
+    act(() => {
+      vi.advanceTimersByTime(CARD_ROW_ENTER_MS + 5);
+    });
+    expect(document.querySelector(".plan-card__row.is-entering")).toBeNull();
+    // The list shrinks to two: the last two rows leave in place, then drop.
+    push(h, todo(1, THREE.slice(0, 2)));
+    const shrunk = [...document.querySelectorAll(".plan-card__row")];
+    expect(shrunk.map((r) => r.classList.contains("is-leaving"))).toEqual([
+      false,
+      false,
+      true,
+      true,
+    ]);
+    act(() => {
+      vi.advanceTimersByTime(CARD_ROW_LEAVE_MS + 5);
+    });
+    expect(rows()).toEqual(["定位 bug", "修 cursor reset"]);
   });
 
   it("live-updates as steps advance, without closing", () => {

@@ -17,12 +17,8 @@ import { useT } from "../../i18n/LocaleProvider.js";
 import { useFileViewerOpen } from "../FileViewer/file-viewer-context.js";
 import { SwapText } from "../Workspace/SwapText.js";
 import { useScrollEdges } from "../Workspace/useScrollEdges.js";
+import { cardRowMotion, rowPhaseClass } from "./card-motion.js";
 import { useRepoCard } from "./useRepoCard.js";
-
-/** Row entrance / exit lengths — MUST match `.repo-card__row.is-entering` /
- *  `.is-leaving` in reference-ux.css. */
-export const REPO_ROW_ENTER_MS = 300;
-export const REPO_ROW_LEAVE_MS = 220;
 
 /**
  * The workspace's repository as a rail card (ADR 0058), under the device:
@@ -51,8 +47,9 @@ export function RepoCard(): JSX.Element | null {
   const { bridge } = useHertaBridge();
   // Rows move on CHANGE, not on the card's own arrival: until the first
   // answer has been on screen, the lists render settled (the card's slide
-  // is the entrance), exactly as under reduced motion.
-  const reduced = useReducedMotion() || !settled;
+  // is the entrance), exactly as under reduced motion (card-motion.ts).
+  const reducedMotion = useReducedMotion();
+  const reduced = reducedMotion || !settled;
   // A dirty row opens its DIFF where the bridge can read one (ADR 0059
   // §5), the file where it cannot (an older bridge, the demo).
   const diffs = bridge.readWorkspaceDiff !== undefined;
@@ -64,11 +61,7 @@ export function RepoCard(): JSX.Element | null {
 
   const dirtyKey = useCallback((f: RepoContextDirtyFile) => f.path, []);
   const commitKey = useCallback((c: RepoRecentCommit) => c.sha, []);
-  const motion = {
-    leaveMs: REPO_ROW_LEAVE_MS,
-    enterMs: REPO_ROW_ENTER_MS,
-    reduced,
-  };
+  const motion = cardRowMotion(reducedMotion, settled);
   const dirtyRows = useListTransitions(
     repo?.dirty ?? EMPTY_DIRTY,
     dirtyKey,
@@ -107,8 +100,6 @@ export function RepoCard(): JSX.Element | null {
       : t("repo.card.dirty", { n: String(repo.dirtyTotal) });
   const hidden = repo.dirtyTotal - repo.dirty.length;
   const prefix = repo.prefix;
-  const phaseClass = (phase: "enter" | "steady" | "leave"): string =>
-    phase === "enter" ? " is-entering" : phase === "leave" ? " is-leaving" : "";
 
   return (
     <section
@@ -170,7 +161,7 @@ export function RepoCard(): JSX.Element | null {
                 key={row.key}
                 className={`plan-card__row repo-card__row is-${mark.kind}${
                   inside ? "" : " is-outside"
-                }${phaseClass(row.phase)}`}
+                }${rowPhaseClass(row.phase)}`}
                 aria-hidden={row.phase === "leave" || undefined}
               >
                 <span
@@ -266,7 +257,7 @@ export function RepoCard(): JSX.Element | null {
                   key={row.key}
                   className={`plan-card__row repo-card__row repo-card__log-row${
                     c.unpushed ? " is-unpushed" : ""
-                  }${phaseClass(row.phase)}`}
+                  }${rowPhaseClass(row.phase)}`}
                   aria-hidden={row.phase === "leave" || undefined}
                 >
                   <span className="plan-card__mark repo-card__sha">

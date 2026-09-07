@@ -4382,13 +4382,11 @@ button.session-item__badge--dismiss {
 /* Rows are append-only within a dispatch, so each mounts exactly once —
    a small rise-and-fade entrance makes the trace visibly GROW instead of
    rows teleporting in. */
+/* The per-mount fade this row used to carry gave way to the family's
+   shared row motion (ADR 0058 §5.7): an appended op enters with it, the
+   first trace lands still with the card's slide. */
 .trace-card__row {
   align-items: center;
-  animation: trace-row-in 200ms ease both;
-}
-@keyframes trace-row-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: none; }
 }
 /* A long-run dispatch lands hundreds of ops (owner 2026-08-17): the list
    caps its VISIBLE height (~6 rows) and scrolls inside — with the fog
@@ -4654,36 +4652,48 @@ button.repo-card__path,
 .repo-card__row .plan-card__mark {
   transition: color 140ms ease;
 }
-.repo-card__row.is-entering {
-  animation: repo-row-in 300ms var(--ease-signature) both;
+/* Row entrance / exit, shared by every card in the family (repository,
+   plan, trace — card-motion.ts). The height animates to and from `auto`
+   (`interpolate-size`, Chromium 129+): a plan step that wraps to two
+   lines opens to its own height, not to a guessed cap. The 7px list gap
+   collapses with the row (the negative margin) so the rows below settle
+   without a jump; opacity leads the exit so the row is gone before its
+   space closes. */
+.plan-card__row.is-entering,
+.plan-card__row.is-leaving {
+  interpolate-size: allow-keywords;
+  overflow: hidden;
 }
-.repo-card__row.is-leaving {
-  animation: repo-row-out 220ms ease both;
+.plan-card__row.is-entering {
+  animation: card-row-in 300ms var(--ease-signature) both;
+}
+.plan-card__row.is-leaving {
+  animation: card-row-out 220ms ease both;
   pointer-events: none;
 }
-@keyframes repo-row-in {
+@keyframes card-row-in {
   from {
     opacity: 0;
     transform: translateY(-4px);
-    max-height: 0;
+    height: 0;
     margin-top: -7px;
   }
   60% {
-    max-height: 22px;
+    height: auto;
     margin-top: 0;
   }
   to {
     opacity: 1;
     transform: none;
-    max-height: 22px;
+    height: auto;
     margin-top: 0;
   }
 }
-@keyframes repo-row-out {
+@keyframes card-row-out {
   from {
     opacity: 1;
     transform: none;
-    max-height: 22px;
+    height: auto;
     margin-top: 0;
   }
   40% {
@@ -4693,18 +4703,14 @@ button.repo-card__path,
   to {
     opacity: 0;
     transform: translateY(-3px);
-    max-height: 0;
+    height: 0;
     margin-top: -7px;
   }
 }
-.repo-card__row.is-entering,
-.repo-card__row.is-leaving {
-  overflow: hidden;
-}
 @media (prefers-reduced-motion: reduce) {
-  .repo-card__row.is-entering,
-  .repo-card__row.is-leaving { animation: none; }
-  .repo-card__row.is-leaving { display: none; }
+  .plan-card__row.is-entering,
+  .plan-card__row.is-leaving { animation: none; }
+  .plan-card__row.is-leaving { display: none; }
   .repo-card__all svg { transition: none; }
 }
 .trace-card__note.is-fail {

@@ -26,6 +26,9 @@ export interface TraceCardState {
    *  worked — the card's live meter stills (same discipline as PlanCard's
    *  is-waiting, audit 2026-07-26). */
   readonly waiting: boolean;
+  /** A first trace has been on screen: appended ops are CHANGES and enter
+   *  with the row motion (ADR 0058 §5.7); false while the card retracts. */
+  readonly settled: boolean;
 }
 
 /**
@@ -55,6 +58,7 @@ export function useTraceCard(): TraceCardState {
 
   const [trace, setTrace] = useSessionScoped<TraceContext | null>(null);
   const [open, setOpen] = useSessionScoped(false);
+  const [settled, setSettled] = useSessionScoped(false);
   const showing = useSessionScopedRef(false);
   const retract = useSessionScopedTimer();
   const unmount = useSessionScopedTimer();
@@ -91,5 +95,10 @@ export function useTraceCard(): TraceCardState {
     }, PLAN_HOLD_MS);
   }, [scope, plan, retract, unmount, setTrace, setOpen, showing]);
 
-  return { trace, open, waiting };
+  // One commit behind what is on screen — usePlanCard's own latch.
+  useEffect(() => {
+    setSettled(open && trace !== null);
+  }, [open, trace, setSettled]);
+
+  return { trace, open, waiting, settled };
 }

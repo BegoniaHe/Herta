@@ -6,7 +6,8 @@ import { renderWithLocale } from "../../i18n/test-util.js";
 import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
 import { FileViewerPanel } from "../FileViewer/FileViewerPanel.js";
 import { FileViewerProvider } from "../FileViewer/file-viewer-context.js";
-import { dirtyMark, REPO_ROW_LEAVE_MS, RepoCard } from "./RepoCard.js";
+import { CARD_ROW_LEAVE_MS } from "./card-motion.js";
+import { dirtyMark, RepoCard } from "./RepoCard.js";
 import { REPO_FOCUS_REFRESH_MIN_MS } from "./useRepoCard.js";
 
 afterEach(() => {
@@ -176,7 +177,7 @@ describe("RepoCard (ADR 0058)", () => {
       ["src/fresh.ts", true, false],
     ]);
     act(() => {
-      vi.advanceTimersByTime(REPO_ROW_LEAVE_MS + 5);
+      vi.advanceTimersByTime(CARD_ROW_LEAVE_MS + 5);
     });
     expect(
       [...container.querySelectorAll(".repo-card__list .repo-card__row")].map(

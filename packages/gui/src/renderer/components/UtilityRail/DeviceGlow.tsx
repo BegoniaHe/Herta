@@ -136,6 +136,13 @@ export function DeviceGlow(props: DeviceGlowProps): JSX.Element {
       dark: null,
     };
     let contextLost = false;
+    // A texture arriving later wakes a parked loop through this hook; it
+    // is wired once the loop exists. An image already in the browser's
+    // cache (the rail card loaded it, or StrictMode's second mount) fires
+    // its load event SYNCHRONOUSLY from the src setter, so `upload` runs
+    // before `start` is declared. Calling `start` directly from here was a
+    // ReferenceError that took the Settings pane down (owner, 2026-09-07).
+    let onLampReady: (() => void) | null = null;
     const upload = (which: ResolvedTheme): void => {
       const image = images[which];
       if (image === null || !image.complete || image.naturalWidth === 0) return;
@@ -150,7 +157,7 @@ export function DeviceGlow(props: DeviceGlowProps): JSX.Element {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, image);
       textures[which] = texture;
-      start();
+      onLampReady?.();
     };
     const buildGl = (): boolean => {
       try {
@@ -181,10 +188,9 @@ export function DeviceGlow(props: DeviceGlowProps): JSX.Element {
       gl.uniform1f(loc.halo, DEVICE_GLOW_LOOK.halo);
       gl.uniform1i(loc.lamp, 0);
       gl.activeTexture(gl.TEXTURE0);
-      for (const which of ["light", "dark"] as const) {
-        textures[which] = null;
-        upload(which);
-      }
+      // Whatever has not been uploaded yet (a synchronous load above has;
+      // after a context loss nothing has — the loss handler forgets them).
+      for (const which of ["light", "dark"] as const) upload(which);
       return true;
     };
     for (const which of ["light", "dark"] as const) {
@@ -342,6 +348,10 @@ export function DeviceGlow(props: DeviceGlowProps): JSX.Element {
     const onContextLost = (e: Event): void => {
       e.preventDefault();
       contextLost = true;
+      // The GPU's objects are gone with the context; the rebuild uploads
+      // the layers again from the images.
+      textures.light = null;
+      textures.dark = null;
       stop();
       canvas.dataset.fallback = "true";
     };
@@ -357,6 +367,7 @@ export function DeviceGlow(props: DeviceGlowProps): JSX.Element {
     window.addEventListener("focus", onFocus);
     window.addEventListener("blur", onBlur);
     loopControls.current = { start, stop };
+    onLampReady = start;
     start();
     return () => {
       stop();

@@ -186,6 +186,40 @@ describe("DeviceGlow", () => {
     vi.unstubAllGlobals();
   });
 
+  it("an image already complete when its src is set (the browser's cache, StrictMode's second mount) uploads during setup without throwing (owner 2026-09-07: the Settings pane crashed)", () => {
+    vi.useFakeTimers();
+    mockAsyncRaf();
+    const { calls } = mockWebgl();
+    // Chromium fires a cached image's load event synchronously from the
+    // src setter — the shape that crashed: the handler runs before the
+    // effect has declared its loop.
+    class CachedImage {
+      onload: (() => void) | null = null;
+      decoding = "async";
+      complete = true;
+      naturalWidth = 560;
+      #src = "";
+      get src(): string {
+        return this.#src;
+      }
+      set src(value: string) {
+        this.#src = value;
+        this.onload?.();
+      }
+    }
+    vi.stubGlobal("Image", CachedImage);
+    expect(() => render(<DeviceGlow state="idle" />)).not.toThrow();
+    // Both themes' layers went up once each — the synchronous load
+    // uploaded them and the build's own pass found them present.
+    expect(calls.texImage2D).toBe(2);
+    // …and the loop draws with them.
+    act(() => {
+      vi.advanceTimersByTime(16 * 3);
+    });
+    expect(calls.drawArrays ?? 0).toBeGreaterThan(0);
+    vi.unstubAllGlobals();
+  });
+
   it("fallback state classes track the state prop", () => {
     const { container, rerender } = render(<DeviceGlow state="idle" />);
     expect(container.querySelector(".agent-ring.is-idle")).toBeTruthy();

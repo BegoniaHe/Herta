@@ -499,8 +499,21 @@ export interface RepoContextSnapshot {
    *  producer; `dirtyTotal` keeps the true count. */
   readonly dirty: readonly RepoContextDirtyFile[];
   readonly dirtyTotal: number;
-  /** `git log --oneline` subjects, newest first, bounded by the producer. */
+  /** `<short sha> <subject>` lines, newest first, bounded by the producer —
+   *  the frame's text form of `recentCommits`. */
   readonly recentSubjects: readonly string[];
+  /** The same commits, structured, for the rail card (ADR 0058 §5.4/§5.6):
+   *  the card draws id, subject and an unpushed mark apart. */
+  readonly recentCommits: readonly RepoRecentCommit[];
+}
+
+/** One recent commit as the card draws it. */
+export interface RepoRecentCommit {
+  readonly sha: string;
+  readonly shortSha: string;
+  readonly subject: string;
+  /** Not on the tracked upstream yet (false when there is no upstream). */
+  readonly unpushed: boolean;
 }
 
 /**

@@ -6,7 +6,7 @@ import type {
   TerminalRecord,
   TerminalRecordBlock,
 } from "@herta/core";
-import type { CommitDescription, WorkingDiff } from "@herta/tools";
+import type { CommitDescription, LogPage, WorkingDiff } from "@herta/tools";
 import type { SessionSearchHit } from "./session-search.js";
 
 // ───── Configuration ─────
@@ -558,6 +558,14 @@ export interface Session {
    *  path to the workspace. Null when git cannot answer. Optional: the GUI
    *  SessionImpl only. */
   describeWorkingDiff?(path: string): Promise<WorkingDiff | null>;
+  /** A page of the repository's history for the viewer's log tab (ADR
+   *  0059 §6): newest first, each commit marked when not yet on the
+   *  upstream. Null when git cannot answer. Optional: the GUI SessionImpl
+   *  only. */
+  describeLog?(opts: {
+    readonly skip: number;
+    readonly limit: number;
+  }): Promise<LogPage | null>;
 
   close(): Promise<void>;
 }

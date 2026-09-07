@@ -21,6 +21,10 @@ export interface RepoCardState {
   readonly repo: RepoContextSnapshot | null;
   /** Whether the card should be slid OUT. */
   readonly open: boolean;
+  /** A first answer has been on screen: later answers are CHANGES, and
+   *  their rows may move (ADR 0058 §5.7). False again once the card has
+   *  retracted, so a new repository's first answer arrives settled. */
+  readonly settled: boolean;
 }
 
 /**
@@ -36,6 +40,7 @@ export function useRepoCard(): RepoCardState {
   const sessionId = useSessionSelector((s) => s.sessionId);
   const { bridge } = useHertaBridge();
   const [shown, setShown] = useSessionScoped<RepoContextSnapshot | null>(null);
+  const [settled, setSettled] = useSessionScoped(false);
   const unmount = useSessionScopedTimer();
 
   useEffect(() => {
@@ -44,8 +49,16 @@ export function useRepoCard(): RepoCardState {
       setShown(repo);
       return;
     }
+    setSettled(false);
     unmount.arm(() => setShown(null), PLAN_SLIDE_MS + REPO_UNMOUNT_SLACK_MS);
-  }, [repo, unmount, setShown]);
+  }, [repo, unmount, setShown, setSettled]);
+
+  // Settled follows what is ON SCREEN (`shown`), one commit behind it: the
+  // render that first draws the rows sees `settled` false and lands them
+  // still; the effect then arms motion for the answers after it.
+  useEffect(() => {
+    if (shown !== null) setSettled(true);
+  }, [shown, setSettled]);
 
   useEffect(() => {
     const refresh = bridge.refreshRepo;
@@ -61,5 +74,5 @@ export function useRepoCard(): RepoCardState {
     return () => window.removeEventListener("focus", onFocus);
   }, [bridge, sessionId]);
 
-  return { repo: shown, open: repo !== null };
+  return { repo: shown, open: repo !== null, settled };
 }

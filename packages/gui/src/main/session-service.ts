@@ -841,6 +841,29 @@ export function createSessionService(
           : { ok: true as const, diff };
       },
     );
+    // The viewer's log tab (ADR 0059 §6): a page of history. Paging
+    // numbers are checked at the door; the reader bounds the limit again.
+    handle(
+      CMD.readWorkspaceLog,
+      async (_e, sessionId: string, skip: number, limit: number) => {
+        const s = host?.activeSession ?? null;
+        if (s === null || s.sessionId !== sessionId) {
+          return { ok: false as const, reason: "no_session" as const };
+        }
+        if (
+          !Number.isInteger(skip) ||
+          skip < 0 ||
+          !Number.isInteger(limit) ||
+          limit <= 0
+        ) {
+          return { ok: false as const, reason: "not_found" as const };
+        }
+        const page = (await s.describeLog?.({ skip, limit })) ?? null;
+        return page === null
+          ? { ok: false as const, reason: "not_found" as const }
+          : { ok: true as const, page };
+      },
+    );
     // The viewer's 打开: hand the jailed path to the OS default app. The
     // same resolution as the read — an outside-resolving name never
     // reaches shell.openPath.

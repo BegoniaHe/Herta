@@ -22,6 +22,7 @@ export type {
   RepoContextDirtyFile,
   RepoContextSnapshot,
   RepoInProgressState,
+  RepoRecentCommit,
   SessionTopic,
   TerminalRecord,
   TerminalRecordBlock,
@@ -31,6 +32,8 @@ export type {
   CommitDescription,
   CommitFileChange,
   CommitFileStatus,
+  LogEntry,
+  LogPage,
   WorkingDiff,
 } from "@herta/tools";
 // The attachment ingest (ADR 0033) is deliberately NOT re-exported here: it is

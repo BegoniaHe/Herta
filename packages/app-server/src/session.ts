@@ -40,8 +40,10 @@ import { type ApiKey, deepseekVisionCaptioner } from "@herta/providers";
 import {
   type CommitDescription,
   describeCommit,
+  describeLog,
   describeRepoContext,
   describeWorkingDiff,
+  type LogPage,
   type WorkingDiff,
 } from "@herta/tools";
 import { type ImageCaptioner, migrateAttachments } from "./attachments.js";
@@ -225,6 +227,13 @@ export interface SessionInternalDeps {
     path: string,
     signal?: AbortSignal,
   ) => Promise<WorkingDiff | null>;
+  /** A page of history for the viewer's log tab (ADR 0059 §6). Defaults to
+   *  the git reader in `@herta/tools`; tests inject a stub. */
+  readonly logDescriber?: (
+    workspace: string,
+    opts: { readonly skip: number; readonly limit: number },
+    signal?: AbortSignal,
+  ) => Promise<LogPage | null>;
   /** Clock (ms) for the easter-egg per-session hourly throttle. Defaults to
    *  `Date.now`; tests inject a controllable clock. */
   readonly easterEggNow?: () => number;
@@ -288,6 +297,11 @@ export class SessionImpl implements Session {
     path: string,
     signal?: AbortSignal,
   ) => Promise<WorkingDiff | null>;
+  private readonly logDescriber: (
+    workspace: string,
+    opts: { readonly skip: number; readonly limit: number },
+    signal?: AbortSignal,
+  ) => Promise<LogPage | null>;
 
   // The block persister — owned by the driver for turn blocks, but held here
   // too so setWorkspace/resetWorkspace can append a structured workspace_set
@@ -404,6 +418,11 @@ export class SessionImpl implements Session {
       path: string,
       signal?: AbortSignal,
     ) => Promise<WorkingDiff | null>;
+    logDescriber: (
+      workspace: string,
+      opts: { readonly skip: number; readonly limit: number },
+      signal?: AbortSignal,
+    ) => Promise<LogPage | null>;
     persister: V2RecordPersister;
     driver: V2ActorDriver;
     sink: BusActorStreamingSink;
@@ -431,6 +450,7 @@ export class SessionImpl implements Session {
     this.repoWatchDebounceMs = opts.repoWatchDebounceMs;
     this.commitDescriber = opts.commitDescriber;
     this.workingDiffDescriber = opts.workingDiffDescriber;
+    this.logDescriber = opts.logDescriber;
     this.persister = opts.persister;
     this.driver = opts.driver;
     this.sink = opts.sink;
@@ -1215,6 +1235,14 @@ export class SessionImpl implements Session {
     return this.workingDiffDescriber(this.wsHolder.current, path);
   }
 
+  /** A page of the workspace repository's history (ADR 0059 §6). */
+  describeLog(opts: {
+    readonly skip: number;
+    readonly limit: number;
+  }): Promise<LogPage | null> {
+    return this.logDescriber(this.wsHolder.current, opts);
+  }
+
   subscribeVoice(): AsyncIterable<VoiceCueEvent> {
     return this.projector.subscribeVoice();
   }
@@ -1633,6 +1661,7 @@ export class SessionImpl implements Session {
       repoWatchDebounceMs: deps.repoWatchDebounceMs ?? REPO_WATCH_DEBOUNCE_MS,
       commitDescriber: deps.commitDescriber ?? describeCommit,
       workingDiffDescriber: deps.workingDiffDescriber ?? describeWorkingDiff,
+      logDescriber: deps.logDescriber ?? describeLog,
     });
     sessionHolder.session = session;
     // The repository card's first answer (ADR 0058): fire-and-forget, the

@@ -35,9 +35,10 @@ export interface ViewerAnchor {
  *  stored copy under `.herta/attachments/` and would read as machine
  *  internals in the tab (owner 2026-08-31) — and an optional line anchor
  *  from a finding cite. */
-/** What a non-file tab shows (ADR 0059): a commit by id, or a path's
- *  working-tree diff against HEAD. Absent = the file itself. */
-export type ViewerTabKind = "commit" | "diff";
+/** What a non-file tab shows (ADR 0059): a commit by id, a path's
+ *  working-tree diff against HEAD, or the repository's history (§6).
+ *  Absent = the file itself. */
+export type ViewerTabKind = "commit" | "diff" | "log";
 
 export interface FileViewerTarget {
   /** The path to read — or, on a `commit` tab, the commit id (ADR 0059). */

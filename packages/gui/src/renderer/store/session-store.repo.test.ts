@@ -19,6 +19,7 @@ const REPO: RepoContextSnapshot = {
   dirty: [{ x: " ", y: "M", path: "a.ts" }],
   dirtyTotal: 1,
   recentSubjects: ["abc1234 init"],
+  recentCommits: [],
 };
 
 function snapshot(workspace: string) {

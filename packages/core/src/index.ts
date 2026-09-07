@@ -16,6 +16,7 @@ export {
   type RepoContextDirtyFile,
   type RepoContextSnapshot,
   type RepoInProgressState,
+  type RepoRecentCommit,
   renderRepoContext,
   serializeUserHistory,
   windowsBackendHostNote,

@@ -4,8 +4,10 @@ import type {
   RepoContextDirtyFile,
   RepoContextSnapshot,
   RepoInProgressState,
+  RepoRecentCommit,
   RepoSnapshot,
 } from "@herta/core";
+import { unpushedShas } from "./log-list.js";
 import { parseStatusPorcelainZ } from "./parse-status.js";
 import { hardenedGitArgs, spawnGit } from "./spawn-git.js";
 
@@ -209,6 +211,8 @@ const MAX_SUBJECT_CHARS = 120;
  *  its own tighter bound (`renderRepoContext`) — prompt bytes and rail
  *  rows are different budgets. */
 export const MAX_RECENT_SUBJECTS = 10;
+/** Unit separator between the log record's fields (never in a subject). */
+const LOG_FIELD = "\x1f";
 
 /**
  * The richer repo description the backend frame renders as its repo-snapshot
@@ -237,10 +241,10 @@ async function describe(
   const sig = signal ?? new AbortController().signal;
   const opts = { timeoutMs: 5_000 } as const;
 
-  // All five queries are independent; `log` on an unborn HEAD exits 128,
+  // All six queries are independent; `log` on an unborn HEAD exits 128,
   // which is an answer (no commits → no subjects), not a failure — so the
   // whole set can run concurrently.
-  const [head, status, log, originHead, layout] = await Promise.all([
+  const [head, status, log, originHead, layout, marks] = await Promise.all([
     spawnGit(
       workspaceRoot,
       hardenedGitArgs(["rev-parse", "--short", "HEAD"]),
@@ -259,17 +263,20 @@ async function describe(
       sig,
       opts,
     ),
-    // `--no-decorate`: a `log.decorate=short` in the user's config would
-    // paint `(HEAD -> main)` into the subject line the card and the marker
-    // parse a sha out of.
+    // Structured, NUL-terminated records rather than `--oneline`: the card
+    // draws id, subject and an unpushed mark apart (ADR 0058 §5.4/§5.6),
+    // and the frame's text form is derived from the same fields — one
+    // spawn, no decoration to strip.
     spawnGit(
       workspaceRoot,
       hardenedGitArgs([
         "log",
-        "--oneline",
-        "--no-decorate",
+        "-z",
+        `--format=%H${LOG_FIELD}%h${LOG_FIELD}%s`,
         "-n",
         String(MAX_RECENT_SUBJECTS),
+        "HEAD",
+        "--",
       ]),
       sig,
       { ...opts, allowExitCodes: [128] },
@@ -295,6 +302,9 @@ async function describe(
       sig,
       opts,
     ),
+    // Which of the recent commits are not on the upstream yet (ADR 0058
+    // §5.6) — the rev-list set, so a merge cannot mislabel the list.
+    unpushedShas(workspaceRoot, sig, opts.timeoutMs),
   ]);
   if (!head.ok || !status.ok || !layout.ok) return null;
   const [root = "", prefix = ""] = layout.stdout.split(/\r?\n/);
@@ -319,19 +329,27 @@ async function describe(
     }
   }
 
-  const recentSubjects =
-    log.ok && log.exitCode === 0
-      ? log.stdout
-          .split("\n")
-          .map((l) => l.trim())
-          .filter((l) => l.length > 0)
-          .slice(0, MAX_RECENT_SUBJECTS)
-          .map((l) =>
-            l.length > MAX_SUBJECT_CHARS
-              ? `${l.slice(0, MAX_SUBJECT_CHARS)}…`
-              : l,
-          )
-      : [];
+  const recentCommits: RepoRecentCommit[] = [];
+  if (log.ok && log.exitCode === 0) {
+    for (const rec of log.stdout.split("\0")) {
+      if (rec.length === 0 || recentCommits.length >= MAX_RECENT_SUBJECTS)
+        continue;
+      const [sha = "", shortSha = "", ...rest] = rec.split(LOG_FIELD);
+      if (sha.length === 0 || shortSha.length === 0) continue;
+      const subject = rest.join(LOG_FIELD);
+      recentCommits.push({
+        sha,
+        shortSha,
+        subject:
+          subject.length > MAX_SUBJECT_CHARS
+            ? `${subject.slice(0, MAX_SUBJECT_CHARS)}…`
+            : subject,
+        unpushed: marks.shas.has(sha),
+      });
+    }
+  }
+  // The frame's text form, unchanged in shape from the `--oneline` days.
+  const recentSubjects = recentCommits.map((c) => `${c.shortSha} ${c.subject}`);
 
   // `--short` yields "origin/main"; the branch name is what the model wants.
   let defaultBranch: string | null = null;
@@ -361,6 +379,7 @@ async function describe(
     dirty,
     dirtyTotal: parsed.files.length,
     recentSubjects,
+    recentCommits,
   };
 }
 

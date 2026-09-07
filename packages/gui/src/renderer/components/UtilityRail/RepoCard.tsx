@@ -2,47 +2,83 @@ import type {
   RepoContextDirtyFile,
   RepoContextSnapshot,
   RepoInProgressState,
+  RepoRecentCommit,
 } from "@herta/app-server";
 import {
   repoPathInsideWorkspace,
   workspaceRelativeRepoPath,
 } from "@herta/core/repo-path";
-import { useRef } from "react";
+import { useCallback, useRef } from "react";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
+import { useListTransitions } from "../../hooks/useListTransitions.js";
+import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import type { MessageKey } from "../../i18n/keys.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { useFileViewerOpen } from "../FileViewer/file-viewer-context.js";
+import { SwapText } from "../Workspace/SwapText.js";
 import { useScrollEdges } from "../Workspace/useScrollEdges.js";
 import { useRepoCard } from "./useRepoCard.js";
+
+/** Row entrance / exit lengths — MUST match `.repo-card__row.is-entering` /
+ *  `.is-leaving` in reference-ux.css. */
+export const REPO_ROW_ENTER_MS = 300;
+export const REPO_ROW_LEAVE_MS = 220;
 
 /**
  * The workspace's repository as a rail card (ADR 0058), under the device:
  * the branch and where it stands against its upstream, an operation left
- * mid-flight (a merge, a rebase), the uncommitted files, and the last
- * commit. What the backend frame already knows at every dispatch (ADR
+ * mid-flight (a merge, a rebase), the uncommitted files, and the recent
+ * commits. What the backend frame already knows at every dispatch (ADR
  * 0049 §2), now in the user's own column — read without asking.
  *
  * Rides the .plan-card chrome (glass, slide, fog, mark) so the rail keeps
- * one card family; the `repo-card` variant carries what differs. Facts
- * only, stated in FORM (the 2026-07-27 rule): nothing here moves. Paths
- * are spelled from the WORKSPACE (git spells them from the repository's
- * root; a workspace that is a subfolder sees `../` for what lies beside
- * it — ADR 0058 amendment) and open in the file viewer where the bridge
- * can read them (ADR 0050): inside the workspace only. The last commit
- * opens as a commit tab (ADR 0059).
+ * one card family; the `repo-card` variant carries what differs. Facts,
+ * stated in FORM (the 2026-07-27 rule): nothing here pulses. What MOVES is
+ * change and touch (§5.7) — a row that arrives or leaves eases in or out
+ * where it sits, the header's count and the branch name swap in place,
+ * and a row under the pointer lifts as a glass pill. Paths are spelled
+ * from the WORKSPACE (git spells them from the repository's root; a
+ * subfolder workspace sees `../` for what lies beside it — §5.1) and
+ * open in the viewer where the bridge can read them (ADR 0050): as their
+ * diff against HEAD (ADR 0059 §5), a conflict as the file. Commits open
+ * as commit tabs (ADR 0059); the unpushed ones carry a mark (§5.6); the
+ * list's own label opens the full history (ADR 0059 §6).
  */
 export function RepoCard(): JSX.Element | null {
   const t = useT();
-  const { repo, open } = useRepoCard();
+  const { repo, open, settled } = useRepoCard();
   const openFile = useFileViewerOpen();
   const { bridge } = useHertaBridge();
+  // Rows move on CHANGE, not on the card's own arrival: until the first
+  // answer has been on screen, the lists render settled (the card's slide
+  // is the entrance), exactly as under reduced motion.
+  const reduced = useReducedMotion() || !settled;
   // A dirty row opens its DIFF where the bridge can read one (ADR 0059
   // §5), the file where it cannot (an older bridge, the demo).
   const diffs = bridge.readWorkspaceDiff !== undefined;
+  const history = bridge.readWorkspaceLog !== undefined;
   const listRef = useRef<HTMLOListElement>(null);
   const edges = useScrollEdges(listRef, repo);
   const logRef = useRef<HTMLOListElement>(null);
   const logEdges = useScrollEdges(logRef, repo);
+
+  const dirtyKey = useCallback((f: RepoContextDirtyFile) => f.path, []);
+  const commitKey = useCallback((c: RepoRecentCommit) => c.sha, []);
+  const motion = {
+    leaveMs: REPO_ROW_LEAVE_MS,
+    enterMs: REPO_ROW_ENTER_MS,
+    reduced,
+  };
+  const dirtyRows = useListTransitions(
+    repo?.dirty ?? EMPTY_DIRTY,
+    dirtyKey,
+    motion,
+  );
+  const commitRows = useListTransitions(
+    repo?.recentCommits ?? EMPTY_COMMITS,
+    commitKey,
+    motion,
+  );
 
   if (repo === null) return null;
 
@@ -71,7 +107,8 @@ export function RepoCard(): JSX.Element | null {
       : t("repo.card.dirty", { n: String(repo.dirtyTotal) });
   const hidden = repo.dirtyTotal - repo.dirty.length;
   const prefix = repo.prefix;
-  const recent = repo.recentSubjects.map(parseSubject);
+  const phaseClass = (phase: "enter" | "steady" | "leave"): string =>
+    phase === "enter" ? " is-entering" : phase === "leave" ? " is-leaving" : "";
 
   return (
     <section
@@ -82,11 +119,13 @@ export function RepoCard(): JSX.Element | null {
     >
       <header className="plan-card__head">
         <span className="plan-card__title">{t("repo.card.title")}</span>
-        <span className="plan-card__count">{count}</span>
+        <span className="plan-card__count repo-card__count">
+          <SwapText text={count} reduced={reduced} />
+        </span>
       </header>
       <div className="repo-card__branch">
         <span className="repo-card__branch-name" title={branchTitle}>
-          {branchLabel}
+          <SwapText text={branchLabel} reduced={reduced} />
         </span>
         {repo.upstream !== null && (
           <span
@@ -98,7 +137,7 @@ export function RepoCard(): JSX.Element | null {
         )}
         {deltaParts.length > 0 && (
           <span className="repo-card__delta" title={deltaTitle}>
-            {deltaParts.join(" ")}
+            <SwapText text={deltaParts.join(" ")} reduced={reduced} />
           </span>
         )}
       </div>
@@ -114,23 +153,25 @@ export function RepoCard(): JSX.Element | null {
             ` · ${t("repo.card.conflicts", { n: String(repo.conflicted.length) })}`}
         </p>
       )}
-      {repo.dirty.length > 0 && (
+      {dirtyRows.length > 0 && (
         <ol
           ref={listRef}
           className={`plan-card__list repo-card__list${
             edges.top ? " has-fog-top" : ""
           }${edges.bottom ? " has-fog-bottom" : ""}`}
         >
-          {repo.dirty.map((file) => {
+          {dirtyRows.map((row) => {
+            const file = row.item;
             const mark = dirtyMark(file);
             const shown = workspaceRelativeRepoPath(file.path, prefix);
             const inside = repoPathInsideWorkspace(file.path, prefix);
             return (
               <li
-                key={file.path}
+                key={row.key}
                 className={`plan-card__row repo-card__row is-${mark.kind}${
                   inside ? "" : " is-outside"
-                }`}
+                }${phaseClass(row.phase)}`}
+                aria-hidden={row.phase === "leave" || undefined}
               >
                 <span
                   className="plan-card__mark"
@@ -138,7 +179,7 @@ export function RepoCard(): JSX.Element | null {
                 >
                   {mark.glyph}
                 </span>
-                {openFile !== null && inside ? (
+                {openFile !== null && inside && row.phase !== "leave" ? (
                   <button
                     type="button"
                     className="repo-card__path"
@@ -180,35 +221,68 @@ export function RepoCard(): JSX.Element | null {
           {t("repo.card.more", { n: String(hidden) })}
         </p>
       )}
-      {recent.length > 0 && (
+      {commitRows.length > 0 && (
         <>
-          <p className="repo-card__section">{t("repo.card.recent")}</p>
+          <div className="repo-card__section">
+            <span>{t("repo.card.recent")}</span>
+            {history && openFile !== null && (
+              <button
+                type="button"
+                className="repo-card__all"
+                onClick={() =>
+                  openFile("history", {
+                    kind: "log",
+                    label: t("viewer.log.tab"),
+                  })
+                }
+              >
+                {t("repo.card.all")}
+                <svg
+                  width="9"
+                  height="9"
+                  viewBox="0 0 10 10"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M3.5 2l3 3-3 3" />
+                </svg>
+              </button>
+            )}
+          </div>
           <ol
             ref={logRef}
             className={`plan-card__list repo-card__log${
               logEdges.top ? " has-fog-top" : ""
             }${logEdges.bottom ? " has-fog-bottom" : ""}`}
           >
-            {recent.map((c) => {
-              const sha = c.sha;
+            {commitRows.map((row) => {
+              const c = row.item;
               return (
                 <li
-                  key={c.line}
-                  className="plan-card__row repo-card__row repo-card__log-row"
+                  key={row.key}
+                  className={`plan-card__row repo-card__row repo-card__log-row${
+                    c.unpushed ? " is-unpushed" : ""
+                  }${phaseClass(row.phase)}`}
+                  aria-hidden={row.phase === "leave" || undefined}
                 >
-                  {sha !== null && (
-                    <span className="plan-card__mark repo-card__sha">
-                      {sha}
-                    </span>
-                  )}
-                  {openFile !== null && sha !== null ? (
+                  <span className="plan-card__mark repo-card__sha">
+                    {c.shortSha}
+                  </span>
+                  {openFile !== null && row.phase !== "leave" ? (
                     <button
                       type="button"
                       className="repo-card__path repo-card__subject"
-                      title={c.line}
-                      aria-label={`${t("activity.commit.openAria")} ${sha}`}
+                      title={`${c.shortSha} ${c.subject}`}
+                      aria-label={`${t("activity.commit.openAria")} ${c.shortSha}`}
                       onClick={() =>
-                        openFile(sha, { kind: "commit", label: sha })
+                        openFile(c.shortSha, {
+                          kind: "commit",
+                          label: c.shortSha,
+                        })
                       }
                     >
                       {c.subject}
@@ -216,9 +290,19 @@ export function RepoCard(): JSX.Element | null {
                   ) : (
                     <span
                       className="repo-card__path repo-card__subject"
-                      title={c.line}
+                      title={`${c.shortSha} ${c.subject}`}
                     >
                       {c.subject}
+                    </span>
+                  )}
+                  {c.unpushed && (
+                    <span
+                      className="repo-card__unpushed"
+                      role="img"
+                      title={t("repo.card.unpushed")}
+                      aria-label={t("repo.card.unpushed")}
+                    >
+                      ↑
                     </span>
                   )}
                 </li>
@@ -231,23 +315,8 @@ export function RepoCard(): JSX.Element | null {
   );
 }
 
-/**
- * A `git log --oneline --no-decorate` line as the card draws it (ADR 0058
- * §5.4): the abbreviated id, then the subject. A line that does not start
- * with a hex id (it cannot, with `--no-decorate` — but the probe is the
- * only writer and this is the reader's guard) renders whole and plain.
- * Exported for tests.
- */
-export function parseSubject(line: string): {
-  readonly line: string;
-  readonly sha: string | null;
-  readonly subject: string;
-} {
-  const m = /^([0-9a-f]{4,40}) (.*)$/.exec(line);
-  if (m === null || m[1] === undefined || m[2] === undefined)
-    return { line, sha: null, subject: line };
-  return { line, sha: m[1], subject: m[2] };
-}
+const EMPTY_DIRTY: readonly RepoContextDirtyFile[] = [];
+const EMPTY_COMMITS: readonly RepoRecentCommit[] = [];
 
 export type DirtyMarkKind =
   | "modified"

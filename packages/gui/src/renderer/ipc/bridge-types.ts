@@ -3,6 +3,7 @@ import type {
   ApprovalResult,
   CommitDescription,
   CreateSessionOpts,
+  LogPage,
   OverlayEvent,
   RecordEvent,
   RepoContextSnapshot,
@@ -266,6 +267,11 @@ export type ReadWorkspaceDiffReply =
       readonly reason: "not_found" | "outside_workspace" | "no_session";
     };
 
+/** Reply from `readWorkspaceLog` (ADR 0059 §6): one page of history. */
+export type ReadWorkspaceLogReply =
+  | { readonly ok: true; readonly page: LogPage }
+  | { readonly ok: false; readonly reason: "not_found" | "no_session" };
+
 /** Reply from `stageImages`. Per-file refusals ride `rejected` so one bad
  *  item never discards its siblings; only whole-action failures use `ok:
  *  false` with a message, like every other command here. */
@@ -436,6 +442,14 @@ export interface HertaBridge {
     sessionId: string,
     path: string,
   ): Promise<ReadWorkspaceDiffReply>;
+  /** The viewer's log tab (ADR 0059 §6): a page of the repository's
+   *  history, newest first, unpushed commits marked. Optional like its
+   *  siblings; the card's list then has no "all commits" opener. */
+  readWorkspaceLog?(
+    sessionId: string,
+    skip: number,
+    limit: number,
+  ): Promise<ReadWorkspaceLogReply>;
   /** The viewer's 打开 button: open the jailed path with the OS default
    *  application (shell.openPath). False when refused/missing. */
   openWorkspaceFile?(sessionId: string, path: string): Promise<boolean>;

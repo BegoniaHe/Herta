@@ -80,8 +80,26 @@ function Probe(): JSX.Element {
       >
         open diff
       </button>
+      <button
+        type="button"
+        data-testid="probe-log"
+        onClick={() => open?.("history", { kind: "log", label: "History" })}
+      >
+        open log
+      </button>
     </>
   );
+}
+
+function logEntry(i: number, unpushed = false) {
+  return {
+    sha: `${String(i).padStart(4, "0")}${"a".repeat(36)}`,
+    shortSha: `${String(i).padStart(4, "0")}aaa`,
+    subject: `step ${i}`,
+    author: "Tester",
+    authoredAt: "2026-09-07T10:00:00+08:00",
+    unpushed,
+  };
 }
 
 const COMMIT = {
@@ -357,6 +375,80 @@ describe("FileViewerPanel (ADR 0050)", () => {
           ?.textContent,
       ).toBe("This path is outside the workspace"),
     );
+  });
+
+  it("the history tab pages the log, marks unpushed commits, loads more, and opens a commit (ADR 0059 §6)", async () => {
+    const mock = createMockHertaBridge();
+    const readWorkspaceLog = vi.fn(async (_s: string, skip: number) => ({
+      ok: true as const,
+      page:
+        skip === 0
+          ? {
+              entries: [logEntry(1, true), logEntry(2)],
+              skip: 0,
+              hasMore: true,
+              upstream: "origin/main",
+            }
+          : {
+              entries: [logEntry(3)],
+              skip,
+              hasMore: false,
+              upstream: "origin/main",
+            },
+    }));
+    const readWorkspaceCommit = vi.fn(async () => ({
+      ok: false as const,
+      reason: "not_found" as const,
+    }));
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: vi.fn(async () => ({
+        ok: false as const,
+        reason: "not_found" as const,
+      })),
+      readWorkspaceLog,
+      readWorkspaceCommit,
+    });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("probe-log"));
+    const panel = await screen.findByTestId("file-viewer");
+    expect(panel.getAttribute("data-kind")).toBe("log");
+    expect(panel.querySelector(".file-viewer__tab-name")?.textContent).toBe(
+      "History",
+    );
+    // No copy, no external open for history — only close.
+    expect(panel.querySelectorAll(".file-viewer__action")).toHaveLength(1);
+    await waitFor(() =>
+      expect(panel.querySelectorAll(".log-view__row")).toHaveLength(2),
+    );
+    expect(readWorkspaceLog).toHaveBeenCalledWith("s1", 0, 50);
+    const rows = panel.querySelectorAll(".log-view__row");
+    expect(rows[0]?.classList.contains("is-unpushed")).toBe(true);
+    expect(rows[1]?.classList.contains("is-unpushed")).toBe(false);
+    expect(rows[0]?.querySelector(".log-view__subject")?.textContent).toBe(
+      "step 1",
+    );
+    expect(panel.querySelector(".commit-view__meta")?.textContent).toContain(
+      "origin/main",
+    );
+    // Load more appends the next page from where the list ends.
+    fireEvent.click(panel.querySelector(".log-view__more") as Element);
+    await waitFor(() =>
+      expect(readWorkspaceLog).toHaveBeenCalledWith("s1", 2, 50),
+    );
+    await waitFor(() =>
+      expect(panel.querySelectorAll(".log-view__row")).toHaveLength(3),
+    );
+    expect(panel.querySelector(".log-view__more")).toBeNull();
+    expect(panel.querySelector(".log-view__end")?.textContent).toBe(
+      "Beginning of history",
+    );
+    // A row opens its commit beside the history.
+    fireEvent.click(panel.querySelectorAll(".log-view__commit")[1] as Element);
+    await waitFor(() =>
+      expect(readWorkspaceCommit).toHaveBeenCalledWith("s1", "0002aaa"),
+    );
+    expect(panel.querySelectorAll(".file-viewer__tab")).toHaveLength(2);
   });
 
   it("a commit git cannot show — or a bridge without the read — answers with the commit notice", async () => {

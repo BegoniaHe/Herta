@@ -372,6 +372,11 @@ export const zh = {
   "viewer.diff.none": "与 HEAD 没有差异",
   "viewer.diff.truncated": "改动较长，仅显示开头",
   "viewer.diff.notFound": "无法读取该路径的改动",
+  /** The history tab (ADR 0059 §6). */
+  "viewer.log.tab": "提交记录",
+  "viewer.log.more": "加载更多",
+  "viewer.log.end": "已到最早的提交",
+  "viewer.log.notFound": "无法读取提交记录",
   "activity.plan.more": "还有 {n} 项",
   "plan.card.title": "任务清单",
   "plan.card.itemsUnavailable": "本次记录无清单明细",
@@ -394,6 +399,8 @@ export const zh = {
   // A workspace that is a subfolder of its repository (ADR 0058 amendment).
   "repo.card.scope": "工作区位于 {prefix}",
   "repo.card.recent": "最近提交",
+  "repo.card.all": "全部",
+  "repo.card.unpushed": "未推送",
   "repo.card.inProgress.merge": "合并进行中",
   "repo.card.inProgress.rebase": "变基进行中",
   "repo.card.inProgress.cherryPick": "拣选进行中",

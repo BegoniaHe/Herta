@@ -690,6 +690,14 @@ describe("repo snapshot section (ADR 0049)", () => {
     ],
     dirtyTotal: 2,
     recentSubjects: ["abc1234 fix: cursor reset"],
+    recentCommits: [
+      {
+        sha: "abc1234abc1234abc1234abc1234abc1234abc12",
+        shortSha: "abc1234",
+        subject: "fix: cursor reset",
+        unpushed: false,
+      },
+    ],
   };
 
   it("renders at most five recent subjects however many the snapshot carries (ADR 0058 §5.4)", () => {

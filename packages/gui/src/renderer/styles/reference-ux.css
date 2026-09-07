@@ -4552,12 +4552,44 @@ button.repo-card__path:hover {
 /* The recent commits (ADR 0058 §5.4): a small section label, then rows
    with the abbreviated id as the mark and the subject as the commit tab's
    opener (ADR 0059) — the same row grammar as the dirty list, capped a
-   little shorter so both lists fit the card. */
+   little shorter so both lists fit the card. The label's right end opens
+   the full history (ADR 0059 §6). */
 .repo-card__section {
   margin: 4px 0 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   font-size: 11px;
   letter-spacing: .02em;
   color: var(--muted-4);
+}
+.repo-card__all {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: none;
+  border: 0;
+  padding: 1px 4px;
+  margin-right: -4px;
+  border-radius: 6px;
+  font: inherit;
+  letter-spacing: inherit;
+  color: var(--muted-4);
+  cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+.repo-card__all:hover,
+.repo-card__all:focus-visible {
+  color: var(--ink);
+  background: var(--ink-a13);
+  outline: none;
+}
+.repo-card__all svg {
+  transition: transform 180ms var(--ease-signature);
+}
+.repo-card__all:hover svg {
+  transform: translateX(1px);
 }
 .repo-card .repo-card__log {
   max-height: 118px;
@@ -4570,6 +4602,110 @@ button.repo-card__path:hover {
 .repo-card__subject {
   font-size: 12px;
   color: var(--muted-2);
+}
+/* Not on the upstream yet (ADR 0058 §5.6): the header's ↑n says how many,
+   the mark says which. The LED tint, so it reads with the count above. */
+.repo-card__unpushed {
+  flex: none;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--banzhuan-led);
+  opacity: .85;
+}
+
+/* ── The card's motion (ADR 0058 §5.7) ────────────────────────────────────
+   Change and touch move; facts do not pulse (the 2026-07-27 rule). A row
+   under the pointer lifts as the record's own glass pill; a row that
+   arrives eases in where it sits, a row that leaves eases out where it was
+   — the list's height follows the row, so nothing below it jumps. The
+   header's count, the branch and ↑↓ swap in place (SwapText). Lengths
+   match REPO_ROW_ENTER_MS / REPO_ROW_LEAVE_MS in RepoCard.tsx. */
+/* The pill bleeds 6px into the card's padding on both sides. The LIST
+   carries the negative margin and the ROW the matching padding — a row
+   with its own negative margin overflows the scroll container sideways,
+   and `overflow-y: auto` then paints a horizontal bar under every list
+   (seen in the built app, 2026-09-07). */
+.repo-card .plan-card__list {
+  margin-left: -6px;
+  margin-right: -6px;
+}
+.repo-card__row {
+  position: relative;
+  border-radius: 6px;
+  padding: 1px 6px;
+  transition: background-color 140ms ease, color 260ms ease;
+}
+.repo-card__row:has(> button:hover),
+.repo-card__row:has(> button:focus-visible) {
+  background: var(--ink-a13);
+}
+.repo-card__row:has(> button:active) {
+  background: var(--ink-a22);
+  transition-duration: 60ms;
+}
+.repo-card__row:has(> button:hover) .plan-card__mark,
+.repo-card__row:has(> button:hover) .repo-card__path {
+  color: var(--ink);
+}
+button.repo-card__path:hover {
+  text-decoration: none;
+}
+button.repo-card__path,
+.repo-card__row .plan-card__mark {
+  transition: color 140ms ease;
+}
+.repo-card__row.is-entering {
+  animation: repo-row-in 300ms var(--ease-signature) both;
+}
+.repo-card__row.is-leaving {
+  animation: repo-row-out 220ms ease both;
+  pointer-events: none;
+}
+@keyframes repo-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+    max-height: 0;
+    margin-top: -7px;
+  }
+  60% {
+    max-height: 22px;
+    margin-top: 0;
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    max-height: 22px;
+    margin-top: 0;
+  }
+}
+@keyframes repo-row-out {
+  from {
+    opacity: 1;
+    transform: none;
+    max-height: 22px;
+    margin-top: 0;
+  }
+  40% {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-3px);
+    max-height: 0;
+    margin-top: -7px;
+  }
+}
+.repo-card__row.is-entering,
+.repo-card__row.is-leaving {
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .repo-card__row.is-entering,
+  .repo-card__row.is-leaving { animation: none; }
+  .repo-card__row.is-leaving { display: none; }
+  .repo-card__all svg { transition: none; }
 }
 .trace-card__note.is-fail {
   color: #9a5b5b;
@@ -5625,6 +5761,115 @@ button.commit-view__path:hover {
 }
 .commit-view .diff-body {
   margin: 0;
+}
+
+/* ── The history tab (ADR 0059 §6) ───────────────────────────────────────
+   One row per commit, the commit tab's opener whole; the unpushed mark in
+   the LED tint; a page's rows ease in one after another, and "load more"
+   appends the next page the same way. */
+.log-view__head {
+  margin-bottom: 8px;
+}
+.log-view__branch {
+  color: var(--slate-deep);
+  font-weight: 600;
+}
+.log-view__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.log-view__row {
+  margin: 0 -8px;
+}
+.log-view__row.is-entering {
+  animation: log-row-in 260ms var(--ease-signature) both;
+}
+@keyframes log-row-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.log-view__commit {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: var(--slate-deep);
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+.log-view__commit:hover,
+.log-view__commit:focus-visible {
+  background: var(--ink-a13);
+  outline: none;
+}
+.log-view__commit:active {
+  background: var(--ink-a22);
+  transition-duration: 60ms;
+}
+.log-view__sha {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--muted-4);
+}
+.log-view__subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+.log-view__unpushed {
+  font-size: 11px;
+  color: var(--banzhuan-led);
+}
+.log-view__row:not(.is-unpushed) .log-view__unpushed {
+  display: none;
+}
+.log-view__who {
+  display: inline-flex;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted-4);
+  white-space: nowrap;
+}
+.log-view__more {
+  display: block;
+  margin: 10px auto 0;
+  padding: 5px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--glass-a44);
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted-2);
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, transform 180ms var(--ease-signature);
+}
+.log-view__more:hover:not(:disabled) {
+  background: var(--ink-a13);
+  color: var(--ink);
+}
+.log-view__more:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.log-view__more:disabled {
+  opacity: .6;
+  cursor: default;
+}
+.log-view__end {
+  text-align: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .log-view__row.is-entering { animation: none; }
+  .log-view__more { transition: none; }
 }
 .file-viewer__action.is-on {
   background: var(--ink-a13);

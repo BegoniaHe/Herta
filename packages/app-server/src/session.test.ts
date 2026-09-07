@@ -297,6 +297,8 @@ async function mkStubSession(
     commitDescriber?: SessionInternalDeps["commitDescriber"];
     // The working-tree diff reader behind the viewer's diff tab (ADR 0059 §5).
     workingDiffDescriber?: SessionInternalDeps["workingDiffDescriber"];
+    // The history reader behind the viewer's log tab (ADR 0059 §6).
+    logDescriber?: SessionInternalDeps["logDescriber"];
   },
 ): Promise<{
   session: SessionImpl;
@@ -385,6 +387,7 @@ async function mkStubSession(
         : {}),
       commitDescriber: extra?.commitDescriber ?? (async () => null),
       workingDiffDescriber: extra?.workingDiffDescriber ?? (async () => null),
+      logDescriber: extra?.logDescriber ?? (async () => null),
       ...(extra?.easterEggNow !== undefined
         ? { easterEggNow: extra.easterEggNow }
         : {}),
@@ -2091,6 +2094,14 @@ describe("Session — the repository probe behind the rail's card (ADR 0058)", (
     dirty: [],
     dirtyTotal: 0,
     recentSubjects: ["abc1234 init"],
+    recentCommits: [
+      {
+        sha: "abc1234abc1234abc1234abc1234abc1234abc12",
+        shortSha: "abc1234",
+        subject: "init",
+        unpushed: false,
+      },
+    ],
   };
   const until = async (ok: () => boolean): Promise<void> => {
     for (let i = 0; i < 200 && !ok(); i += 1) {
@@ -2274,6 +2285,26 @@ describe("Session — the repository probe behind the rail's card (ADR 0058)", (
       [cfg.workspaceRoot, "src/a.ts"],
       [cfg.transcriptDir, "b.ts"],
     ]);
+    await cleanup();
+  });
+
+  it("describeLog reads a page against the EFFECTIVE workspace (ADR 0059 §6)", async () => {
+    const cfg = mkConfig();
+    const asked: Array<[string, number, number]> = [];
+    const { session, cleanup } = await mkStubSession(
+      cfg,
+      undefined,
+      1,
+      undefined,
+      {
+        logDescriber: async (workspace, opts) => {
+          asked.push([workspace, opts.skip, opts.limit]);
+          return null;
+        },
+      },
+    );
+    await session.describeLog({ skip: 50, limit: 50 });
+    expect(asked).toEqual([[cfg.workspaceRoot, 50, 50]]);
     await cleanup();
   });
 });

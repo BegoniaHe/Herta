@@ -1343,6 +1343,7 @@ describe("the repo snapshot header (ADR 0049 §2)", () => {
         dirty: [],
         dirtyTotal: 0,
         recentSubjects: ["abc1234 seed"],
+        recentCommits: [],
       }),
     });
     await runtime.runBrief(sampleBrief, { userMessages: [{ text: "go" }] });

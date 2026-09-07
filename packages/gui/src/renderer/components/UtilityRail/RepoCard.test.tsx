@@ -6,7 +6,7 @@ import { renderWithLocale } from "../../i18n/test-util.js";
 import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
 import { FileViewerPanel } from "../FileViewer/FileViewerPanel.js";
 import { FileViewerProvider } from "../FileViewer/file-viewer-context.js";
-import { dirtyMark, parseSubject, RepoCard } from "./RepoCard.js";
+import { dirtyMark, REPO_ROW_LEAVE_MS, RepoCard } from "./RepoCard.js";
 import { REPO_FOCUS_REFRESH_MIN_MS } from "./useRepoCard.js";
 
 afterEach(() => {
@@ -46,6 +46,26 @@ const REPO: RepoContextSnapshot = {
     "a1b2c3d feat(gui): the rail shows the repository",
     "0f0f0f0 docs: ADR 0058",
     "9999999 chore: seed",
+  ],
+  recentCommits: [
+    {
+      sha: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+      shortSha: "a1b2c3d",
+      subject: "feat(gui): the rail shows the repository",
+      unpushed: true,
+    },
+    {
+      sha: "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+      shortSha: "0f0f0f0",
+      subject: "docs: ADR 0058",
+      unpushed: true,
+    },
+    {
+      sha: "9999999999999999999999999999999999999999",
+      shortSha: "9999999",
+      subject: "chore: seed",
+      unpushed: false,
+    },
   ],
 };
 
@@ -103,8 +123,135 @@ describe("RepoCard (ADR 0058)", () => {
     expect(card?.querySelector(".repo-card__section")?.textContent).toBe(
       "最近提交",
     );
-    // Without a file-reading bridge the paths and subjects are plain spans.
+    // The two commits not on the upstream carry the mark (ADR 0058 §5.6).
+    expect(log.map((r) => r.classList.contains("is-unpushed"))).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    expect(log[0]?.querySelector(".repo-card__unpushed")?.textContent).toBe(
+      "↑",
+    );
+    // Without a file-reading bridge the paths and subjects are plain spans,
+    // and there is no history opener.
     expect(card?.querySelector("button.repo-card__path")).toBeNull();
+    expect(card?.querySelector(".repo-card__all")).toBeNull();
+  });
+
+  it("rows that arrive enter and rows that leave stay for the exit, then drop (ADR 0058 §5.7)", () => {
+    vi.useFakeTimers();
+    const { mock, container } = mount();
+    act(() => {
+      mock.emitRepo({ kind: "repo", workspace: "/repo", repo: REPO });
+    });
+    // The first answer: settled rows, no entrance.
+    expect(container.querySelector(".repo-card__row.is-entering")).toBeNull();
+    act(() => {
+      mock.emitRepo({
+        kind: "repo",
+        workspace: "/repo",
+        repo: {
+          ...REPO,
+          dirty: [
+            { x: " ", y: "M", path: "packages/gui/src/renderer/RepoCard.tsx" },
+            { x: " ", y: "M", path: "src/fresh.ts" },
+          ],
+          dirtyTotal: 2,
+        },
+      });
+    });
+    const rows = [
+      ...container.querySelectorAll(".repo-card__list .repo-card__row"),
+    ];
+    expect(
+      rows.map((r) => [
+        r.querySelector(".repo-card__path")?.textContent,
+        r.classList.contains("is-entering"),
+        r.classList.contains("is-leaving"),
+      ]),
+    ).toEqual([
+      ["packages/gui/src/renderer/RepoCard.tsx", false, false],
+      ["docs/adr/0058.md", false, true],
+      ["scratch.txt", false, true],
+      ["src/fresh.ts", true, false],
+    ]);
+    act(() => {
+      vi.advanceTimersByTime(REPO_ROW_LEAVE_MS + 5);
+    });
+    expect(
+      [...container.querySelectorAll(".repo-card__list .repo-card__row")].map(
+        (r) => r.querySelector(".repo-card__path")?.textContent,
+      ),
+    ).toEqual(["packages/gui/src/renderer/RepoCard.tsx", "src/fresh.ts"]);
+    // The header's count swapped in place rather than repainting.
+    expect(
+      container.querySelector(".repo-card__count .swap-text"),
+    ).not.toBeNull();
+  });
+
+  it("the list's label opens the full history where the bridge reads it (ADR 0059 §6)", async () => {
+    const mock = createMockHertaBridge();
+    const readWorkspaceLog = vi.fn(async () => ({
+      ok: true as const,
+      page: {
+        entries: [
+          {
+            sha: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+            shortSha: "a1b2c3d",
+            subject: "feat(gui): the rail shows the repository",
+            author: "Tester",
+            authoredAt: "2026-09-07T10:00:00+08:00",
+            unpushed: true,
+          },
+        ],
+        skip: 0,
+        hasMore: false,
+        upstream: "origin/main",
+      },
+    }));
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: async () => ({ ok: false, reason: "not_found" }),
+      readWorkspaceLog,
+    });
+    const rendered = renderWithLocale(
+      <HertaBridgeProvider bridge={mock.bridge}>
+        <FileViewerProvider>
+          <RepoCard />
+          <FileViewerPanel />
+        </FileViewerProvider>
+      </HertaBridgeProvider>,
+      { locale: "zh" },
+    );
+    act(() => {
+      mock.emitReset(SNAPSHOT);
+      mock.emitRepo({ kind: "repo", workspace: "/repo", repo: REPO });
+    });
+    const all = rendered.container.querySelector("button.repo-card__all");
+    expect(all?.textContent).toBe("全部");
+    fireEvent.click(all as Element);
+    await waitFor(() =>
+      expect(readWorkspaceLog).toHaveBeenCalledWith("s1", 0, 50),
+    );
+    await waitFor(() =>
+      expect(
+        rendered.container
+          .querySelector(".file-viewer")
+          ?.getAttribute("data-kind"),
+      ).toBe("log"),
+    );
+    expect(
+      rendered.container.querySelector(".file-viewer__tab-name")?.textContent,
+    ).toBe("提交记录");
+    await waitFor(() =>
+      expect(
+        rendered.container.querySelectorAll(".log-view__row"),
+      ).toHaveLength(1),
+    );
+    expect(
+      rendered.container
+        .querySelector(".log-view__row")
+        ?.classList.contains("is-unpushed"),
+    ).toBe(true);
   });
 
   it("a clean tree says so, an operation mid-flight is flagged with its conflicts, and a truncated list says how many more", () => {
@@ -151,8 +298,11 @@ describe("RepoCard (ADR 0058)", () => {
         repo: { ...REPO, branch: null, detached: true, upstream: null },
       });
     });
+    // The branch swaps in place (SwapText): read the entering line, not the
+    // 240 ms leaving twin beside it.
     expect(
-      container.querySelector(".repo-card__branch-name")?.textContent,
+      container.querySelector(".repo-card__branch-name .swap-text__in")
+        ?.textContent,
     ).toBe("游离 HEAD");
     act(() => {
       mock.emitRepo({
@@ -165,13 +315,19 @@ describe("RepoCard (ADR 0058)", () => {
           headShort: null,
           upstream: null,
           recentSubjects: [],
+          recentCommits: [],
         },
       });
     });
     expect(
-      container.querySelector(".repo-card__branch-name")?.textContent,
+      container.querySelector(".repo-card__branch-name .swap-text__in")
+        ?.textContent,
     ).toBe("尚无提交");
-    expect(container.querySelector(".repo-card__log")).toBeNull();
+    // The three commit rows are on their way out (the exit plays where
+    // they were); none is a live row any more.
+    expect(
+      container.querySelectorAll(".repo-card__log-row:not(.is-leaving)"),
+    ).toHaveLength(0);
   });
 
   it("paths open in the file viewer where the bridge can read files", () => {
@@ -389,18 +545,6 @@ describe("RepoCard (ADR 0058)", () => {
       vi.advanceTimersByTime(1000);
     });
     expect(container.querySelector(".repo-card")).toBeNull();
-  });
-});
-
-describe("parseSubject", () => {
-  it("splits a oneline log entry into id and subject; a line without an id renders whole", () => {
-    expect(parseSubject("a1b2c3d feat: x")).toEqual({
-      line: "a1b2c3d feat: x",
-      sha: "a1b2c3d",
-      subject: "feat: x",
-    });
-    expect(parseSubject("no id here").sha).toBeNull();
-    expect(parseSubject("no id here").subject).toBe("no id here");
   });
 });
 

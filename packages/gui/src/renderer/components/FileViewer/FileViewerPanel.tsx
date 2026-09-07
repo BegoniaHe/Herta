@@ -30,6 +30,7 @@ import { CodeView } from "./renderers/CodeView.js";
 import { CommitView } from "./renderers/CommitView.js";
 import { DiffView } from "./renderers/DiffView.js";
 import { ImageView } from "./renderers/ImageView.js";
+import { LogView } from "./renderers/LogView.js";
 import { ViewerErrorBoundary } from "./renderers/ViewerErrorBoundary.js";
 import {
   needsBytes,
@@ -105,6 +106,7 @@ export function FileViewerPanel(): JSX.Element | null {
   const anchor = target?.anchor;
   const isCommit = target?.kind === "commit";
   const isDiff = target?.kind === "diff";
+  const isLog = target?.kind === "log";
   const kindInfo: ViewerKindInfo =
     path === null
       ? { kind: "text" }
@@ -112,7 +114,9 @@ export function FileViewerPanel(): JSX.Element | null {
         ? { kind: "commit" }
         : isDiff
           ? { kind: "diff" }
-          : viewerKindFor(path);
+          : isLog
+            ? { kind: "log" }
+            : viewerKindFor(path);
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
   const [copied, setCopied] = useState(false);
   const [modes, setModes] = useState<Readonly<Record<string, ViewMode>>>({});
@@ -127,7 +131,10 @@ export function FileViewerPanel(): JSX.Element | null {
     const readBytes = bridge.readWorkspaceBytes?.bind(bridge);
     const readCommit = bridge.readWorkspaceCommit?.bind(bridge);
     const readDiff = bridge.readWorkspaceDiff?.bind(bridge);
-    if (kindInfo.kind === "diff") {
+    if (kindInfo.kind === "log") {
+      // The log tab pages itself (LogView); nothing to load here.
+      setLoad({ kind: "loading" });
+    } else if (kindInfo.kind === "diff") {
       if (readDiff === undefined) {
         setLoad({ kind: "diff", reply: { ok: false, reason: "not_found" } });
       } else {
@@ -350,45 +357,50 @@ export function FileViewerPanel(): JSX.Element | null {
               </button>
             </Tooltip>
           )}
-          <Tooltip
-            label={
-              copied
-                ? t("viewer.copied")
-                : isCommit
-                  ? t("viewer.copySha")
-                  : t("viewer.copyPath")
-            }
-            placement="bottom"
-            align="center"
-            portal
-          >
-            <button
-              type="button"
-              className="file-viewer__action"
-              aria-label={isCommit ? t("viewer.copySha") : t("viewer.copyPath")}
-              onClick={() => {
-                navigator.clipboard?.writeText(relative).then(
-                  () => setCopied(true),
-                  () => undefined,
-                );
-              }}
+          {/* The history tab has nothing to copy. */}
+          {!isLog && (
+            <Tooltip
+              label={
+                copied
+                  ? t("viewer.copied")
+                  : isCommit
+                    ? t("viewer.copySha")
+                    : t("viewer.copyPath")
+              }
+              placement="bottom"
+              align="center"
+              portal
             >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 13 13"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.2"
-                aria-hidden="true"
+              <button
+                type="button"
+                className="file-viewer__action"
+                aria-label={
+                  isCommit ? t("viewer.copySha") : t("viewer.copyPath")
+                }
+                onClick={() => {
+                  navigator.clipboard?.writeText(relative).then(
+                    () => setCopied(true),
+                    () => undefined,
+                  );
+                }}
               >
-                <rect x="4" y="4" width="7" height="7" rx="1.5" />
-                <path d="M9 4V3a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 3v4.5A1.5 1.5 0 0 0 3 9h1" />
-              </svg>
-            </button>
-          </Tooltip>
-          {/* A commit is not a file the OS could open. */}
-          {!isCommit && (
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 13 13"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                  aria-hidden="true"
+                >
+                  <rect x="4" y="4" width="7" height="7" rx="1.5" />
+                  <path d="M9 4V3a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 3v4.5A1.5 1.5 0 0 0 3 9h1" />
+                </svg>
+              </button>
+            </Tooltip>
+          )}
+          {/* A commit is not a file the OS could open; neither is history. */}
+          {!isCommit && !isLog && (
             <Tooltip
               label={t("viewer.openExternal")}
               placement="bottom"
@@ -481,6 +493,16 @@ function FileViewerBody({
   readonly anchor?: ViewerAnchor | undefined;
 }): JSX.Element {
   const t = useT();
+  if (kindInfo.kind === "log") {
+    return (
+      <ViewerErrorBoundary
+        key="log"
+        fallback={<Notice text={t("viewer.renderFailed")} />}
+      >
+        <LogView />
+      </ViewerErrorBoundary>
+    );
+  }
   if (load.kind === "loading") {
     // A local read answers in single-digit milliseconds; a spinner would
     // only flash. Hold the empty body for the beat.

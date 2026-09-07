@@ -20,7 +20,9 @@ export type ViewerKind =
   | "commit"
   /** A path's working-tree diff against HEAD (ADR 0059 §5) — the
    *  target's kind again. */
-  | "diff";
+  | "diff"
+  /** The repository's history (ADR 0059 §6). */
+  | "log";
 
 export interface ViewerKindInfo {
   readonly kind: ViewerKind;

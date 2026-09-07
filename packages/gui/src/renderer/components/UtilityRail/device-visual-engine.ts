@@ -1,114 +1,85 @@
 import type { BanzhuanDeviceState } from "../../hooks/useDeviceState.js";
+import { STATE_TARGETS } from "./device-scene/lighting.js";
 
 /**
- * CPU side of the device LED shader (2026-07-12): per-state uniform targets
- * plus the frame step that eases the live uniforms toward them. This is what
- * the old CSS could not do — a state change MORPHS the whole color stack
- * (blue → amber over ~a third of a second) instead of snapping classes and
- * transitioning a drop-shadow around a permanently blue core. The success
- * flash and error double-blink keyframes become time envelopes here.
- * Pure functions + a mutable anim record, so the whole thing unit-tests
- * without GL; DeviceGlow's render loop is a thin uniform-upload shell.
+ * CPU side of the device LED shader (2026-07-12): per-state targets plus
+ * the frame step that eases the live uniforms toward them, so a state
+ * change MORPHS the lamp (blue → amber over ~a third of a second) instead
+ * of snapping, and the success flash and error double-blink are time
+ * envelopes. Pure functions + a mutable anim record, so the whole thing
+ * unit-tests without GL; DeviceGlow's render loop is a thin uniform-upload
+ * shell.
+ *
+ * Since the flat art is rendered from the 3D scene (2026-09-07, ADR 0057
+ * §2.14) the 2D lamp is the 3D indicator's: its colour, its strength
+ * relative to idle, and its breath come from the scene's STATE_TARGETS
+ * (device-scene/lighting.ts) — one table for both cards.
  */
 
 type Rgb = readonly [number, number, number];
 
 export interface DeviceVisualTarget {
-  /** Spill wash + glass disk tint. */
-  readonly color: Rgb;
-  /** Ring body + bloom halo. */
-  readonly glow: Rgb;
-  /** How far the white-hot core leans toward the state color. */
-  readonly coreMix: number;
-  /** Master gain before breath modulation. */
-  readonly intensity: number;
-  /** Spill wash strength. */
-  readonly spill: number;
-  /** Breathing rate; the working states breathe fast (mirrors the old
-   *  1.3s devPulse vs 2.8s idle). */
+  /** The lamp's colour, display-space 0–1 (the 3D indicator's). */
+  readonly lampColor: Rgb;
+  /** The lamp's strength relative to the idle lamp the layer was rendered
+   *  at (device-scene/art-export.ts). */
+  readonly lamp: number;
+  /** Breathing rate and depth (fraction of the strength). */
   readonly breathHz: number;
-  /** Breath modulation depth (fraction of intensity). */
   readonly breathDepth: number;
 }
 
-const BLUE: Rgb = [0.36, 0.55, 1.0];
-const CYAN: Rgb = [0.45, 0.86, 1.0];
+function hexToRgb(hex: string): Rgb {
+  const channel = (i: number): number =>
+    Number.parseInt(hex.slice(i, i + 2), 16) / 255;
+  return [channel(1), channel(3), channel(5)];
+}
 
-const WORKING: DeviceVisualTarget = {
-  color: BLUE,
-  glow: CYAN,
-  coreMix: 0.3,
-  intensity: 1.12,
-  spill: 0.78,
-  breathHz: 1 / 1.3,
-  breathDepth: 0.12,
-};
+const STATES: readonly BanzhuanDeviceState[] = [
+  "idle",
+  "delegated",
+  "reading",
+  "writing",
+  "runningCommand",
+  "waitingApproval",
+  "verifying",
+  "succeeded",
+  "failed",
+];
 
 export const DEVICE_STATE_VISUALS: Record<
   BanzhuanDeviceState,
   DeviceVisualTarget
-> = {
-  idle: {
-    color: BLUE,
-    glow: CYAN,
-    coreMix: 0.28,
-    intensity: 0.92,
-    spill: 0.6,
-    breathHz: 1 / 2.8,
-    breathDepth: 0.07,
-  },
-  delegated: WORKING,
-  reading: WORKING,
-  writing: WORKING,
-  runningCommand: WORKING,
-  verifying: WORKING,
-  waitingApproval: {
-    color: [1.0, 0.72, 0.38],
-    glow: [1.0, 0.85, 0.5],
-    coreMix: 0.5,
-    intensity: 1.02,
-    spill: 0.72,
-    breathHz: 1 / 1.9,
-    breathDepth: 0.1,
-  },
-  succeeded: {
-    color: [0.42, 0.9, 0.6],
-    glow: [0.6, 1.0, 0.72],
-    coreMix: 0.5,
-    intensity: 1.06,
-    spill: 0.72,
-    breathHz: 1 / 2.0,
-    breathDepth: 0.07,
-  },
-  failed: {
-    color: [0.94, 0.36, 0.32],
-    glow: [1.0, 0.5, 0.44],
-    coreMix: 0.55,
-    intensity: 0.9,
-    spill: 0.58,
-    breathHz: 1 / 2.8,
-    breathDepth: 0.04,
-  },
-};
+> = Object.fromEntries(
+  STATES.map((state) => {
+    const t = STATE_TARGETS[state];
+    return [
+      state,
+      {
+        lampColor: hexToRgb(t.color),
+        lamp: t.intensity / STATE_TARGETS.idle.intensity,
+        breathHz: t.hz,
+        breathDepth: t.depth,
+      },
+    ];
+  }),
+) as Record<BanzhuanDeviceState, DeviceVisualTarget>;
 
 /** Time constant of the state-change ease (63% of the way in ~0.35s). */
 const COLOR_EASE_S = 0.35;
+/** A flash on top of the steady lamp, as the 3D's (+1.5 on 2.4). */
+const FLASH_LAMP = 0.6;
 
 export interface DeviceVisualUniforms {
-  readonly color: Rgb;
-  readonly glow: Rgb;
-  readonly coreMix: number;
-  readonly intensity: number;
-  readonly spill: number;
+  readonly lampColor: Rgb;
+  /** Strength relative to idle, breath-modulated. */
+  readonly lamp: number;
   readonly flash: number;
 }
 
 export interface DeviceVisualAnim {
-  color: [number, number, number];
-  glow: [number, number, number];
-  coreMix: number;
-  intensity: number;
-  spill: number;
+  lampColor: [number, number, number];
+  lamp: number;
   breathHz: number;
   breathPhase: number;
   breathDepth: number;
@@ -123,11 +94,8 @@ export function initialDeviceVisual(
 ): DeviceVisualAnim {
   const t = DEVICE_STATE_VISUALS[state];
   return {
-    color: [...t.color],
-    glow: [...t.glow],
-    coreMix: t.coreMix,
-    intensity: t.intensity,
-    spill: t.spill,
+    lampColor: [...t.lampColor],
+    lamp: t.lamp,
     breathHz: t.breathHz,
     breathPhase: 0,
     breathDepth: t.breathDepth,
@@ -184,12 +152,9 @@ export function stepDeviceVisual(
   const t = DEVICE_STATE_VISUALS[state];
   const k = 1 - Math.exp(-dtS / COLOR_EASE_S);
   for (let i = 0; i < 3; i++) {
-    anim.color[i] = lerp(anim.color[i] ?? 0, t.color[i] ?? 0, k);
-    anim.glow[i] = lerp(anim.glow[i] ?? 0, t.glow[i] ?? 0, k);
+    anim.lampColor[i] = lerp(anim.lampColor[i] ?? 0, t.lampColor[i] ?? 0, k);
   }
-  anim.coreMix = lerp(anim.coreMix, t.coreMix, k);
-  anim.intensity = lerp(anim.intensity, t.intensity, k);
-  anim.spill = lerp(anim.spill, t.spill, k);
+  anim.lamp = lerp(anim.lamp, t.lamp, k);
   anim.breathHz = lerp(anim.breathHz, t.breathHz, k);
   anim.breathDepth = lerp(anim.breathDepth, t.breathDepth, k);
 
@@ -208,11 +173,8 @@ export function stepDeviceVisual(
         : 0;
 
   return {
-    color: anim.color,
-    glow: anim.glow,
-    coreMix: anim.coreMix,
-    intensity: anim.intensity * breath,
-    spill: anim.spill,
+    lampColor: anim.lampColor,
+    lamp: anim.lamp * breath + flash * FLASH_LAMP,
     flash,
   };
 }

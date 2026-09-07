@@ -50,6 +50,7 @@ export const DOM_FREE_TESTS = [
   "src/renderer/components/Sidebar/group-sessions.test.ts",
   "src/renderer/components/Sidebar/session-display-title.test.ts",
   "src/renderer/components/UtilityRail/aura-engine.test.ts",
+  "src/renderer/components/UtilityRail/device-scene/art-export-math.test.ts",
   "src/renderer/components/UtilityRail/device-visual-engine.test.ts",
   "src/renderer/components/UtilityRail/dragTracker.test.ts",
   "src/renderer/components/UtilityRail/speakable-text.test.ts",

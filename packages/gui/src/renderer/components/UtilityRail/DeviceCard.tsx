@@ -250,9 +250,9 @@ export function DeviceCard(): JSX.Element {
           style={transform !== null ? { transform } : undefined}
         >
           {/* Day + night renders stacked; CSS shows one per data-theme (both
-              stay loaded so a theme flip swaps without a decode flash). The
-              night render's ring is UNLIT — the DeviceGlow shader is its
-              only light source. */}
+              stay loaded so a theme flip swaps without a decode flash). Both
+              are the 3D device rendered at this framing with its ring UNLIT
+              (ADR 0057 §2.14) — the DeviceGlow layer is the lamp. */}
           <img
             className="agent-layer agent-device-img agent-device-img--day"
             src={agentDevice}

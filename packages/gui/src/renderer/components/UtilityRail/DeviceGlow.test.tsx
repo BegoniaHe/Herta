@@ -22,7 +22,8 @@ function mockWebgl(): { calls: Record<string, number> } {
         if (
           prop === "createShader" ||
           prop === "createProgram" ||
-          prop === "createBuffer"
+          prop === "createBuffer" ||
+          prop === "createTexture"
         )
           return () => ({});
         if (prop === "getUniformLocation") return () => ({});
@@ -146,6 +147,43 @@ describe("DeviceGlow", () => {
     expect(calls.linkProgram ?? 0).toBe(linked + 1);
     expect(canvas.dataset.fallback).toBeUndefined();
     expect(calls.drawArrays ?? 0).toBeGreaterThan(during + 2);
+  });
+
+  it("uploads a theme's lamp layer once its image has decoded, and draws it (ADR 0057 §2.14)", () => {
+    vi.useFakeTimers();
+    mockAsyncRaf();
+    const { calls } = mockWebgl();
+    // A recording Image: the component asks for two (light, dark) and
+    // uploads each when it loads; jsdom never loads one by itself.
+    const made: Array<{ onload: (() => void) | null; src: string }> = [];
+    class FakeImage {
+      onload: (() => void) | null = null;
+      decoding = "async";
+      src = "";
+      complete = false;
+      naturalWidth = 0;
+      constructor() {
+        made.push(this);
+      }
+    }
+    vi.stubGlobal("Image", FakeImage);
+    render(<DeviceGlow state="idle" />);
+    expect(made.length).toBe(2);
+    expect(made.map((m) => m.src).every((s) => s.length > 0)).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(16 * 3);
+    });
+    expect(calls.texImage2D ?? 0).toBe(0);
+    const first = made[0] as FakeImage;
+    first.complete = true;
+    first.naturalWidth = 896;
+    act(() => {
+      first.onload?.();
+      vi.advanceTimersByTime(16 * 3);
+    });
+    expect(calls.texImage2D).toBe(1);
+    expect(calls.bindTexture ?? 0).toBeGreaterThan(1);
+    vi.unstubAllGlobals();
   });
 
   it("fallback state classes track the state prop", () => {

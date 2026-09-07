@@ -34,6 +34,7 @@ import {
 import * as THREE from "three/webgpu";
 import type { BanzhuanDeviceState } from "../../../hooks/useDeviceState.js";
 import type { ResolvedTheme } from "../../../hooks/useResolvedTheme.js";
+import { unpadRows } from "./art-export-math.js";
 import { advanceLift, createLiftPose } from "./lift.js";
 import {
   applyCloudy,
@@ -42,6 +43,7 @@ import {
   lightingAt,
   STATE_TARGETS,
   timeWeights,
+  type WeatheredLighting,
 } from "./lighting.js";
 import { pictureChanged, type ShownPicture } from "./render-gate.js";
 
@@ -74,9 +76,12 @@ import { pictureChanged, type ShownPicture } from "./render-gate.js";
 /** Design units → metres (the GLB is physical; the study's camera and light
  *  positions are in the old Blender display units). */
 const UNIT = 0.05;
-/** The flat card's device image is 216 × 270 CSS px with a 934/1403 visible
- *  silhouette: the 3D device is framed to the same 179.74 px height. */
-const DEVICE_HEIGHT_PX = (270 * 934) / 1403;
+/** The flat card's preview box, CSS px, and the device's height in it: the
+ *  art's visible silhouette is 934/1403 of the box, 179.74 px, and the 3D
+ *  device is framed to the same height. The art is rendered from this
+ *  scene at that framing (§2.14), so the two agree by construction. */
+export const FLAT_BOX_CSS = { width: 216, height: 270 } as const;
+const DEVICE_HEIGHT_PX = (FLAT_BOX_CSS.height * 934) / 1403;
 /** The study's card-mode buffer policy: ≥1.5× at DPR 1, honour up to 2×,
  *  cap the long edge at 768 px. */
 const MAX_LONG_EDGE_PX = 768;
@@ -168,7 +173,7 @@ const SNAPSHOT_DIVISOR = 4;
 
 /** RGBA bytes → an opaque JPEG data URL. The WebGPU readback is top-down,
  *  and its rows may be padded to 256 bytes (a diagonal smear if read as
- *  tight rows): the stride is taken from the buffer's own length. */
+ *  tight rows): `unpadRows` takes the stride from the buffer's length. */
 function encodeSnapshot(
   pixels: Uint8Array,
   width: number,
@@ -179,15 +184,7 @@ function encodeSnapshot(
   out.height = height;
   const ctx = out.getContext("2d");
   if (ctx === null) return null;
-  const rowBytes = width * 4;
-  // three sizes the readback as (height − 1) × paddedRow + rowBytes.
-  const paddedRow = Math.ceil(rowBytes / 256) * 256;
-  const stride =
-    pixels.length >= (height - 1) * paddedRow + rowBytes ? paddedRow : rowBytes;
-  const rgba = new Uint8ClampedArray(rowBytes * height);
-  for (let y = 0; y < height; y += 1) {
-    rgba.set(pixels.subarray(y * stride, y * stride + rowBytes), y * rowBytes);
-  }
+  const rgba = unpadRows(pixels, width, height);
   for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
   ctx.putImageData(new ImageData(rgba, width, height), 0, 0);
   return out.toDataURL("image/jpeg", 0.72);
@@ -897,6 +894,9 @@ export async function createDeviceScene(
   const gltfLoader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   const device = await gltfLoader.loadAsync(assetUrl("device.glb"));
   const ringMaterials: BakedStandardMaterial[] = [];
+  /** The meshes wearing the indicator (the art export measures the LED's
+   *  place from them, §2.14). */
+  const ringMeshes: THREE.Mesh[] = [];
   device.scene.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
@@ -920,6 +920,9 @@ export async function createDeviceScene(
       : (materials[0] as THREE.Material);
     for (const m of materials) {
       if (m.name.startsWith("Indicator")) ringMaterials.push(m);
+    }
+    if (materials.some((m) => m.name.startsWith("Indicator"))) {
+      ringMeshes.push(mesh);
     }
   });
   device.scene.scale.setScalar(1 / UNIT);
@@ -1028,8 +1031,10 @@ export async function createDeviceScene(
     raf = null;
     timer = null;
   };
+  /** The art export (§2.14) owns the scene while it renders offscreen. */
+  let exporting = false;
   const mayRun = (): boolean =>
-    !disposed && ready && !inputs.paused && !document.hidden;
+    !disposed && ready && !inputs.paused && !document.hidden && !exporting;
   const schedule = (delay = 0): void => {
     if (raf !== null || timer !== null || !mayRun()) return;
     if (delay > 1) {
@@ -1049,20 +1054,23 @@ export async function createDeviceScene(
     }
   };
 
+  /** Frame the device to the flat card's visible silhouette height in a
+   *  box of this size (CSS px), not to the whole box. */
+  const frameCamera = (boxWidth: number, boxHeight: number): void => {
+    const span = (projectedDeviceHeight * boxHeight) / DEVICE_HEIGHT_PX;
+    camera.left = (-span * boxWidth) / boxHeight / 2;
+    camera.right = (span * boxWidth) / boxHeight / 2;
+    camera.top = span / 2;
+    camera.bottom = -span / 2;
+    camera.updateProjectionMatrix();
+  };
   const resize = (): void => {
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
     if (width === 0 || height === 0) return;
     stageWidth = width;
     stageHeight = height;
-    // Frame the device to the flat card's visible silhouette height, not the
-    // whole card.
-    const span = (projectedDeviceHeight * stageHeight) / DEVICE_HEIGHT_PX;
-    camera.left = (-span * stageWidth) / stageHeight / 2;
-    camera.right = (span * stageWidth) / stageHeight / 2;
-    camera.top = span / 2;
-    camera.bottom = -span / 2;
-    camera.updateProjectionMatrix();
+    frameCamera(stageWidth, stageHeight);
     const ratio = renderPixelRatio(
       stageWidth,
       stageHeight,
@@ -1071,6 +1079,62 @@ export async function createDeviceScene(
     if (renderer.getPixelRatio() !== ratio) renderer.setPixelRatio(ratio);
     renderer.setSize(stageWidth, stageHeight, false);
     wake(500);
+  };
+
+  // The recipe onto the scene, in the three parts the art export (§2.14)
+  // also drives: the lights, the indicator, and the bake weights.
+  /** The lighting onto the lights, the background and the exposure. */
+  const applyLighting = (light: WeatheredLighting, phase: number): void => {
+    background
+      .set(light.background)
+      .multiplyScalar(light.external * light.backgroundScale);
+    key.color.set(light.keyColor);
+    key.intensity = light.key;
+    key.position.fromArray(light.position as unknown as number[]);
+    clouds.update(light.cloudDepth, phase);
+    fill.intensity = light.fill;
+    rim.intensity = light.rim;
+    sky.intensity = light.sky;
+    softbox.intensity = light.softbox;
+    softbox.color.copy(key.color);
+    contour.intensity = light.contour;
+    scene.environmentIntensity = light.environment;
+    renderer.toneMappingExposure = light.exposure;
+    scene.environmentRotation.y = light.rotation;
+  };
+  /** The indicator: the annulus's own emission and albedo, and the baked
+   *  lamp transport onto the device and the room. */
+  const applyRing = (color: THREE.Color, intensity: number): void => {
+    for (const mat of ringMaterials) {
+      mat.emissive.copy(color);
+      mat.emissiveIntensity = intensity;
+      mat.color.copy(color);
+    }
+    u.ringColor.value.copy(color);
+    u.ringStrength.value = intensity;
+  };
+  /** Bake weights: daylight bounce by hour and weather, faded as the
+   *  device leaves its baked pose. The contact shadow stays on the floor
+   *  and fades as the device rises (gone by the 12 px ceiling), and goes
+   *  with the daylight at night. */
+  const applyBake = (
+    hour: number,
+    light: WeatheredLighting,
+    lift: number,
+    liftPx: number,
+  ): void => {
+    u.contact.value =
+      CONTACT_STRENGTH * Math.max(0, 1 - liftPx / 12) * light.external;
+    u.lift.value = lift * UNIT;
+    u.weights.value.fromArray(timeWeights(hour));
+    const poseValidity = Math.exp(-10 * Math.max(lift, 0));
+    u.bounceStrength.value = poseValidity * light.external * light.bounce;
+    u.daylightTint.value.setRGB(
+      1 - 0.16 * light.cool,
+      1 - 0.055 * light.cool,
+      1,
+    );
+    u.roomStrength.value = poseValidity;
   };
 
   const frame = (now: number): void => {
@@ -1098,22 +1162,7 @@ export async function createDeviceScene(
     if (motion && light.cloudDepth > 0 && light.external > 0.001) {
       cloudPhase += dt;
     }
-    background
-      .set(light.background)
-      .multiplyScalar(light.external * light.backgroundScale);
-    key.color.set(light.keyColor);
-    key.intensity = light.key;
-    key.position.fromArray(light.position as unknown as number[]);
-    clouds.update(light.cloudDepth, cloudPhase);
-    fill.intensity = light.fill;
-    rim.intensity = light.rim;
-    sky.intensity = light.sky;
-    softbox.intensity = light.softbox;
-    softbox.color.copy(key.color);
-    contour.intensity = light.contour;
-    scene.environmentIntensity = light.environment;
-    renderer.toneMappingExposure = light.exposure;
-    scene.environmentRotation.y = light.rotation;
+    applyLighting(light, cloudPhase);
 
     const target = STATE_TARGETS[inputs.state];
     liveColor.lerp(targetColor, ease);
@@ -1159,19 +1208,11 @@ export async function createDeviceScene(
     };
     let renderMs = 0;
     if (moving || pictureChanged(shown, next)) {
-      for (const mat of ringMaterials) {
-        mat.emissive.copy(liveColor);
-        mat.emissiveIntensity = ringIntensity;
-        mat.color.copy(liveColor);
-      }
+      applyRing(liveColor, ringIntensity);
       (bloomNode.strength as { value: number }).value =
         (0.065 + light.night * 0.1) / Math.sqrt(light.adaptation);
       assembly.position.y = lift;
-      // The contact shadow stays on the floor and fades as the device
-      // rises (gone by the 12 px ceiling), and goes with the daylight at
-      // night.
-      u.contact.value =
-        CONTACT_STRENGTH * Math.max(0, 1 - pose.liftPx / 12) * light.external;
+      applyBake(liveHour, light, lift, pose.liftPx);
 
       // Pulsing the indicator does not move the silhouette: shadow maps
       // are reused until the key or the device has moved by about a
@@ -1204,21 +1245,6 @@ export async function createDeviceScene(
           shadowDirty[name] && (l.intensity > 0 || explicit);
         if (l.shadow.needsUpdate) shadowDirty[name] = false;
       }
-
-      // Bake weights: daylight bounce by hour, faded as the device leaves
-      // its baked pose; ring transport scaled by the live indicator.
-      u.lift.value = lift * UNIT;
-      u.weights.value.fromArray(timeWeights(liveHour));
-      const poseValidity = Math.exp(-10 * Math.max(lift, 0));
-      u.bounceStrength.value = poseValidity * light.external * light.bounce;
-      u.daylightTint.value.setRGB(
-        1 - 0.16 * light.cool,
-        1 - 0.055 * light.cool,
-        1,
-      );
-      u.roomStrength.value = poseValidity;
-      u.ringColor.value.copy(liveColor);
-      u.ringStrength.value = ringIntensity;
 
       const renderStart = performance.now();
       graph.render();
@@ -1331,6 +1357,45 @@ export async function createDeviceScene(
   if (disposed) throw new Error("disposed while presenting");
   ready = true;
   wake(1400);
+
+  if (profile) {
+    // The flat art's export (§2.14), profiling only: a script drives it
+    // over CDP through `canvas.__export`; the module loads on demand.
+    void import("./art-export.js").then(({ createArtExport }) => {
+      if (disposed) return;
+      expose(
+        "__export",
+        createArtExport({
+          renderer,
+          scene,
+          camera,
+          device: device.scene,
+          room: alcove,
+          ringMeshes,
+          ringMaterials,
+          shadowLights: [key, contour],
+          contact: u.contact,
+          frameFlatBox: () =>
+            frameCamera(FLAT_BOX_CSS.width, FLAT_BOX_CSS.height),
+          applyLighting,
+          applyRing,
+          applyBake,
+          begin: () => {
+            exporting = true;
+            stopLoop();
+          },
+          end: () => {
+            exporting = false;
+            assembly.position.y = 0;
+            key.shadow.needsUpdate = true;
+            contour.shadow.needsUpdate = true;
+            resize();
+            wake(1000);
+          },
+        }),
+      );
+    });
+  }
 
   const snapshot = async (): Promise<string | null> => {
     if (disposed || !ready || stageWidth === 0) return null;

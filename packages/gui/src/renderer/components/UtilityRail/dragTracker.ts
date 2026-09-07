@@ -41,19 +41,20 @@ export interface FractionBox {
 
 /**
  * Where the device actually is inside `.agent-preview` (owner 2026-09-07:
- * "the draggable area is obviously larger than the device"). Measured from
- * the flat art's alpha: opaque pixels span x 275–842 of 1121 and y
- * 231–1166 of 1403 (agent_device.png, threshold 24/255), i.e. the middle
- * 51 % of the width and 67 % of the height, centred. The 3D model was
- * built from the art, not traced from it, but it is framed to the same
- * box: its projected extent measured within a pixel of this one on every
- * edge (2026-09-07), so one box serves both.
+ * "the draggable area is obviously larger than the device"). Measured
+ * from the flat art's alpha — the art is the 3D device rendered at the
+ * card's framing (ADR 0057 §2.14; `scripts/device-art-export.mjs` prints
+ * the box): opaque pixels span x 279–840 of 1120 and y 235–1164 of 1400
+ * (threshold 24/255), i.e. the middle 50 % of the width and 66 % of the
+ * height, centred. The live 3D device is framed to the same box, so one
+ * box serves both. (The hand-drawn art it replaced measured 275–842 of
+ * 1121 by 231–1166 of 1403 — the same box within a pixel.)
  */
 export const DEVICE_SILHOUETTE: FractionBox = {
-  left: 275 / 1121,
-  top: 231 / 1403,
-  right: 843 / 1121,
-  bottom: 1167 / 1403,
+  left: 279 / 1120,
+  top: 235 / 1400,
+  right: 841 / 1120,
+  bottom: 1165 / 1400,
 };
 
 /** Whether a point, as fractions of the preview box, is over the device. */

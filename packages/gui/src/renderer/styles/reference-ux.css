@@ -294,10 +294,11 @@
 :root[data-theme="dark"] .transfer-icon.transfer-icon--night {
   display: block;
 }
-/* The HRT-001 device render swaps for its night version (user-provided art,
-   2026-07-13; identical pose/geometry, unlit ring — the DeviceGlow shader
-   is its only light in the dark). Both stay mounted so a theme flip swaps
-   with no decode flash. */
+/* The HRT-001 device render swaps for its night version. Both are the 3D
+   device rendered at the card's framing (ADR 0057 §2.14, replacing the
+   hand-drawn art of 2026-07-13), their ring unlit — the DeviceGlow layer
+   is the lamp. Both stay mounted so a theme flip swaps with no decode
+   flash. */
 .agent-device-img--night {
   display: none;
 }
@@ -1736,8 +1737,10 @@ body:after{
   transition: transform 300ms ease-out, opacity 300ms ease-out;
   /* Anchor the shrink to the ground contact so the shadow stays put and
      only gets smaller/fainter as the device lifts — scaling from the box
-     center would drag the (below-center) shadow visibly upward. */
-  transform-origin: 50% 88%;
+     center would drag the (below-center) shadow visibly upward. The
+     shadow is the 3D scene's contact shadow (ADR 0057 §2.14), the soft
+     band under the device's base, which sits at 83.2 % of the box. */
+  transform-origin: 50% 84%;
 }
 
 /* Device LED shader layer (2026-07-12): one WebGL canvas replacing the
@@ -1745,7 +1748,11 @@ body:after{
    PNG (z2) exactly where the spill (z3) / ring (z4) layers lived; inside
    .agent-lift-group so drag-to-lift carries it. The legacy stack stays in
    the DOM as the no-WebGL fallback — hidden unless the canvas flags that
-   GL init or the shader compile failed. */
+   GL init or the shader compile failed.
+   Since ADR 0057 §2.14 the pass draws the 3D scene's own lamp layer —
+   the lamp's light on the device — and it is LIGHT: plus-lighter adds it
+   to whatever is under it (the art, the card), the way emission adds in
+   the scene. */
 .device-glow-canvas {
   position: absolute;
   inset: 0;
@@ -1753,6 +1760,7 @@ body:after{
   height: 100%;
   z-index: 3;
   pointer-events: none;
+  mix-blend-mode: plus-lighter;
 }
 .device-glow-fallback {
   display: none;
@@ -1879,10 +1887,10 @@ button.agent-preview {
 .agent-preview::after {
   content: "";
   position: absolute;
-  left: 24.53%;
-  top: 16.46%;
-  width: 50.67%;
-  height: 66.71%;
+  left: 24.91%;
+  top: 16.79%;
+  width: 50.18%;
+  height: 66.43%;
   cursor: grab;
 }
 .agent-preview.is-lifting,

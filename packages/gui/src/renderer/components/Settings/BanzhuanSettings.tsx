@@ -126,15 +126,19 @@ export function BanzhuanSettings(): JSX.Element {
   const writeSeqRef = useRef(0);
 
   // Tool-contract row (ADR 0040). Same optimistic / latest-wins discipline as
-  // the thinking row; hides when the bridge's config carries no `contract`
-  // (an older bridge / the website demo). `bashFound` comes from main and is
-  // folded into the row description — the fallback is stated where the
-  // choice is made.
+  // the thinking row, and on screen from the FIRST paint like it: the row
+  // used to wait for the config read to prove the bridge carries
+  // `contract`, so every switch into this pane painted two rows and then
+  // three, pushing the demo card down a beat later (owner 2026-09-07). The
+  // case it waited for does not exist — the preload ships with the
+  // renderer, and the website demo omits `setBackendConfig` altogether,
+  // which hides every row here. `bashFound` comes from main and is folded
+  // into the row description — the fallback is stated where the choice is
+  // made.
   // Pre-load optimistic state = the real handler's default (minimal —
   // owner flip 2026-08-17), so the pill never flashes 标准 while the
   // config is in flight.
   const [contract, setContract] = useState<BackendContractChoice>("minimal");
-  const [contractKnown, setContractKnown] = useState(false);
   const [bashFound, setBashFound] = useState<boolean | undefined>(undefined);
   const [contractFailed, setContractFailed] = useState(false);
   const contractTouchedRef = useRef(false);
@@ -146,10 +150,8 @@ export function BanzhuanSettings(): JSX.Element {
       (c) => {
         if (!alive) return;
         if (!touchedRef.current) setThinking(c.thinking);
-        if (c.contract !== undefined) {
-          setContractKnown(true);
-          if (!contractTouchedRef.current) setContract(c.contract);
-        }
+        if (c.contract !== undefined && !contractTouchedRef.current)
+          setContract(c.contract);
         setBashFound(c.bashFound);
       },
       () => {
@@ -259,7 +261,7 @@ export function BanzhuanSettings(): JSX.Element {
             }
           />
         )}
-        {thinkingSupported && contractKnown && (
+        {thinkingSupported && (
           <SettingRow
             title={t("banzhuan.contract")}
             description={

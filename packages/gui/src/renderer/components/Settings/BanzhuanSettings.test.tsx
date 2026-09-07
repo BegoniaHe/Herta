@@ -176,14 +176,22 @@ describe("BanzhuanSettings", () => {
       expect(queryByText(/Install Git for Windows/)).toBeTruthy();
     });
 
-    it("hides the row when the bridge's config carries no contract (older bridge / website demo)", async () => {
+    it("is on the FIRST paint beside the thinking row — never two rows then three (owner 2026-09-07); a config without `contract` keeps the default", async () => {
       const mock = createMockHertaBridge({
         getBackendConfigResult: { thinking: "high" },
       });
-      renderPane(mock);
+      const { container } = renderPane(mock);
+      // Synchronously, before the config read resolves: both backend rows
+      // (the 3D row hides on this mock, which lacks its surface).
+      expect(screen.getByLabelText("Tool contract")).toBeInTheDocument();
+      expect(container.querySelectorAll(".settings-row")).toHaveLength(2);
       const thinking = screen.getByLabelText("Thinking effort");
       await waitFor(() => expect(thinking.textContent).toContain("High"));
-      expect(screen.queryByLabelText("Tool contract")).toBeNull();
+      // The row stays, on the handler's default, when the config says nothing.
+      expect(screen.getByLabelText("Tool contract").textContent).toContain(
+        "Minimal",
+      );
+      expect(container.querySelectorAll(".settings-row")).toHaveLength(2);
     });
 
     it("a failed write snaps back and surfaces the error", async () => {

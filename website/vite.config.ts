@@ -33,6 +33,19 @@ export default defineConfig({
         find: /^.*\/shared\/attachment-image\.js$/,
         replacement: resolve(__dirname, "src/demo-attachment-image.ts"),
       },
+      // The device card's two pictures (ADR 0057 §2.14) are 570–800 KB
+      // PNGs in the app, where they are local; the site serves half-size
+      // lossy WebP twins of the same renders (scripts/device-art-export.mjs
+      // writes both), swapped at the import (owner, 2026-09-07). The shadow
+      // and lamp layers are small and come through as they are.
+      {
+        find: /^.*\/assets\/agent_device\.png$/,
+        replacement: resolve(__dirname, "src/assets/agent_device.webp"),
+      },
+      {
+        find: /^.*\/assets\/agent_device_night\.png$/,
+        replacement: resolve(__dirname, "src/assets/agent_device_night.webp"),
+      },
       {
         find: "@gui",
         replacement: resolve(__dirname, "../packages/gui/src/renderer"),

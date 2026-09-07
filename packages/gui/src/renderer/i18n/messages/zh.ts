@@ -330,6 +330,8 @@ export const zh = {
   /** The commit tab (ADR 0059): a sha in the done marker or the repository
    *  card opens the commit beside the record. */
   "activity.commit.openAria": "查看提交",
+  /** The diff tab (ADR 0059 §5): a dirty row opens its change against HEAD. */
+  "activity.diff.openAria": "查看改动",
   "viewer.close": "关闭",
   "viewer.closeTab": "关闭文件",
   "viewer.copyPath": "复制路径",
@@ -366,6 +368,10 @@ export const zh = {
   "viewer.commit.binary": "二进制",
   "viewer.commit.truncated": "补丁较长，仅显示开头",
   "viewer.commit.moreFiles": "还有 {n} 个文件未列出",
+  "viewer.diff.against": "相对 HEAD 的改动",
+  "viewer.diff.none": "与 HEAD 没有差异",
+  "viewer.diff.truncated": "改动较长，仅显示开头",
+  "viewer.diff.notFound": "无法读取该路径的改动",
   "activity.plan.more": "还有 {n} 项",
   "plan.card.title": "任务清单",
   "plan.card.itemsUnavailable": "本次记录无清单明细",
@@ -387,6 +393,7 @@ export const zh = {
   "repo.card.more": "还有 {n} 项",
   // A workspace that is a subfolder of its repository (ADR 0058 amendment).
   "repo.card.scope": "工作区位于 {prefix}",
+  "repo.card.recent": "最近提交",
   "repo.card.inProgress.merge": "合并进行中",
   "repo.card.inProgress.rebase": "变基进行中",
   "repo.card.inProgress.cherryPick": "拣选进行中",

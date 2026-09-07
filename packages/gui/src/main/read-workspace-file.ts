@@ -81,7 +81,10 @@ export async function resolveInsideWorkspace(
 ): Promise<
   | { readonly kind: "ok"; readonly abs: string; readonly relative: string }
   | { readonly kind: "outside" }
-  | { readonly kind: "missing" }
+  /** `relative` is the in-workspace spelling of a name with no inode —
+   *  what the diff tab hands git for a DELETED tracked file (ADR 0059 §5).
+   *  Absent when the name never resolved far enough to have one. */
+  | { readonly kind: "missing"; readonly relative?: string }
 > {
   if (typeof inputPath !== "string" || inputPath.trim().length === 0)
     return { kind: "missing" };
@@ -103,7 +106,16 @@ export async function resolveInsideWorkspace(
   } catch {
     // No inode to judge — fall back to the unresolved spelling: an
     // in-workspace name is a missing file, an outside one is refused.
-    return isInside(candidate) ? { kind: "missing" } : { kind: "outside" };
+    return isInside(candidate)
+      ? {
+          kind: "missing",
+          relative: candidate
+            .slice(realRoot.length)
+            .replace(/^[\\/]/, "")
+            .split(sep)
+            .join("/"),
+        }
+      : { kind: "outside" };
   }
   if (!isInside(real)) return { kind: "outside" };
   const relative = real

@@ -205,6 +205,10 @@ function isUnmerged(x: string, y: string): boolean {
 const MAX_CONTEXT_DIRTY = 40;
 const MAX_CONTEXT_CONFLICTED = 20;
 const MAX_SUBJECT_CHARS = 120;
+/** The card's recent-commit list (ADR 0058 §5.4). The backend frame keeps
+ *  its own tighter bound (`renderRepoContext`) — prompt bytes and rail
+ *  rows are different budgets. */
+export const MAX_RECENT_SUBJECTS = 10;
 
 /**
  * The richer repo description the backend frame renders as its repo-snapshot
@@ -260,7 +264,13 @@ async function describe(
     // parse a sha out of.
     spawnGit(
       workspaceRoot,
-      hardenedGitArgs(["log", "--oneline", "--no-decorate", "-n", "5"]),
+      hardenedGitArgs([
+        "log",
+        "--oneline",
+        "--no-decorate",
+        "-n",
+        String(MAX_RECENT_SUBJECTS),
+      ]),
       sig,
       { ...opts, allowExitCodes: [128] },
     ),
@@ -315,7 +325,7 @@ async function describe(
           .split("\n")
           .map((l) => l.trim())
           .filter((l) => l.length > 0)
-          .slice(0, 5)
+          .slice(0, MAX_RECENT_SUBJECTS)
           .map((l) =>
             l.length > MAX_SUBJECT_CHARS
               ? `${l.slice(0, MAX_SUBJECT_CHARS)}…`

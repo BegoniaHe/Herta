@@ -13,6 +13,7 @@ import { useT } from "../../i18n/LocaleProvider.js";
 import type {
   ReadWorkspaceBytesReply,
   ReadWorkspaceCommitReply,
+  ReadWorkspaceDiffReply,
   ReadWorkspaceFileReply,
 } from "../../ipc/bridge-types.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
@@ -27,6 +28,7 @@ import {
 } from "./file-viewer-context.js";
 import { CodeView } from "./renderers/CodeView.js";
 import { CommitView } from "./renderers/CommitView.js";
+import { DiffView } from "./renderers/DiffView.js";
 import { ImageView } from "./renderers/ImageView.js";
 import { ViewerErrorBoundary } from "./renderers/ViewerErrorBoundary.js";
 import {
@@ -76,7 +78,9 @@ type LoadState =
   | { readonly kind: "text"; readonly reply: ReadWorkspaceFileReply }
   | { readonly kind: "bytes"; readonly reply: ReadWorkspaceBytesReply }
   /** A commit tab (ADR 0059): the target's kind, not a path, chose it. */
-  | { readonly kind: "commit"; readonly reply: ReadWorkspaceCommitReply };
+  | { readonly kind: "commit"; readonly reply: ReadWorkspaceCommitReply }
+  /** A diff tab (ADR 0059 §5): the path's working-tree change. */
+  | { readonly kind: "diff"; readonly reply: ReadWorkspaceDiffReply };
 
 /** Markdown shows the page by default; a cite anchor forces the source
  *  (lines are a source concept). The header toggle overrides per tab. */
@@ -85,7 +89,10 @@ type ViewMode = "rendered" | "source";
 function tabName(tab: FileViewerTarget): string {
   if (tab.label !== undefined) return tab.label;
   const parts = tab.path.split("/").filter((s) => s.length > 0);
-  return parts[parts.length - 1] ?? tab.path;
+  const name = parts[parts.length - 1] ?? tab.path;
+  // A diff tab and a file tab for the same path sit side by side; the
+  // sign says which is which.
+  return tab.kind === "diff" ? `± ${name}` : name;
 }
 
 export function FileViewerPanel(): JSX.Element | null {
@@ -97,12 +104,15 @@ export function FileViewerPanel(): JSX.Element | null {
   const path = target?.path ?? null;
   const anchor = target?.anchor;
   const isCommit = target?.kind === "commit";
+  const isDiff = target?.kind === "diff";
   const kindInfo: ViewerKindInfo =
     path === null
       ? { kind: "text" }
       : isCommit
         ? { kind: "commit" }
-        : viewerKindFor(path);
+        : isDiff
+          ? { kind: "diff" }
+          : viewerKindFor(path);
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
   const [copied, setCopied] = useState(false);
   const [modes, setModes] = useState<Readonly<Record<string, ViewMode>>>({});
@@ -116,7 +126,25 @@ export function FileViewerPanel(): JSX.Element | null {
     const readText = bridge.readWorkspaceFile?.bind(bridge);
     const readBytes = bridge.readWorkspaceBytes?.bind(bridge);
     const readCommit = bridge.readWorkspaceCommit?.bind(bridge);
-    if (kindInfo.kind === "commit") {
+    const readDiff = bridge.readWorkspaceDiff?.bind(bridge);
+    if (kindInfo.kind === "diff") {
+      if (readDiff === undefined) {
+        setLoad({ kind: "diff", reply: { ok: false, reason: "not_found" } });
+      } else {
+        readDiff(sessionId, path).then(
+          (reply) => {
+            if (alive) setLoad({ kind: "diff", reply });
+          },
+          () => {
+            if (alive)
+              setLoad({
+                kind: "diff",
+                reply: { ok: false, reason: "not_found" },
+              });
+          },
+        );
+      }
+    } else if (kindInfo.kind === "commit") {
       // A commit tab reads the commit, never a file; without the bridge
       // method the tab answers with the commit notice.
       if (readCommit === undefined) {
@@ -204,7 +232,9 @@ export function FileViewerPanel(): JSX.Element | null {
       ? path
       : load.kind === "commit"
         ? load.reply.commit.sha
-        : load.reply.relative;
+        : load.kind === "diff"
+          ? load.reply.diff.path
+          : load.reply.relative;
   const activeName = tabName(v.tabs[v.active] ?? { path });
   const mode: ViewMode =
     modes[path] ?? (anchor !== undefined ? "source" : "rendered");
@@ -455,6 +485,27 @@ function FileViewerBody({
     // A local read answers in single-digit milliseconds; a spinner would
     // only flash. Hold the empty body for the beat.
     return <div className="file-viewer__body" />;
+  }
+  if (load.kind === "diff") {
+    if (!load.reply.ok) {
+      return (
+        <Notice
+          text={t(
+            load.reply.reason === "outside_workspace"
+              ? "viewer.outside"
+              : "viewer.diff.notFound",
+          )}
+        />
+      );
+    }
+    return (
+      <ViewerErrorBoundary
+        key={`diff:${path}`}
+        fallback={<Notice text={t("viewer.renderFailed")} />}
+      >
+        <DiffView diff={load.reply.diff} />
+      </ViewerErrorBoundary>
+    );
   }
   if (load.kind === "commit") {
     if (!load.reply.ok) return <Notice text={t("viewer.commit.notFound")} />;

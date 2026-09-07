@@ -73,6 +73,13 @@ function Probe(): JSX.Element {
       >
         open commit
       </button>
+      <button
+        type="button"
+        data-testid="probe-diff"
+        onClick={() => open?.("src/a.ts", { kind: "diff" })}
+      >
+        open diff
+      </button>
     </>
   );
 }
@@ -246,6 +253,110 @@ describe("FileViewerPanel (ADR 0050)", () => {
       expect(readWorkspaceFile).toHaveBeenCalledWith("s1", "src/a.ts"),
     );
     expect(panel.querySelectorAll(".file-viewer__tab")).toHaveLength(2);
+  });
+
+  it("a diff tab shows the path's change against HEAD beside a file tab for the same path (ADR 0059 §5)", async () => {
+    const mock = createMockHertaBridge();
+    const readWorkspaceFile = vi.fn(async () => ({
+      ok: true as const,
+      content: "one\ntwo\n",
+      truncated: false,
+      size: 8,
+      relative: "src/a.ts",
+    }));
+    const readWorkspaceDiff = vi.fn(async () => ({
+      ok: true as const,
+      diff: {
+        path: "src/a.ts",
+        untracked: false,
+        missing: false,
+        patch:
+          "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,2 +1,2 @@\n one\n-two\n+three\n",
+        patchTruncated: false,
+        added: 1,
+        deleted: 1,
+      },
+    }));
+    Object.assign(mock.bridge, { readWorkspaceFile, readWorkspaceDiff });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("probe-diff"));
+    await waitFor(() =>
+      expect(screen.getByTestId("file-viewer").getAttribute("data-kind")).toBe(
+        "diff",
+      ),
+    );
+    expect(readWorkspaceDiff).toHaveBeenCalledWith("s1", "src/a.ts");
+    const panel = screen.getByTestId("file-viewer");
+    await waitFor(() =>
+      expect(panel.querySelector(".diff-view")).not.toBeNull(),
+    );
+    expect(panel.querySelector(".file-viewer__tab-name")?.textContent).toBe(
+      "± a.ts",
+    );
+    expect(panel.querySelector(".commit-view__meta")?.textContent).toBe(
+      "Changes against HEAD",
+    );
+    expect(panel.querySelector(".commit-view__counts")?.textContent).toBe(
+      "+1 −1",
+    );
+    expect(panel.querySelectorAll(".diff-body__line.is-add")).toHaveLength(1);
+    expect(panel.querySelectorAll(".diff-body__line.is-del")).toHaveLength(1);
+    // The header's path opens the LIVE file as its own tab; both stay open.
+    fireEvent.click(panel.querySelector("button.commit-view__path") as Element);
+    await waitFor(() =>
+      expect(readWorkspaceFile).toHaveBeenCalledWith("s1", "src/a.ts"),
+    );
+    expect(panel.querySelectorAll(".file-viewer__tab")).toHaveLength(2);
+    expect(
+      [...panel.querySelectorAll(".file-viewer__tab-name")].map(
+        (t) => t.textContent,
+      ),
+    ).toEqual(["± a.ts", "a.ts"]);
+  });
+
+  it("a diff for an untracked file says so; no change says so; an outside path is refused", async () => {
+    const mock = createMockHertaBridge();
+    let reply: unknown = {
+      ok: true,
+      diff: {
+        path: "src/a.ts",
+        untracked: true,
+        missing: false,
+        patch: "",
+        patchTruncated: false,
+        added: 0,
+        deleted: 0,
+      },
+    };
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: vi.fn(async () => ({
+        ok: false as const,
+        reason: "not_found" as const,
+      })),
+      readWorkspaceDiff: vi.fn(async () => reply),
+    });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("probe-diff"));
+    const panel = await screen.findByTestId("file-viewer");
+    await waitFor(() =>
+      expect(panel.querySelector(".commit-view__meta")?.textContent).toContain(
+        "Untracked",
+      ),
+    );
+    expect(panel.querySelector(".file-viewer__notice")?.textContent).toBe(
+      "No changes against HEAD",
+    );
+    reply = { ok: false, reason: "outside_workspace" };
+    h.openSession("s2");
+    fireEvent.click(screen.getByTestId("probe-diff"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("file-viewer").querySelector(".file-viewer__notice")
+          ?.textContent,
+      ).toBe("This path is outside the workspace"),
+    );
   });
 
   it("a commit git cannot show — or a bridge without the read — answers with the commit notice", async () => {

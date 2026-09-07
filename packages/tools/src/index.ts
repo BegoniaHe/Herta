@@ -101,6 +101,11 @@ export {
   probeRepoState,
   resolveGitDir,
 } from "./git/repo-probe.js";
+export type { WorkingDiff } from "./git/working-diff.js";
+export {
+  describeWorkingDiff,
+  MAX_WORKING_DIFF_BYTES,
+} from "./git/working-diff.js";
 export type { GitDiffData, GitDiffFile } from "./git-diff/index.js";
 export { gitDiffTool } from "./git-diff/index.js";
 export type { GitDiffInput } from "./git-diff/schema.js";

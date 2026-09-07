@@ -8,6 +8,7 @@ import {
   workspaceRelativeRepoPath,
 } from "@herta/core/repo-path";
 import { useRef } from "react";
+import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import type { MessageKey } from "../../i18n/keys.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { useFileViewerOpen } from "../FileViewer/file-viewer-context.js";
@@ -34,8 +35,14 @@ export function RepoCard(): JSX.Element | null {
   const t = useT();
   const { repo, open } = useRepoCard();
   const openFile = useFileViewerOpen();
+  const { bridge } = useHertaBridge();
+  // A dirty row opens its DIFF where the bridge can read one (ADR 0059
+  // §5), the file where it cannot (an older bridge, the demo).
+  const diffs = bridge.readWorkspaceDiff !== undefined;
   const listRef = useRef<HTMLOListElement>(null);
   const edges = useScrollEdges(listRef, repo);
+  const logRef = useRef<HTMLOListElement>(null);
+  const logEdges = useScrollEdges(logRef, repo);
 
   if (repo === null) return null;
 
@@ -63,9 +70,8 @@ export function RepoCard(): JSX.Element | null {
       ? t("repo.card.clean")
       : t("repo.card.dirty", { n: String(repo.dirtyTotal) });
   const hidden = repo.dirtyTotal - repo.dirty.length;
-  const lastCommit = repo.recentSubjects[0] ?? null;
   const prefix = repo.prefix;
-  const head = repo.headShort;
+  const recent = repo.recentSubjects.map(parseSubject);
 
   return (
     <section
@@ -137,7 +143,18 @@ export function RepoCard(): JSX.Element | null {
                     type="button"
                     className="repo-card__path"
                     title={file.path}
-                    onClick={() => openFile(shown)}
+                    aria-label={`${
+                      diffs && mark.kind !== "conflict"
+                        ? t("activity.diff.openAria")
+                        : t("activity.file.openAria")
+                    } ${shown}`}
+                    onClick={() =>
+                      // A conflict's markers live in the file itself; every
+                      // other change reads best as its diff against HEAD.
+                      diffs && mark.kind !== "conflict"
+                        ? openFile(shown, { kind: "diff" })
+                        : openFile(shown)
+                    }
                   >
                     {shown}
                   </button>
@@ -163,24 +180,73 @@ export function RepoCard(): JSX.Element | null {
           {t("repo.card.more", { n: String(hidden) })}
         </p>
       )}
-      {lastCommit !== null &&
-        (openFile !== null && head !== null ? (
-          <button
-            type="button"
-            className="repo-card__commit"
-            title={lastCommit}
-            aria-label={`${t("activity.commit.openAria")} ${head}`}
-            onClick={() => openFile(head, { kind: "commit", label: head })}
+      {recent.length > 0 && (
+        <>
+          <p className="repo-card__section">{t("repo.card.recent")}</p>
+          <ol
+            ref={logRef}
+            className={`plan-card__list repo-card__log${
+              logEdges.top ? " has-fog-top" : ""
+            }${logEdges.bottom ? " has-fog-bottom" : ""}`}
           >
-            {lastCommit}
-          </button>
-        ) : (
-          <p className="repo-card__commit" title={lastCommit}>
-            {lastCommit}
-          </p>
-        ))}
+            {recent.map((c) => {
+              const sha = c.sha;
+              return (
+                <li
+                  key={c.line}
+                  className="plan-card__row repo-card__row repo-card__log-row"
+                >
+                  {sha !== null && (
+                    <span className="plan-card__mark repo-card__sha">
+                      {sha}
+                    </span>
+                  )}
+                  {openFile !== null && sha !== null ? (
+                    <button
+                      type="button"
+                      className="repo-card__path repo-card__subject"
+                      title={c.line}
+                      aria-label={`${t("activity.commit.openAria")} ${sha}`}
+                      onClick={() =>
+                        openFile(sha, { kind: "commit", label: sha })
+                      }
+                    >
+                      {c.subject}
+                    </button>
+                  ) : (
+                    <span
+                      className="repo-card__path repo-card__subject"
+                      title={c.line}
+                    >
+                      {c.subject}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        </>
+      )}
     </section>
   );
+}
+
+/**
+ * A `git log --oneline --no-decorate` line as the card draws it (ADR 0058
+ * §5.4): the abbreviated id, then the subject. A line that does not start
+ * with a hex id (it cannot, with `--no-decorate` — but the probe is the
+ * only writer and this is the reader's guard) renders whole and plain.
+ * Exported for tests.
+ */
+export function parseSubject(line: string): {
+  readonly line: string;
+  readonly sha: string | null;
+  readonly subject: string;
+} {
+  const m = /^([0-9a-f]{4,40}) (.*)$/.exec(line);
+  if (m === null || m[1] === undefined || m[2] === undefined)
+    return { line, sha: null, subject: line };
+  return { line, sha: m[1], subject: m[2] };
 }
 
 export type DirtyMarkKind =

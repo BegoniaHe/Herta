@@ -6,7 +6,7 @@ import { renderWithLocale } from "../../i18n/test-util.js";
 import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
 import { FileViewerPanel } from "../FileViewer/FileViewerPanel.js";
 import { FileViewerProvider } from "../FileViewer/file-viewer-context.js";
-import { dirtyMark, RepoCard } from "./RepoCard.js";
+import { dirtyMark, parseSubject, RepoCard } from "./RepoCard.js";
 import { REPO_FOCUS_REFRESH_MIN_MS } from "./useRepoCard.js";
 
 afterEach(() => {
@@ -42,7 +42,11 @@ const REPO: RepoContextSnapshot = {
     { x: "?", y: "?", path: "scratch.txt" },
   ],
   dirtyTotal: 3,
-  recentSubjects: ["a1b2c3d feat(gui): the rail shows the repository"],
+  recentSubjects: [
+    "a1b2c3d feat(gui): the rail shows the repository",
+    "0f0f0f0 docs: ADR 0058",
+    "9999999 chore: seed",
+  ],
 };
 
 function mount(withViewer = false) {
@@ -81,16 +85,25 @@ describe("RepoCard (ADR 0058)", () => {
     expect(card?.querySelector(".plan-card__count")?.textContent).toBe(
       "3 处改动",
     );
-    const rows = card?.querySelectorAll(".repo-card__row") ?? [];
+    const rows =
+      card?.querySelectorAll(".repo-card__list .repo-card__row") ?? [];
     expect(rows.length).toBe(3);
     expect(rows[0]?.querySelector(".plan-card__mark")?.textContent).toBe("M");
     expect(rows[1]?.querySelector(".plan-card__mark")?.textContent).toBe("A");
     expect(rows[2]?.querySelector(".plan-card__mark")?.textContent).toBe("?");
     expect(rows[2]?.classList.contains("is-untracked")).toBe(true);
-    expect(card?.querySelector(".repo-card__commit")?.textContent).toBe(
-      REPO.recentSubjects[0],
+    // The recent commits, id as the mark, subject as the text (ADR 0058 §5.4).
+    const log = [...(card?.querySelectorAll(".repo-card__log-row") ?? [])];
+    expect(
+      log.map((r) => r.querySelector(".repo-card__sha")?.textContent),
+    ).toEqual(["a1b2c3d", "0f0f0f0", "9999999"]);
+    expect(log[0]?.querySelector(".repo-card__subject")?.textContent).toBe(
+      "feat(gui): the rail shows the repository",
     );
-    // Without a file-reading bridge the paths are plain spans.
+    expect(card?.querySelector(".repo-card__section")?.textContent).toBe(
+      "最近提交",
+    );
+    // Without a file-reading bridge the paths and subjects are plain spans.
     expect(card?.querySelector("button.repo-card__path")).toBeNull();
   });
 
@@ -158,7 +171,7 @@ describe("RepoCard (ADR 0058)", () => {
     expect(
       container.querySelector(".repo-card__branch-name")?.textContent,
     ).toBe("尚无提交");
-    expect(container.querySelector(".repo-card__commit")).toBeNull();
+    expect(container.querySelector(".repo-card__log")).toBeNull();
   });
 
   it("paths open in the file viewer where the bridge can read files", () => {
@@ -168,6 +181,10 @@ describe("RepoCard (ADR 0058)", () => {
     });
     const button = container.querySelector("button.repo-card__path");
     expect(button?.textContent).toBe("packages/gui/src/renderer/RepoCard.tsx");
+    // Without a diff-reading bridge the row opens the FILE.
+    expect(button?.getAttribute("aria-label")).toBe(
+      "查看文件 packages/gui/src/renderer/RepoCard.tsx",
+    );
   });
 
   it("a subfolder workspace names its prefix, spells paths from the workspace, and opens only what lies inside it (ADR 0058 amendment)", () => {
@@ -192,7 +209,9 @@ describe("RepoCard (ADR 0058)", () => {
     expect(card?.querySelector(".repo-card__scope")?.textContent).toBe(
       "工作区位于 packages/gui/",
     );
-    const rows = [...(card?.querySelectorAll(".repo-card__row") ?? [])];
+    const rows = [
+      ...(card?.querySelectorAll(".repo-card__list .repo-card__row") ?? []),
+    ];
     expect(
       rows.map((r) => r.querySelector(".repo-card__path")?.textContent),
     ).toEqual([
@@ -209,7 +228,76 @@ describe("RepoCard (ADR 0058)", () => {
     ).toContain("docs/adr/0058.md");
   });
 
-  it("the last commit opens as a commit tab in the viewer (ADR 0059)", async () => {
+  it("a dirty row opens its DIFF against HEAD where the bridge reads diffs; a conflict row opens the file (ADR 0059 §5)", async () => {
+    const mock = createMockHertaBridge();
+    const readWorkspaceFile = vi.fn(async () => ({
+      ok: false as const,
+      reason: "not_found" as const,
+    }));
+    const readWorkspaceDiff = vi.fn(async (_s: string, path: string) => ({
+      ok: true as const,
+      diff: {
+        path,
+        untracked: false,
+        missing: false,
+        patch: `diff --git a/${path} b/${path}\n@@ -1 +1 @@\n-one\n+two\n`,
+        patchTruncated: false,
+        added: 1,
+        deleted: 1,
+      },
+    }));
+    Object.assign(mock.bridge, { readWorkspaceFile, readWorkspaceDiff });
+    const rendered = renderWithLocale(
+      <HertaBridgeProvider bridge={mock.bridge}>
+        <FileViewerProvider>
+          <RepoCard />
+          <FileViewerPanel />
+        </FileViewerProvider>
+      </HertaBridgeProvider>,
+      { locale: "zh" },
+    );
+    act(() => {
+      mock.emitReset(SNAPSHOT);
+      mock.emitRepo({
+        kind: "repo",
+        workspace: "/repo",
+        repo: {
+          ...REPO,
+          dirty: [
+            { x: " ", y: "M", path: "src/a.ts" },
+            { x: "U", y: "U", path: "src/clash.ts" },
+          ],
+          dirtyTotal: 2,
+        },
+      });
+    });
+    const rows = rendered.container.querySelectorAll("button.repo-card__path");
+    expect(rows[0]?.getAttribute("aria-label")).toBe("查看改动 src/a.ts");
+    expect(rows[1]?.getAttribute("aria-label")).toBe("查看文件 src/clash.ts");
+    fireEvent.click(rows[0] as Element);
+    await waitFor(() =>
+      expect(readWorkspaceDiff).toHaveBeenCalledWith("s1", "src/a.ts"),
+    );
+    await waitFor(() =>
+      expect(
+        rendered.container
+          .querySelector(".file-viewer")
+          ?.getAttribute("data-kind"),
+      ).toBe("diff"),
+    );
+    expect(
+      rendered.container.querySelector(".file-viewer__tab-name")?.textContent,
+    ).toBe("± a.ts");
+    expect(
+      rendered.container.querySelectorAll(".diff-body__line.is-add"),
+    ).toHaveLength(1);
+    fireEvent.click(rows[1] as Element);
+    await waitFor(() =>
+      expect(readWorkspaceFile).toHaveBeenCalledWith("s1", "src/clash.ts"),
+    );
+  });
+
+  it("a recent commit opens as a commit tab in the viewer (ADR 0059)", async () => {
     const mock = createMockHertaBridge();
     const commit: CommitDescription = {
       sha: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
@@ -245,11 +333,14 @@ describe("RepoCard (ADR 0058)", () => {
       mock.emitReset(SNAPSHOT);
       mock.emitRepo({ kind: "repo", workspace: "/repo", repo: REPO });
     });
-    const button = rendered.container.querySelector("button.repo-card__commit");
-    expect(button?.getAttribute("aria-label")).toBe("查看提交 a1b2c3d");
-    fireEvent.click(button as Element);
+    const buttons = rendered.container.querySelectorAll(
+      "button.repo-card__subject",
+    );
+    expect(buttons).toHaveLength(3);
+    expect(buttons[1]?.getAttribute("aria-label")).toBe("查看提交 0f0f0f0");
+    fireEvent.click(buttons[1] as Element);
     await waitFor(() =>
-      expect(readWorkspaceCommit).toHaveBeenCalledWith("s1", "a1b2c3d"),
+      expect(readWorkspaceCommit).toHaveBeenCalledWith("s1", "0f0f0f0"),
     );
     await waitFor(() =>
       expect(
@@ -263,7 +354,7 @@ describe("RepoCard (ADR 0058)", () => {
     ).toBe(commit.subject);
     expect(
       rendered.container.querySelector(".file-viewer__tab-name")?.textContent,
-    ).toBe("a1b2c3d");
+    ).toBe("0f0f0f0");
   });
 
   it("a window focus asks the session to probe again, throttled", () => {
@@ -298,6 +389,18 @@ describe("RepoCard (ADR 0058)", () => {
       vi.advanceTimersByTime(1000);
     });
     expect(container.querySelector(".repo-card")).toBeNull();
+  });
+});
+
+describe("parseSubject", () => {
+  it("splits a oneline log entry into id and subject; a line without an id renders whole", () => {
+    expect(parseSubject("a1b2c3d feat: x")).toEqual({
+      line: "a1b2c3d feat: x",
+      sha: "a1b2c3d",
+      subject: "feat: x",
+    });
+    expect(parseSubject("no id here").sha).toBeNull();
+    expect(parseSubject("no id here").subject).toBe("no id here");
   });
 });
 

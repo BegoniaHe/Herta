@@ -692,6 +692,22 @@ describe("repo snapshot section (ADR 0049)", () => {
     recentSubjects: ["abc1234 fix: cursor reset"],
   };
 
+  it("renders at most five recent subjects however many the snapshot carries (ADR 0058 §5.4)", () => {
+    const many = renderRepoContext(
+      {
+        ...snapshot,
+        recentSubjects: Array.from(
+          { length: 8 },
+          (_, i) => `sha${i} step ${i}`,
+        ),
+      },
+      "zh",
+      "standard",
+    );
+    expect(many).toContain("  sha4 step 4");
+    expect(many).not.toContain("sha5 step 5");
+  });
+
   it("a subfolder workspace is named once and every path is spelled from it (ADR 0058 amendment)", () => {
     const sub = renderRepoContext(
       {

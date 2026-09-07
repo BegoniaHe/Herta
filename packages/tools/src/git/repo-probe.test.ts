@@ -233,6 +233,17 @@ describe.skipIf(!GIT_AVAILABLE)(
       expect(paths).toEqual(["a.ts", "packages/gui/x.ts"]);
     });
 
+    it("carries up to ten recent subjects for the card, newest first (ADR 0058 §5.4)", async () => {
+      const dir = seeded();
+      for (let i = 1; i <= 11; i += 1) {
+        git(dir, "commit", "-q", "--allow-empty", "-m", `step ${i}`);
+      }
+      const ctx = await describeRepoContext(dir);
+      expect(ctx?.recentSubjects).toHaveLength(10);
+      expect(ctx?.recentSubjects[0]).toMatch(/^[0-9a-f]{4,} step 11$/);
+      expect(ctx?.recentSubjects[9]).toContain("step 2");
+    });
+
     it("carries the dirty set with porcelain codes and an honest total", async () => {
       const dir = seeded();
       writeFileSync(join(dir, "a.ts"), "one\nedited\n");

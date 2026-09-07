@@ -510,6 +510,9 @@ export interface RepoContextSnapshot {
  * minimal — so the honest-truncation line never recommends a tool the
  * model cannot call.
  */
+/** Recent subjects the FRAME renders; the snapshot may carry more. */
+const MAX_PROMPT_SUBJECTS = 5;
+
 export function renderRepoContext(
   snapshot: RepoContextSnapshot,
   lang: "zh" | "en",
@@ -621,7 +624,10 @@ export function renderRepoContext(
 
   if (snapshot.recentSubjects.length > 0) {
     lines.push(zh ? "最近提交:" : "recent commits:");
-    for (const s of snapshot.recentSubjects) lines.push(`  ${s}`);
+    // The probe carries more for the rail's commit list (ADR 0058 §5.4);
+    // the frame keeps the five it always had — prompt bytes are a budget.
+    for (const s of snapshot.recentSubjects.slice(0, MAX_PROMPT_SUBJECTS))
+      lines.push(`  ${s}`);
   }
 
   return lines.join("\n");

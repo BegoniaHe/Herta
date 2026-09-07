@@ -4549,24 +4549,27 @@ button.repo-card__path:hover {
 .repo-card__row.is-outside .repo-card__path {
   color: var(--muted-4);
 }
-/* The last commit as the commit tab's opener (ADR 0059): a button in the
-   line's own type, the same hover as a path. */
-button.repo-card__commit {
-  display: block;
-  width: 100%;
-  background: none;
-  border: 0;
-  padding: 0;
-  font-family: inherit;
-  font-weight: inherit;
-  line-height: inherit;
-  text-align: left;
-  cursor: pointer;
+/* The recent commits (ADR 0058 §5.4): a small section label, then rows
+   with the abbreviated id as the mark and the subject as the commit tab's
+   opener (ADR 0059) — the same row grammar as the dirty list, capped a
+   little shorter so both lists fit the card. */
+.repo-card__section {
+  margin: 4px 0 0;
+  font-size: 11px;
+  letter-spacing: .02em;
+  color: var(--muted-4);
 }
-button.repo-card__commit:hover {
-  color: var(--ink);
-  text-decoration: underline;
-  text-underline-offset: 2px;
+.repo-card .repo-card__log {
+  max-height: 118px;
+}
+.repo-card__log-row .plan-card__mark.repo-card__sha {
+  min-width: 0;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.repo-card__subject {
+  font-size: 12px;
+  color: var(--muted-2);
 }
 .trace-card__note.is-fail {
   color: #9a5b5b;

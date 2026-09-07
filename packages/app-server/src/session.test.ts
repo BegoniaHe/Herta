@@ -295,6 +295,8 @@ async function mkStubSession(
     repoWatchDebounceMs?: number;
     // The commit reader behind the viewer's commit tab (ADR 0059).
     commitDescriber?: SessionInternalDeps["commitDescriber"];
+    // The working-tree diff reader behind the viewer's diff tab (ADR 0059 §5).
+    workingDiffDescriber?: SessionInternalDeps["workingDiffDescriber"];
   },
 ): Promise<{
   session: SessionImpl;
@@ -382,6 +384,7 @@ async function mkStubSession(
         ? { repoWatchDebounceMs: extra.repoWatchDebounceMs }
         : {}),
       commitDescriber: extra?.commitDescriber ?? (async () => null),
+      workingDiffDescriber: extra?.workingDiffDescriber ?? (async () => null),
       ...(extra?.easterEggNow !== undefined
         ? { easterEggNow: extra.easterEggNow }
         : {}),
@@ -2246,6 +2249,31 @@ describe("Session — the repository probe behind the rail's card (ADR 0058)", (
     await session.setWorkspace(cfg.transcriptDir);
     await session.describeCommit("def5678");
     expect(asked[1]).toEqual([cfg.transcriptDir, "def5678"]);
+    await cleanup();
+  });
+
+  it("describeWorkingDiff reads against the EFFECTIVE workspace too (ADR 0059 §5)", async () => {
+    const cfg = mkConfig();
+    const asked: Array<[string, string]> = [];
+    const { session, cleanup } = await mkStubSession(
+      cfg,
+      undefined,
+      1,
+      undefined,
+      {
+        workingDiffDescriber: async (workspace, path) => {
+          asked.push([workspace, path]);
+          return null;
+        },
+      },
+    );
+    await session.describeWorkingDiff("src/a.ts");
+    await session.setWorkspace(cfg.transcriptDir);
+    await session.describeWorkingDiff("b.ts");
+    expect(asked).toEqual([
+      [cfg.workspaceRoot, "src/a.ts"],
+      [cfg.transcriptDir, "b.ts"],
+    ]);
     await cleanup();
   });
 });

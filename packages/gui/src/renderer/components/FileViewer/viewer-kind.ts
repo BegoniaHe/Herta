@@ -17,7 +17,10 @@ export type ViewerKind =
   | "pptx"
   /** A commit, not a file (ADR 0059): chosen by the TARGET's kind, never
    *  by a path — `viewerKindFor` never answers it. */
-  | "commit";
+  | "commit"
+  /** A path's working-tree diff against HEAD (ADR 0059 §5) — the
+   *  target's kind again. */
+  | "diff";
 
 export interface ViewerKindInfo {
   readonly kind: ViewerKind;

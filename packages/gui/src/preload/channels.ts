@@ -28,6 +28,7 @@ export const CMD = {
   readWorkspaceFile: "session:readWorkspaceFile",
   readWorkspaceBytes: "session:readWorkspaceBytes",
   readWorkspaceCommit: "session:readWorkspaceCommit",
+  readWorkspaceDiff: "session:readWorkspaceDiff",
   openWorkspaceFile: "session:openWorkspaceFile",
   getDreamConfig: "settings:getDreamConfig",
   setDreamConfig: "settings:setDreamConfig",

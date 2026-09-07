@@ -814,6 +814,33 @@ export function createSessionService(
           : { ok: true as const, commit };
       },
     );
+    // The viewer's diff tab (ADR 0059 §5): one path's working-tree change
+    // against HEAD. The SAME jail as the file reads decides the path —
+    // the session's reader diffs an untracked file against /dev/null, so
+    // an outside-resolving name must never reach it. A tracked file
+    // deleted from the tree has no inode and still has a diff: `missing`
+    // passes its in-workspace spelling through.
+    handle(
+      CMD.readWorkspaceDiff,
+      async (_e, sessionId: string, path: string) => {
+        const s = host?.activeSession ?? null;
+        if (s === null || s.sessionId !== sessionId) {
+          return { ok: false as const, reason: "no_session" as const };
+        }
+        const r = await resolveInsideWorkspace(s.backendWorkspace, path);
+        if (r.kind === "outside") {
+          return { ok: false as const, reason: "outside_workspace" as const };
+        }
+        const relative = r.kind === "ok" ? r.relative : r.relative;
+        if (relative === undefined || relative.length === 0) {
+          return { ok: false as const, reason: "not_found" as const };
+        }
+        const diff = (await s.describeWorkingDiff?.(relative)) ?? null;
+        return diff === null
+          ? { ok: false as const, reason: "not_found" as const }
+          : { ok: true as const, diff };
+      },
+    );
     // The viewer's 打开: hand the jailed path to the OS default app. The
     // same resolution as the read — an outside-resolving name never
     // reaches shell.openPath.

@@ -19,6 +19,7 @@ import type {
   TitleEvent,
   TurnLifecycleEvent,
   VoiceCueEvent,
+  WorkingDiff,
   WorkspaceEvent,
 } from "@herta/app-server";
 
@@ -253,6 +254,18 @@ export type ReadWorkspaceCommitReply =
   | { readonly ok: true; readonly commit: CommitDescription }
   | { readonly ok: false; readonly reason: "not_found" | "no_session" };
 
+/**
+ * Reply from `readWorkspaceDiff` (ADR 0059 §5): one workspace path's
+ * working-tree change against HEAD for the viewer's diff tab. Jailed like
+ * the file reads — `outside_workspace` for a path that resolves outside.
+ */
+export type ReadWorkspaceDiffReply =
+  | { readonly ok: true; readonly diff: WorkingDiff }
+  | {
+      readonly ok: false;
+      readonly reason: "not_found" | "outside_workspace" | "no_session";
+    };
+
 /** Reply from `stageImages`. Per-file refusals ride `rejected` so one bad
  *  item never discards its siblings; only whole-action failures use `ok:
  *  false` with a message, like every other command here. */
@@ -416,6 +429,13 @@ export interface HertaBridge {
     sessionId: string,
     ref: string,
   ): Promise<ReadWorkspaceCommitReply>;
+  /** The viewer's diff tab (ADR 0059 §5): one path's working-tree change
+   *  against HEAD, same jail as the file reads. Optional like its siblings;
+   *  a dirty row then opens the file instead. */
+  readWorkspaceDiff?(
+    sessionId: string,
+    path: string,
+  ): Promise<ReadWorkspaceDiffReply>;
   /** The viewer's 打开 button: open the jailed path with the OS default
    *  application (shell.openPath). False when refused/missing. */
   openWorkspaceFile?(sessionId: string, path: string): Promise<boolean>;

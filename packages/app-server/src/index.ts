@@ -31,6 +31,7 @@ export type {
   CommitDescription,
   CommitFileChange,
   CommitFileStatus,
+  WorkingDiff,
 } from "@herta/tools";
 // The attachment ingest (ADR 0033) is deliberately NOT re-exported here: it is
 // called only by SessionImpl inside this package, and `_public-api.test.ts`

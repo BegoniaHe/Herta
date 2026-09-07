@@ -6,7 +6,7 @@ import type {
   TerminalRecord,
   TerminalRecordBlock,
 } from "@herta/core";
-import type { CommitDescription } from "@herta/tools";
+import type { CommitDescription, WorkingDiff } from "@herta/tools";
 import type { SessionSearchHit } from "./session-search.js";
 
 // ───── Configuration ─────
@@ -552,6 +552,12 @@ export interface Session {
    *  `ref` is a hex commit id (abbreviated is fine); null when git cannot
    *  show it. Optional: the GUI SessionImpl only. */
   describeCommit?(ref: string): Promise<CommitDescription | null>;
+  /** One workspace-relative path's working-tree change against HEAD —
+   *  staged and unstaged together, an untracked file as a whole addition —
+   *  for the viewer's diff tab (ADR 0059 §5). The caller has jailed the
+   *  path to the workspace. Null when git cannot answer. Optional: the GUI
+   *  SessionImpl only. */
+  describeWorkingDiff?(path: string): Promise<WorkingDiff | null>;
 
   close(): Promise<void>;
 }

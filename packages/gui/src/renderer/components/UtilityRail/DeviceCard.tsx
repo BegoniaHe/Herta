@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import agentDevice from "../../assets/agent_device.png";
 import agentDeviceNight from "../../assets/agent_device_night.png";
+import frostDay from "../../assets/agent_frost.webp";
+import frostNight from "../../assets/agent_frost_night.webp";
 import agentShadow from "../../assets/agent_shadow.png";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import {
@@ -8,7 +10,10 @@ import {
   useDeviceState,
 } from "../../hooks/useDeviceState.js";
 import { useDisconnected } from "../../hooks/useDisconnected.js";
-import { useResolvedTheme } from "../../hooks/useResolvedTheme.js";
+import {
+  type ResolvedTheme,
+  useResolvedTheme,
+} from "../../hooks/useResolvedTheme.js";
 import { useSessionScoped } from "../../hooks/useSessionScoped.js";
 import {
   shallowEqualObjects,
@@ -51,6 +56,16 @@ type SceneState = "pending" | "live" | "flat";
  *  shows the flat art instead. The build is ~14 s on the slowest machine
  *  measured (assets, an asynchronous shader compile, a quiet moment). */
 export const SCENE_PATIENCE_MS = 30_000;
+
+/** The glass before the scene has ever left a picture of itself (§2.13,
+ *  owner 2026-09-07: "the frost should use our previous rendered images,
+ *  not the device-only one"): the whole scene at the card's own framing,
+ *  rendered by the art export per theme (`agent_frost*.webp`). A launch
+ *  that has shown the scene keeps the scene's own last picture instead. */
+const DEFAULT_FROST: Record<ResolvedTheme, string> = {
+  light: frostDay,
+  dark: frostNight,
+};
 
 export function DeviceCard(): JSX.Element {
   const t = useT();
@@ -123,11 +138,14 @@ export function DeviceCard(): JSX.Element {
     setSceneState(live ? "live" : "flat");
   }, []);
   // The frosted-glass picture is the scene's OWN last rendering, kept per
-  // theme across launches (frost-store.ts); the flat art, a different
-  // drawing of the device, is the glass only until one exists.
-  const [frost, setFrost] = useState<string | null>(() => readFrost(theme));
+  // theme across launches (frost-store.ts), and the bundled rendering of
+  // the scene until one exists — never the flat art, which is the device
+  // alone (§2.14) and would clear into a room.
+  const [frost, setFrost] = useState<string>(
+    () => readFrost(theme) ?? DEFAULT_FROST[theme],
+  );
   useEffect(() => {
-    setFrost(readFrost(theme));
+    setFrost(readFrost(theme) ?? DEFAULT_FROST[theme]);
   }, [theme]);
   const themeRef = useRef(theme);
   themeRef.current = theme;
@@ -135,7 +153,7 @@ export function DeviceCard(): JSX.Element {
     writeFrost(themeRef.current, dataUrl);
     setFrost(dataUrl);
   }, []);
-  const frostShown = sceneState !== "flat" && frost !== null;
+  const frostShown = sceneState !== "flat";
   // A workspace error belongs to the session it happened in — don't resurface
   // a stale one in the next session's menu. (This hand-written reset is what
   // `useSessionScoped` generalizes; migrated 2026-07-24.)

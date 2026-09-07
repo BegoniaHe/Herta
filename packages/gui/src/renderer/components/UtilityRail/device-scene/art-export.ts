@@ -81,6 +81,9 @@ export interface ArtExportInternals {
   readonly contact: { value: number };
   /** Frame the camera to the flat card's preview box. */
   frameFlatBox(): void;
+  /** Frame the camera to the rail card's content box (the live canvas's
+   *  own framing) and say how big that box is, CSS px. */
+  frameCardBox(): { readonly width: number; readonly height: number };
   applyLighting(light: WeatheredLighting, phase: number): void;
   applyRing(color: THREE.Color, intensity: number): void;
   applyBake(
@@ -94,10 +97,13 @@ export interface ArtExportInternals {
   end(): void;
 }
 
-/** The three layers the card imports, and `frame`: the scene as it
- *  stands at the request's lighting and lamp — a check of the framing
- *  and of the layers' ingredients, opaque. */
-export type ArtLayer = "device" | "shadow" | "lamp" | "frame";
+/** The three layers the card imports; `frost`: the whole scene at the
+ *  rail card's own framing with the idle lamp, small — the glass the card
+ *  shows while its scene builds until the scene has left a picture of its
+ *  own (§2.13); and `frame`: the scene as it stands at the request's
+ *  lighting and lamp — a check of the framing and of the layers'
+ *  ingredients, opaque. */
+export type ArtLayer = "device" | "shadow" | "lamp" | "frost" | "frame";
 
 export interface ArtExportRequest {
   readonly layer: ArtLayer;
@@ -163,6 +169,10 @@ export const DEFAULT_ART_HOUR = 10;
 /** The preview box's aspect (216 × 270) at this width. */
 const DEFAULT_WIDTH = 1120;
 const PREVIEW_ASPECT = 270 / 216;
+/** The frost picture: half the card's CSS size, like the live snapshot
+ *  (a quarter of the buffer at 2×), shown under an 8 px blur. */
+const DEFAULT_FROST_WIDTH = 168;
+const DEFAULT_FROST_QUALITY = 0.8;
 const DEFAULT_SUPERSAMPLE = 2;
 const DEFAULT_SAMPLES = 4;
 /** `.agent-shadow`'s opacity in reference-ux.css. */
@@ -255,16 +265,24 @@ export function createArtExport(internals: ArtExportInternals): ArtExport {
       req.theme === "dark" ? DARK_HOUR : (req.hour ?? DEFAULT_ART_HOUR);
     const phase = req.cloudPhase ?? 0;
     const light = applyCloudy(lightingAt(hour), phase);
-    const width = req.width ?? DEFAULT_WIDTH;
-    const height = Math.round(width * PREVIEW_ASPECT);
+    const frost = req.layer === "frost";
+    const width = req.width ?? (frost ? DEFAULT_FROST_WIDTH : DEFAULT_WIDTH);
     const ss = Math.max(1, Math.round(req.supersample ?? DEFAULT_SUPERSAMPLE));
     const samples = req.samples ?? DEFAULT_SAMPLES;
-    const fullWidth = width * ss;
-    const fullHeight = height * ss;
     const savedBackground = scene.background;
     internals.begin();
     try {
-      internals.frameFlatBox();
+      // The framing decides the height: the preview box's aspect, or the
+      // rail card's for the frost picture.
+      let height = Math.round(width * PREVIEW_ASPECT);
+      if (frost) {
+        const card = internals.frameCardBox();
+        height = Math.round((width * card.height) / card.width);
+      } else {
+        internals.frameFlatBox();
+      }
+      const fullWidth = width * ss;
+      const fullHeight = height * ss;
       internals.applyLighting(light, phase);
       internals.applyBake(hour, light, 0, 0);
       let pixels: RgbaBytes;
@@ -318,6 +336,15 @@ export function createArtExport(internals: ArtExportInternals): ArtExport {
             req.footprintMargin ?? DEFAULT_FOOTPRINT_MARGIN,
           );
         }
+      } else if (frost) {
+        // The live card at rest: the room, the device, the idle lamp.
+        internals.applyRing(
+          new THREE.Color(STATE_TARGETS.idle.color),
+          STATE_TARGETS.idle.intensity,
+        );
+        await warm();
+        const raw = await renderPixels(fullWidth, fullHeight, samples);
+        pixels = downsampleToStraight(raw, fullWidth, fullHeight, ss).pixels;
       } else if (req.layer === "frame") {
         internals.applyRing(
           new THREE.Color(req.lampColor ?? "#ffffff"),
@@ -351,8 +378,8 @@ export function createArtExport(internals: ArtExportInternals): ArtExport {
           pixels,
           width,
           height,
-          req.format ?? "png",
-          req.quality ?? 0.92,
+          req.format ?? (frost ? "webp" : "png"),
+          req.quality ?? (frost ? DEFAULT_FROST_QUALITY : 0.92),
         ),
         width,
         height,

@@ -82,6 +82,11 @@ const UNIT = 0.05;
  *  scene at that framing (§2.14), so the two agree by construction. */
 export const FLAT_BOX_CSS = { width: 216, height: 270 } as const;
 const DEVICE_HEIGHT_PX = (FLAT_BOX_CSS.height * 934) / 1403;
+/** The rail card's content box at the resting rail width (338 × 330 less
+ *  its border): the canvas's own size, which the bundled frost picture
+ *  is rendered for (§2.13). The narrow layout's 298 × 298 card stretches
+ *  it a little under the blur. */
+export const CARD_BOX_CSS = { width: 336, height: 328 } as const;
 /** The study's card-mode buffer policy: ≥1.5× at DPR 1, honour up to 2×,
  *  cap the long edge at 768 px. */
 const MAX_LONG_EDGE_PX = 768;
@@ -1377,6 +1382,10 @@ export async function createDeviceScene(
           contact: u.contact,
           frameFlatBox: () =>
             frameCamera(FLAT_BOX_CSS.width, FLAT_BOX_CSS.height),
+          frameCardBox: () => {
+            frameCamera(CARD_BOX_CSS.width, CARD_BOX_CSS.height);
+            return CARD_BOX_CSS;
+          },
           applyLighting,
           applyRing,
           applyBake,

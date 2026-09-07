@@ -1834,10 +1834,12 @@ body:after{
 }
 /* The glass proper (§2.13, owner: the flat art is a different drawing of
    the device — "make the frosted images from the 3D rendered results"):
-   the scene's own last rendering, a quarter-size JPEG kept per theme,
-   stretched over the canvas box and blurred; scaled up a little so the
-   blur's transparent fringe stays outside the card. With it the flat
-   stack is not shown at all. It clears with the same focus as the rest. */
+   the scene's own last rendering, a quarter-size JPEG kept per theme, or
+   the bundled rendering of the scene until one exists (never the flat
+   art, which is the device alone since §2.14), stretched over the canvas
+   box and blurred; scaled up a little so the blur's transparent fringe
+   stays outside the card. With it the flat stack is not shown at all. It
+   clears with the same focus as the rest. */
 .device-frost {
   position: absolute;
   inset: 0;

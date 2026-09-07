@@ -88,7 +88,7 @@ describe("DeviceCard — what shows while the 3D scene builds (ADR 0057 §2.13)"
     ).toBe(fresh);
   });
 
-  it("without a stored picture the card has no glass image (the flat art blurs instead)", () => {
+  it("without a stored picture the glass is the bundled rendering of the scene, per theme — never the flat art (owner 2026-09-07)", async () => {
     const mock = createMockHertaBridge({ deviceSceneResult: true });
     const { container } = renderWithLocale(
       <HertaBridgeProvider bridge={mock.bridge}>
@@ -96,10 +96,25 @@ describe("DeviceCard — what shows while the 3D scene builds (ADR 0057 §2.13)"
       </HertaBridgeProvider>,
     );
     expect(sceneAttr(container)).toBe("pending");
-    expect(container.querySelector("img.device-frost")).toBeNull();
+    const img = container.querySelector("img.device-frost");
+    expect(img?.getAttribute("src")).toContain("agent_frost");
+    expect(img?.getAttribute("src")).not.toContain("night");
     expect(
       container.querySelector(".device-card")?.classList.contains("has-frost"),
-    ).toBe(false);
+    ).toBe(true);
+    // The resolved theme follows <html data-theme> through a
+    // MutationObserver — a microtask away.
+    await act(async () => {
+      document.documentElement.dataset.theme = "dark";
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    expect(
+      container.querySelector("img.device-frost")?.getAttribute("src"),
+    ).toContain("agent_frost_night");
+    await act(async () => {
+      delete document.documentElement.dataset.theme;
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
   });
 
   it("holds the device back from the first paint while the setting is unknown or on, then fades the 3D in on its first frame", async () => {

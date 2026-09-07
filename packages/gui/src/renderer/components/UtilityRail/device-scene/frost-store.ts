@@ -6,7 +6,8 @@ import type { ResolvedTheme } from "../../../hooks/useResolvedTheme.js";
  * theme, kept in localStorage across launches. The owner's point: the
  * flat art is a different drawing of the device from the model, so the
  * glass should show the 3D itself. A launch that has never shown the
- * scene has nothing here and blurs the flat art instead.
+ * scene has nothing here and shows the bundled rendering of the scene
+ * (DeviceCard's DEFAULT_FROST) instead.
  */
 const KEY_PREFIX = "herta.deviceScene.frost.";
 /** A quarter-size JPEG is ~4 KB; anything past this is not ours. */
@@ -31,7 +32,8 @@ export function writeFrost(theme: ResolvedTheme, dataUrl: string): void {
   try {
     localStorage.setItem(KEY_PREFIX + theme, dataUrl);
   } catch {
-    // Quota or a locked-down storage: the next launch blurs the flat art.
+    // Quota or a locked-down storage: the next launch shows the bundled
+    // picture.
   }
 }
 

@@ -1,6 +1,7 @@
 import type {
   ApprovalOverlayState,
   ApprovalResult,
+  CommitDescription,
   CreateSessionOpts,
   OverlayEvent,
   RecordEvent,
@@ -242,6 +243,16 @@ export type ReadWorkspaceBytesReply =
         | "no_session";
     };
 
+/**
+ * Reply from `readWorkspaceCommit` (ADR 0059): one commit of the session's
+ * repository for the viewer's commit tab. `not_found` covers everything git
+ * cannot show — an unknown or ambiguous id, no repository, a timeout — the
+ * panel's one honest notice.
+ */
+export type ReadWorkspaceCommitReply =
+  | { readonly ok: true; readonly commit: CommitDescription }
+  | { readonly ok: false; readonly reason: "not_found" | "no_session" };
+
 /** Reply from `stageImages`. Per-file refusals ride `rejected` so one bad
  *  item never discards its siblings; only whole-action failures use `ok:
  *  false` with a message, like every other command here. */
@@ -397,6 +408,14 @@ export interface HertaBridge {
     sessionId: string,
     path: string,
   ): Promise<ReadWorkspaceBytesReply>;
+  /** The viewer's commit tab (ADR 0059): one commit of the session's
+   *  repository — message, author, files with counts, the patch. `ref` is a
+   *  hex commit id. Optional like its siblings; the sha stays plain text
+   *  without it. */
+  readWorkspaceCommit?(
+    sessionId: string,
+    ref: string,
+  ): Promise<ReadWorkspaceCommitReply>;
   /** The viewer's 打开 button: open the jailed path with the OS default
    *  application (shell.openPath). False when refused/missing. */
   openWorkspaceFile?(sessionId: string, path: string): Promise<boolean>;

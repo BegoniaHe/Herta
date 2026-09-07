@@ -448,6 +448,86 @@ describe("ActivityBlock", () => {
     expect(screen.queryByText("Coprocessor")).toBeNull();
   });
 
+  it("the done marker's commit sha opens the commit beside the record; plain text without a viewer (ADR 0059)", async () => {
+    const marker = done("完成 · 1 file · 提交 a1b2c3d", {
+      kind: "done",
+      state: "completed",
+      fileCount: 1,
+      riskCount: 0,
+      git: { commit: "a1b2c3d" },
+    });
+    // No viewer: the sha is text inside the headline.
+    const plain = renderWithLocale(
+      <A
+        blocks={[step("Running git commit"), marker]}
+        active={false}
+        turnStartedAt={null}
+        backendStartedAt={null}
+      />,
+    );
+    expect(
+      plain.container.querySelector(".activity-line__summary")?.textContent,
+    ).toContain("a1b2c3d");
+    expect(plain.container.querySelector(".file-open-name")).toBeNull();
+    plain.unmount();
+
+    const mock = createMockHertaBridge();
+    const readWorkspaceCommit = vi.fn(async () => ({
+      ok: true as const,
+      commit: {
+        sha: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+        shortSha: "a1b2c3d",
+        subject: "feat: the work",
+        body: "",
+        author: "Tester",
+        authoredAt: "2026-09-07T10:00:00+08:00",
+        parents: [],
+        files: [],
+        filesTotal: 0,
+        patch: "",
+        patchTruncated: false,
+      },
+    }));
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: vi.fn(async () => ({
+        ok: false as const,
+        reason: "not_found" as const,
+      })),
+      readWorkspaceCommit,
+    });
+    const h = renderWithSession(
+      <FileViewerProvider>
+        <A
+          blocks={[step("Running git commit"), marker]}
+          active={false}
+          turnStartedAt={null}
+          backendStartedAt={null}
+        />
+        <FileViewerPanel />
+      </FileViewerProvider>,
+      { mock },
+    );
+    h.openSession("s1");
+    const sha = h.container.querySelector(
+      ".activity-line__summary .file-open-name",
+    );
+    expect(sha?.textContent).toBe("a1b2c3d");
+    expect(sha?.getAttribute("aria-label")).toBe("View commit a1b2c3d");
+    fireEvent.click(sha as Element);
+    await waitFor(() =>
+      expect(readWorkspaceCommit).toHaveBeenCalledWith("s1", "a1b2c3d"),
+    );
+    await waitFor(() =>
+      expect(
+        h.container.querySelector(".file-viewer")?.getAttribute("data-kind"),
+      ).toBe("commit"),
+    );
+    // The click opened the commit, not the history toggle.
+    expect(
+      h.container.querySelector(".activity-line__history.is-open"),
+    ).toBeNull();
+  });
+
   it("mirror: UI locale zh but session en → English chip + done-marker", () => {
     const { container } = renderWithLocale(
       <A

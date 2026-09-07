@@ -16,6 +16,7 @@ import {
   ActivityStep,
   type ActivityStepProps,
   type FileLinkTarget,
+  textWithLinks,
 } from "./ActivityStep.js";
 import { useUnpinConversation } from "./ConversationPin.js";
 import { DiffStat, type DiffStatValue } from "./DiffStat.js";
@@ -184,6 +185,12 @@ export const ActivityBlock = memo(function ActivityBlock(
     // body is untouched; this is display-only.
     const headline =
       done && summary !== null ? composeMarkerSummary(summary, t) : null;
+    // The commit the run landed (ADR 0049 §4) — the headline's `提交 sha`
+    // segment becomes the commit tab's opener (ADR 0059).
+    const commitSha =
+      summary?.kind === "structured"
+        ? (summary.marker.git?.commit ?? null)
+        : null;
     const steps = activitySteps(blocks);
     // Rendered rows, not raw blocks: a patch preview folds into the write it
     // previews (the permission rule emits it BEFORE the tool runs, so the
@@ -221,14 +228,23 @@ export const ActivityBlock = memo(function ActivityBlock(
       summary,
       done,
       headline,
+      commitSha,
       rows,
       markerBlock,
       markerDetail,
       latestStep,
     };
   }, [blocks, t]);
-  const { chip, summary, done, headline, rows, markerBlock, markerDetail } =
-    derived;
+  const {
+    chip,
+    summary,
+    done,
+    headline,
+    commitSha,
+    rows,
+    markerBlock,
+    markerDetail,
+  } = derived;
   const latestStep = derived.latestStep;
   // Expandable only when there are operational rows to reveal. A group that
   // is just a terminal marker (e.g. 完成 · 1 file) has nothing behind the
@@ -632,7 +648,22 @@ export const ActivityBlock = memo(function ActivityBlock(
           ) : (
             headline !== null && (
               <span className="activity-line__summary">
-                {headline}
+                {/* The sha the run committed opens the commit beside the
+                    record (ADR 0059) — the same name affordance as a file,
+                    inside the toggle button, so activation stops there. */}
+                {commitSha !== null && openFile !== null
+                  ? textWithLinks(headline, [
+                      {
+                        text: commitSha,
+                        onOpen: () =>
+                          openFile(commitSha, {
+                            kind: "commit",
+                            label: commitSha,
+                          }),
+                        ariaLabel: `${t("activity.commit.openAria")} ${commitSha}`,
+                      },
+                    ])
+                  : headline}
                 {/* The dispatch's total, as an element so the digits count up
                     like the per-write rows they sum. Present only when every
                     changed file had a real diff — see DoneMarkerSummary.lines. */}

@@ -37,11 +37,20 @@ import {
   V2ActorDriver,
 } from "@herta/herta";
 import { type ApiKey, deepseekVisionCaptioner } from "@herta/providers";
-import { describeRepoContext } from "@herta/tools";
+import {
+  type CommitDescription,
+  describeCommit,
+  describeRepoContext,
+} from "@herta/tools";
 import { type ImageCaptioner, migrateAttachments } from "./attachments.js";
 import { BusActorStreamingSink } from "./bus-streaming-sink.js";
 import { OverlayAskResolver } from "./overlay-ask-resolver.js";
 import { recordTail } from "./record-window.js";
+import {
+  REPO_WATCH_DEBOUNCE_MS,
+  type RepoWatcher,
+  watchGitDir,
+} from "./repo-watch.js";
 import { SessionAttachments } from "./session-attachments.js";
 import { SessionEventProjector } from "./session-event-projector.js";
 import {
@@ -193,6 +202,20 @@ export interface SessionInternalDeps {
     workspace: string,
     signal?: AbortSignal,
   ) => Promise<RepoContextSnapshot | null>;
+  /** The git-dir watcher behind the card's live updates (ADR 0058
+   *  amendment). Defaults to `watchGitDir`; tests inject a fake that
+   *  records the dir and fires changes on demand. */
+  readonly repoWatcher?: RepoWatcher;
+  /** Trailing debounce for the watcher's bursts, ms. Defaults to
+   *  REPO_WATCH_DEBOUNCE_MS; tests shorten it. */
+  readonly repoWatchDebounceMs?: number;
+  /** One commit's description for the viewer's commit tab (ADR 0059).
+   *  Defaults to the git reader in `@herta/tools`; tests inject a stub. */
+  readonly commitDescriber?: (
+    workspace: string,
+    ref: string,
+    signal?: AbortSignal,
+  ) => Promise<CommitDescription | null>;
   /** Clock (ms) for the easter-egg per-session hourly throttle. Defaults to
    *  `Date.now`; tests inject a controllable clock. */
   readonly easterEggNow?: () => number;
@@ -236,6 +259,21 @@ export class SessionImpl implements Session {
     workspace: string,
     signal?: AbortSignal,
   ) => Promise<RepoContextSnapshot | null>;
+  // The git-dir watcher (ADR 0058 amendment, 2026-09-07): armed on the git
+  // dir each probe answer names, re-armed when it changes (a workspace
+  // switch), dropped when the answer is "not a repository" or the session
+  // closes. Its bursts debounce into one probe.
+  private readonly repoWatcher: RepoWatcher;
+  private readonly repoWatchDebounceMs: number;
+  private repoWatchedDir: string | null = null;
+  private stopRepoWatch: (() => void) | null = null;
+  private repoWatchTimer: NodeJS.Timeout | null = null;
+  private repoClosed = false;
+  private readonly commitDescriber: (
+    workspace: string,
+    ref: string,
+    signal?: AbortSignal,
+  ) => Promise<CommitDescription | null>;
 
   // The block persister — owned by the driver for turn blocks, but held here
   // too so setWorkspace/resetWorkspace can append a structured workspace_set
@@ -340,6 +378,13 @@ export class SessionImpl implements Session {
       workspace: string,
       signal?: AbortSignal,
     ) => Promise<RepoContextSnapshot | null>;
+    repoWatcher: RepoWatcher;
+    repoWatchDebounceMs: number;
+    commitDescriber: (
+      workspace: string,
+      ref: string,
+      signal?: AbortSignal,
+    ) => Promise<CommitDescription | null>;
     persister: V2RecordPersister;
     driver: V2ActorDriver;
     sink: BusActorStreamingSink;
@@ -363,6 +408,9 @@ export class SessionImpl implements Session {
     this.wsHolder = opts.wsHolder;
     this.wsIsDefault = opts.isDefaultWorkspace;
     this.repoDescriber = opts.repoDescriber;
+    this.repoWatcher = opts.repoWatcher;
+    this.repoWatchDebounceMs = opts.repoWatchDebounceMs;
+    this.commitDescriber = opts.commitDescriber;
     this.persister = opts.persister;
     this.driver = opts.driver;
     this.sink = opts.sink;
@@ -1077,6 +1125,7 @@ export class SessionImpl implements Session {
    *  user tabs back) costs one extra probe, not one per trigger. The probe
    *  never throws (its own contract); a throw here still lands as null. */
   async refreshRepo(): Promise<void> {
+    if (this.repoClosed) return;
     if (this.repoProbeInFlight) {
       this.repoProbeAgain = true;
       return;
@@ -1092,12 +1141,52 @@ export class SessionImpl implements Session {
         } catch {
           repo = null;
         }
+        if (this.repoClosed) return;
         this._repo = repo;
+        this.syncRepoWatch(repo?.gitDir ?? null);
         this.projector.emitRepo({ kind: "repo", workspace, repo });
       } while (this.repoProbeAgain);
     } finally {
       this.repoProbeInFlight = false;
     }
+  }
+
+  /** Keep exactly one watcher, on the git dir the latest answer names. */
+  private syncRepoWatch(gitDir: string | null): void {
+    if (gitDir === this.repoWatchedDir) return;
+    this.stopRepoWatch?.();
+    this.stopRepoWatch = null;
+    this.repoWatchedDir = gitDir;
+    if (gitDir === null || this.repoClosed) return;
+    this.stopRepoWatch = this.repoWatcher(gitDir, () => this.onRepoChanged());
+  }
+
+  /** A git-dir change: one probe after the burst settles. */
+  private onRepoChanged(): void {
+    if (this.repoClosed) return;
+    if (this.repoWatchTimer !== null) clearTimeout(this.repoWatchTimer);
+    this.repoWatchTimer = setTimeout(() => {
+      this.repoWatchTimer = null;
+      void this.refreshRepo();
+    }, this.repoWatchDebounceMs);
+    this.repoWatchTimer.unref?.();
+  }
+
+  /** The watcher's teardown, and the end of probing: nothing runs git for
+   *  a session that is closing. */
+  private stopRepoTracking(): void {
+    this.repoClosed = true;
+    if (this.repoWatchTimer !== null) {
+      clearTimeout(this.repoWatchTimer);
+      this.repoWatchTimer = null;
+    }
+    this.syncRepoWatch(null);
+  }
+
+  /** One commit, read from the workspace's repository for the viewer's
+   *  commit tab (ADR 0059). Null for anything git cannot show. */
+  describeCommit(ref: string): Promise<CommitDescription | null> {
+    return this.commitDescriber(this.wsHolder.current, ref);
   }
 
   subscribeVoice(): AsyncIterable<VoiceCueEvent> {
@@ -1114,6 +1203,9 @@ export class SessionImpl implements Session {
   }
 
   async close(): Promise<void> {
+    // The repository watcher first: nothing below should be able to start
+    // a probe against a session that is going away.
+    this.stopRepoTracking();
     // Capture BEFORE interrupt: the turn's finally clears currentTurn.
     const inFlight = this.currentTurn?.settled ?? null;
     // Cancel any in-flight turn first. interrupt() is a no-op when
@@ -1511,6 +1603,9 @@ export class SessionImpl implements Session {
           ? deepseekVisionCaptioner({ apiKey, ...baseUrl })
           : null,
       repoDescriber: deps.repoDescriber ?? describeRepoContext,
+      repoWatcher: deps.repoWatcher ?? watchGitDir,
+      repoWatchDebounceMs: deps.repoWatchDebounceMs ?? REPO_WATCH_DEBOUNCE_MS,
+      commitDescriber: deps.commitDescriber ?? describeCommit,
     });
     sessionHolder.session = session;
     // The repository card's first answer (ADR 0058): fire-and-forget, the

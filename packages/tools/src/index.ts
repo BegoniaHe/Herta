@@ -83,6 +83,16 @@ export {
 export type { EditFileInput } from "./edit-file/schema.js";
 export type { ToolErrorCode } from "./errors.js";
 export { TOOL_ERROR_CODES } from "./errors.js";
+export type {
+  CommitDescription,
+  CommitFileChange,
+  CommitFileStatus,
+} from "./git/commit-show.js";
+export {
+  describeCommit,
+  MAX_COMMIT_FILES,
+  MAX_COMMIT_PATCH_BYTES,
+} from "./git/commit-show.js";
 export type { RangeChangedFile } from "./git/repo-probe.js";
 export {
   describeRepoContext,

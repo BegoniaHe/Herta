@@ -14,7 +14,10 @@ export type ViewerKind =
   | "docx"
   | "xlsx"
   | "csv"
-  | "pptx";
+  | "pptx"
+  /** A commit, not a file (ADR 0059): chosen by the TARGET's kind, never
+   *  by a path — `viewerKindFor` never answers it. */
+  | "commit";
 
 export interface ViewerKindInfo {
   readonly kind: ViewerKind;

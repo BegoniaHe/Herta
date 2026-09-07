@@ -12,6 +12,7 @@ import { useSessionSelector } from "../../hooks/useSessionSelector.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import type {
   ReadWorkspaceBytesReply,
+  ReadWorkspaceCommitReply,
   ReadWorkspaceFileReply,
 } from "../../ipc/bridge-types.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
@@ -25,6 +26,7 @@ import {
   type ViewerAnchor,
 } from "./file-viewer-context.js";
 import { CodeView } from "./renderers/CodeView.js";
+import { CommitView } from "./renderers/CommitView.js";
 import { ImageView } from "./renderers/ImageView.js";
 import { ViewerErrorBoundary } from "./renderers/ViewerErrorBoundary.js";
 import {
@@ -72,7 +74,9 @@ const SlidesView = lazy(() =>
 type LoadState =
   | { readonly kind: "loading" }
   | { readonly kind: "text"; readonly reply: ReadWorkspaceFileReply }
-  | { readonly kind: "bytes"; readonly reply: ReadWorkspaceBytesReply };
+  | { readonly kind: "bytes"; readonly reply: ReadWorkspaceBytesReply }
+  /** A commit tab (ADR 0059): the target's kind, not a path, chose it. */
+  | { readonly kind: "commit"; readonly reply: ReadWorkspaceCommitReply };
 
 /** Markdown shows the page by default; a cite anchor forces the source
  *  (lines are a source concept). The header toggle overrides per tab. */
@@ -92,8 +96,13 @@ export function FileViewerPanel(): JSX.Element | null {
   const target = v?.target ?? null;
   const path = target?.path ?? null;
   const anchor = target?.anchor;
+  const isCommit = target?.kind === "commit";
   const kindInfo: ViewerKindInfo =
-    path === null ? { kind: "text" } : viewerKindFor(path);
+    path === null
+      ? { kind: "text" }
+      : isCommit
+        ? { kind: "commit" }
+        : viewerKindFor(path);
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
   const [copied, setCopied] = useState(false);
   const [modes, setModes] = useState<Readonly<Record<string, ViewMode>>>({});
@@ -106,9 +115,32 @@ export function FileViewerPanel(): JSX.Element | null {
     setLoad({ kind: "loading" });
     const readText = bridge.readWorkspaceFile?.bind(bridge);
     const readBytes = bridge.readWorkspaceBytes?.bind(bridge);
-    // A rich kind without the bytes read (an older bridge) takes the text
-    // read and lands on its binary notice — the ADR 0050 behaviour.
-    if (needsBytes(kindInfo.kind) && readBytes !== undefined) {
+    const readCommit = bridge.readWorkspaceCommit?.bind(bridge);
+    if (kindInfo.kind === "commit") {
+      // A commit tab reads the commit, never a file; without the bridge
+      // method the tab answers with the commit notice.
+      if (readCommit === undefined) {
+        setLoad({
+          kind: "commit",
+          reply: { ok: false, reason: "not_found" },
+        });
+      } else {
+        readCommit(sessionId, path).then(
+          (reply) => {
+            if (alive) setLoad({ kind: "commit", reply });
+          },
+          () => {
+            if (alive)
+              setLoad({
+                kind: "commit",
+                reply: { ok: false, reason: "not_found" },
+              });
+          },
+        );
+      }
+    } else if (needsBytes(kindInfo.kind) && readBytes !== undefined) {
+      // A rich kind without the bytes read (an older bridge) takes the text
+      // read and lands on its binary notice — the ADR 0050 behaviour.
       readBytes(sessionId, path).then(
         (reply) => {
           if (alive) setLoad({ kind: "bytes", reply });
@@ -165,8 +197,14 @@ export function FileViewerPanel(): JSX.Element | null {
 
   if (v === null || path === null) return null;
 
+  // The copy action's text: the workspace-relative path, or on a commit
+  // tab the full commit id.
   const relative =
-    load.kind !== "loading" && load.reply.ok ? load.reply.relative : path;
+    load.kind === "loading" || !load.reply.ok
+      ? path
+      : load.kind === "commit"
+        ? load.reply.commit.sha
+        : load.reply.relative;
   const activeName = tabName(v.tabs[v.active] ?? { path });
   const mode: ViewMode =
     modes[path] ?? (anchor !== undefined ? "source" : "rendered");
@@ -283,7 +321,13 @@ export function FileViewerPanel(): JSX.Element | null {
             </Tooltip>
           )}
           <Tooltip
-            label={copied ? t("viewer.copied") : t("viewer.copyPath")}
+            label={
+              copied
+                ? t("viewer.copied")
+                : isCommit
+                  ? t("viewer.copySha")
+                  : t("viewer.copyPath")
+            }
             placement="bottom"
             align="center"
             portal
@@ -291,7 +335,7 @@ export function FileViewerPanel(): JSX.Element | null {
             <button
               type="button"
               className="file-viewer__action"
-              aria-label={t("viewer.copyPath")}
+              aria-label={isCommit ? t("viewer.copySha") : t("viewer.copyPath")}
               onClick={() => {
                 navigator.clipboard?.writeText(relative).then(
                   () => setCopied(true),
@@ -313,36 +357,39 @@ export function FileViewerPanel(): JSX.Element | null {
               </svg>
             </button>
           </Tooltip>
-          <Tooltip
-            label={t("viewer.openExternal")}
-            placement="bottom"
-            align="center"
-            portal
-          >
-            <button
-              type="button"
-              className="file-viewer__action"
-              aria-label={t("viewer.openExternal")}
-              onClick={() => {
-                if (sessionId !== null)
-                  void bridge.openWorkspaceFile?.(sessionId, path);
-              }}
+          {/* A commit is not a file the OS could open. */}
+          {!isCommit && (
+            <Tooltip
+              label={t("viewer.openExternal")}
+              placement="bottom"
+              align="center"
+              portal
             >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 13 13"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.2"
-                strokeLinecap="round"
-                aria-hidden="true"
+              <button
+                type="button"
+                className="file-viewer__action"
+                aria-label={t("viewer.openExternal")}
+                onClick={() => {
+                  if (sessionId !== null)
+                    void bridge.openWorkspaceFile?.(sessionId, path);
+                }}
               >
-                <path d="M5.5 2.5H3A1.5 1.5 0 0 0 1.5 4v6A1.5 1.5 0 0 0 3 11.5h6A1.5 1.5 0 0 0 10.5 10V7.5" />
-                <path d="M7.5 1.5h4v4M11.2 1.8 6.5 6.5" />
-              </svg>
-            </button>
-          </Tooltip>
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 13 13"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                  strokeLinecap="round"
+                  aria-hidden="true"
+                >
+                  <path d="M5.5 2.5H3A1.5 1.5 0 0 0 1.5 4v6A1.5 1.5 0 0 0 3 11.5h6A1.5 1.5 0 0 0 10.5 10V7.5" />
+                  <path d="M7.5 1.5h4v4M11.2 1.8 6.5 6.5" />
+                </svg>
+              </button>
+            </Tooltip>
+          )}
           <Tooltip
             label={t("viewer.close")}
             placement="bottom"
@@ -408,6 +455,17 @@ function FileViewerBody({
     // A local read answers in single-digit milliseconds; a spinner would
     // only flash. Hold the empty body for the beat.
     return <div className="file-viewer__body" />;
+  }
+  if (load.kind === "commit") {
+    if (!load.reply.ok) return <Notice text={t("viewer.commit.notFound")} />;
+    return (
+      <ViewerErrorBoundary
+        key={`commit:${path}`}
+        fallback={<Notice text={t("viewer.renderFailed")} />}
+      >
+        <CommitView commit={load.reply.commit} />
+      </ViewerErrorBoundary>
+    );
   }
   const { reply } = load;
   if (!reply.ok) {

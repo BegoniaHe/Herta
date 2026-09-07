@@ -1328,6 +1328,9 @@ describe("the repo snapshot header (ADR 0049 §2)", () => {
       workspaceRoot: wsRoot,
       memory: new NoopMemoryManager(),
       repoContext: async () => ({
+        root: wsRoot,
+        prefix: "",
+        gitDir: null,
         branch: "main",
         detached: false,
         headShort: "abc1234",

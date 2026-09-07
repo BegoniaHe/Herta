@@ -27,6 +27,7 @@ export const CMD = {
   unstageImage: "session:unstageImage",
   readWorkspaceFile: "session:readWorkspaceFile",
   readWorkspaceBytes: "session:readWorkspaceBytes",
+  readWorkspaceCommit: "session:readWorkspaceCommit",
   openWorkspaceFile: "session:openWorkspaceFile",
   getDreamConfig: "settings:getDreamConfig",
   setDreamConfig: "settings:setDreamConfig",

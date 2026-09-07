@@ -36,13 +36,18 @@ export interface ViewerAnchor {
  *  internals in the tab (owner 2026-08-31) — and an optional line anchor
  *  from a finding cite. */
 export interface FileViewerTarget {
+  /** The path to read — or, on a `commit` tab, the commit id (ADR 0059). */
   readonly path: string;
+  /** A commit tab: `path` is a hex commit id and the panel reads the
+   *  commit, not a file. Absent = a file. */
+  readonly kind?: "commit";
   readonly label?: string;
   readonly anchor?: ViewerAnchor;
 }
 
 /** Options the opener takes beside the path. */
 export interface OpenFileOpts {
+  readonly kind?: "commit";
   readonly label?: string;
   readonly anchor?: ViewerAnchor;
 }
@@ -191,11 +196,16 @@ export function FileViewerProvider({
     (path: string, opts?: OpenFileOpts) => {
       const next: FileViewerTarget = {
         path,
+        ...(opts?.kind !== undefined ? { kind: opts.kind } : {}),
         ...(opts?.label !== undefined ? { label: opts.label } : {}),
         ...(opts?.anchor !== undefined ? { anchor: opts.anchor } : {}),
       };
       setTabState((s) => {
-        const existing = s.tabs.findIndex((t) => t.path === path);
+        // Identity is the path AND the kind: a commit tab and a file tab
+        // never collapse into each other.
+        const existing = s.tabs.findIndex(
+          (t) => t.path === path && t.kind === opts?.kind,
+        );
         if (existing >= 0) {
           // Same file: refresh its target (a new cite re-anchors it) and
           // bring it forward.

@@ -289,6 +289,12 @@ async function mkStubSession(
     // The repository probe behind the rail's repository card (ADR 0058).
     // Defaults to "not a repository" so no git runs under a stub session.
     repoDescriber?: SessionInternalDeps["repoDescriber"];
+    // The git-dir watcher + its debounce (ADR 0058 amendment). Defaults to
+    // a no-op watcher so no fs handle opens under a stub session.
+    repoWatcher?: SessionInternalDeps["repoWatcher"];
+    repoWatchDebounceMs?: number;
+    // The commit reader behind the viewer's commit tab (ADR 0059).
+    commitDescriber?: SessionInternalDeps["commitDescriber"];
   },
 ): Promise<{
   session: SessionImpl;
@@ -371,6 +377,11 @@ async function mkStubSession(
         ? { easterEggRandom: extra.easterEggRandom }
         : {}),
       repoDescriber: extra?.repoDescriber ?? (async () => null),
+      repoWatcher: extra?.repoWatcher ?? (() => () => undefined),
+      ...(extra?.repoWatchDebounceMs !== undefined
+        ? { repoWatchDebounceMs: extra.repoWatchDebounceMs }
+        : {}),
+      commitDescriber: extra?.commitDescriber ?? (async () => null),
       ...(extra?.easterEggNow !== undefined
         ? { easterEggNow: extra.easterEggNow }
         : {}),
@@ -2062,6 +2073,9 @@ describe("contract-fallback record note (ADR 0044)", () => {
 
 describe("Session — the repository probe behind the rail's card (ADR 0058)", () => {
   const sample: RepoContextSnapshot = {
+    root: "/repo",
+    prefix: "",
+    gitDir: "/repo/.git",
     branch: "main",
     detached: false,
     headShort: "abc1234",
@@ -2147,6 +2161,91 @@ describe("Session — the repository probe behind the rail's card (ADR 0058)", (
     await until(() => session.repo === null);
     await new Promise((r) => setTimeout(r, 20));
     expect(calls).toBe(2);
+    await cleanup();
+  });
+
+  it("watches the git dir each answer names — a change re-probes once after the debounce, a new git dir re-arms, null and close disarm (ADR 0058 amendment)", async () => {
+    const cfg = mkConfig();
+    const watched: string[] = [];
+    const stopped: string[] = [];
+    const hook: { fire: (() => void) | null } = { fire: null };
+    let answer: RepoContextSnapshot | null = sample;
+    let calls = 0;
+    const { session, cleanup } = await mkStubSession(
+      cfg,
+      undefined,
+      1,
+      undefined,
+      {
+        repoDescriber: async () => {
+          calls += 1;
+          return answer;
+        },
+        repoWatcher: (gitDir, onChange) => {
+          watched.push(gitDir);
+          hook.fire = onChange;
+          return () => {
+            stopped.push(gitDir);
+          };
+        },
+        repoWatchDebounceMs: 20,
+      },
+    );
+    await until(() => watched.length === 1);
+    expect(watched).toEqual(["/repo/.git"]);
+    expect(calls).toBe(1);
+    // A burst of changes: one probe, after the quiet period.
+    hook.fire?.();
+    hook.fire?.();
+    hook.fire?.();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(calls).toBe(1);
+    await until(() => calls === 2);
+    // The same git dir again: the watcher is kept, not re-armed.
+    expect(watched).toHaveLength(1);
+    expect(stopped).toHaveLength(0);
+    // A different repository answers: the old watcher stops, a new one arms.
+    answer = { ...sample, gitDir: "/other/.git" };
+    await session.refreshRepo();
+    expect(stopped).toEqual(["/repo/.git"]);
+    expect(watched).toEqual(["/repo/.git", "/other/.git"]);
+    // Not a repository any more: disarmed.
+    answer = null;
+    await session.refreshRepo();
+    expect(stopped).toEqual(["/repo/.git", "/other/.git"]);
+    expect(watched).toHaveLength(2);
+    // Closing with a watcher armed stops it and ends probing.
+    answer = sample;
+    await session.refreshRepo();
+    expect(watched).toHaveLength(3);
+    const before = calls;
+    await cleanup();
+    expect(stopped).toHaveLength(3);
+    hook.fire?.();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(calls).toBe(before);
+  });
+
+  it("describeCommit reads against the EFFECTIVE workspace (ADR 0059)", async () => {
+    const cfg = mkConfig();
+    const asked: Array<[string, string]> = [];
+    const { session, cleanup } = await mkStubSession(
+      cfg,
+      undefined,
+      1,
+      undefined,
+      {
+        commitDescriber: async (workspace, ref) => {
+          asked.push([workspace, ref]);
+          return null;
+        },
+      },
+    );
+    await session.describeCommit("abc1234");
+    expect(asked).toEqual([[cfg.workspaceRoot, "abc1234"]]);
+    await session.setWorkspace(cfg.transcriptDir);
+    await session.describeCommit("def5678");
+    expect(asked[1]).toEqual([cfg.transcriptDir, "def5678"]);
     await cleanup();
   });
 });

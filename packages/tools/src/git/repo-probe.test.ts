@@ -196,8 +196,15 @@ describe.skipIf(!GIT_AVAILABLE)(
     }
 
     it("describes a clean seeded repo", async () => {
-      const ctx = await describeRepoContext(seeded());
+      const dir = seeded();
+      const ctx = await describeRepoContext(dir);
       expect(ctx).not.toBeNull();
+      // Git spells the top level with forward slashes; the temp dir may not.
+      expect(ctx?.root.replaceAll("\\", "/").toLowerCase()).toBe(
+        dir.replaceAll("\\", "/").toLowerCase(),
+      );
+      expect(ctx?.prefix).toBe("");
+      expect(ctx?.gitDir).toBe(join(dir, ".git"));
       expect(ctx?.branch).toBe("main");
       expect(ctx?.detached).toBe(false);
       expect(ctx?.headShort).toMatch(/^[0-9a-f]{4,}$/);
@@ -208,6 +215,22 @@ describe.skipIf(!GIT_AVAILABLE)(
       expect(ctx?.dirtyTotal).toBe(0);
       expect(ctx?.recentSubjects).toHaveLength(1);
       expect(ctx?.recentSubjects[0]).toContain("init: seed");
+    });
+
+    it("a subfolder workspace reports the root, its prefix, and git's root-relative paths (ADR 0058 amendment)", async () => {
+      const dir = seeded();
+      const sub = join(dir, "packages", "gui");
+      mkdirSync(sub, { recursive: true });
+      writeFileSync(join(sub, "x.ts"), "x\n");
+      writeFileSync(join(dir, "a.ts"), "one\nedited\n");
+      const ctx = await describeRepoContext(sub);
+      expect(ctx?.prefix).toBe("packages/gui/");
+      expect(ctx?.root.replaceAll("\\", "/").toLowerCase()).toBe(
+        dir.replaceAll("\\", "/").toLowerCase(),
+      );
+      expect(ctx?.gitDir).toBe(join(dir, ".git"));
+      const paths = ctx?.dirty.map((f) => f.path).sort();
+      expect(paths).toEqual(["a.ts", "packages/gui/x.ts"]);
     });
 
     it("carries the dirty set with porcelain codes and an honest total", async () => {

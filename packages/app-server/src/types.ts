@@ -6,6 +6,7 @@ import type {
   TerminalRecord,
   TerminalRecordBlock,
 } from "@herta/core";
+import type { CommitDescription } from "@herta/tools";
 import type { SessionSearchHit } from "./session-search.js";
 
 // ───── Configuration ─────
@@ -546,6 +547,11 @@ export interface Session {
    *  runs exactly one more after it. */
   refreshRepo?(): Promise<void>;
   subscribeRepo?(): AsyncIterable<RepoEvent>;
+  /** One commit of the workspace's repository — message, author, the files
+   *  with their counts, the patch — for the viewer's commit tab (ADR 0059).
+   *  `ref` is a hex commit id (abbreviated is fine); null when git cannot
+   *  show it. Optional: the GUI SessionImpl only. */
+  describeCommit?(ref: string): Promise<CommitDescription | null>;
 
   close(): Promise<void>;
 }

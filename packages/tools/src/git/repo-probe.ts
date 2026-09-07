@@ -233,10 +233,10 @@ async function describe(
   const sig = signal ?? new AbortController().signal;
   const opts = { timeoutMs: 5_000 } as const;
 
-  // All four queries are independent; `log` on an unborn HEAD exits 128,
+  // All five queries are independent; `log` on an unborn HEAD exits 128,
   // which is an answer (no commits → no subjects), not a failure — so the
   // whole set can run concurrently.
-  const [head, status, log, originHead] = await Promise.all([
+  const [head, status, log, originHead, layout] = await Promise.all([
     spawnGit(
       workspaceRoot,
       hardenedGitArgs(["rev-parse", "--short", "HEAD"]),
@@ -255,9 +255,12 @@ async function describe(
       sig,
       opts,
     ),
+    // `--no-decorate`: a `log.decorate=short` in the user's config would
+    // paint `(HEAD -> main)` into the subject line the card and the marker
+    // parse a sha out of.
     spawnGit(
       workspaceRoot,
-      hardenedGitArgs(["log", "--oneline", "-n", "5"]),
+      hardenedGitArgs(["log", "--oneline", "--no-decorate", "-n", "5"]),
       sig,
       { ...opts, allowExitCodes: [128] },
     ),
@@ -273,8 +276,19 @@ async function describe(
       sig,
       { ...opts, allowExitCodes: [1] },
     ),
+    // Where the workspace sits in its repository (ADR 0058 amendment,
+    // 2026-09-07): the top level, and the workspace's path inside it —
+    // "" at the root, `packages/gui/` (trailing slash) below it.
+    spawnGit(
+      workspaceRoot,
+      hardenedGitArgs(["rev-parse", "--show-toplevel", "--show-prefix"]),
+      sig,
+      opts,
+    ),
   ]);
-  if (!head.ok || !status.ok) return null;
+  if (!head.ok || !status.ok || !layout.ok) return null;
+  const [root = "", prefix = ""] = layout.stdout.split(/\r?\n/);
+  if (root.length === 0) return null;
 
   const parsed = parseStatusPorcelainZ(status.stdout);
   const shortSha = head.stdout.trim();
@@ -322,6 +336,9 @@ async function describe(
   const inProgress = gitDir !== null ? detectInProgressState(gitDir) : null;
 
   return {
+    root,
+    prefix,
+    gitDir,
     branch: parsed.branch,
     detached: parsed.branch === null && headShort !== null,
     headShort,

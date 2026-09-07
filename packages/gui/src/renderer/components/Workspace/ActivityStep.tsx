@@ -120,8 +120,10 @@ export interface FileLinkTarget {
 }
 
 /** The body (or detail) with each link target wrapped as a click span —
- *  the same `.file-open-name` affordance as the single-target form. */
-function textWithLinks(
+ *  the same `.file-open-name` affordance as the single-target form.
+ *  Exported for the activity line's headline (the done marker's commit
+ *  sha, ADR 0059). */
+export function textWithLinks(
   text: string,
   links: readonly FileLinkTarget[],
 ): JSX.Element | string {

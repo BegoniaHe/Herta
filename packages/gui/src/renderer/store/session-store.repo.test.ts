@@ -4,6 +4,9 @@ import { createMockHertaBridge } from "../ipc/mock-bridge.js";
 import { SessionStore } from "./session-store.js";
 
 const REPO: RepoContextSnapshot = {
+  root: "/repo",
+  prefix: "",
+  gitDir: "/repo/.git",
   branch: "main",
   detached: false,
   headShort: "abc1234",

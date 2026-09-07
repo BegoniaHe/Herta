@@ -672,6 +672,9 @@ describe("repo snapshot section (ADR 0049)", () => {
     messages: [],
   };
   const snapshot: RepoContextSnapshot = {
+    root: "E:/repo",
+    prefix: "",
+    gitDir: "E:/repo/.git",
     branch: "main",
     detached: false,
     headShort: "abc1234",
@@ -688,6 +691,35 @@ describe("repo snapshot section (ADR 0049)", () => {
     dirtyTotal: 2,
     recentSubjects: ["abc1234 fix: cursor reset"],
   };
+
+  it("a subfolder workspace is named once and every path is spelled from it (ADR 0058 amendment)", () => {
+    const sub = renderRepoContext(
+      {
+        ...snapshot,
+        prefix: "packages/",
+        conflicted: ["packages/foo.ts", "README.md"],
+        inProgress: "merge",
+      },
+      "zh",
+      "standard",
+    );
+    expect(sub).toContain(
+      "仓库根目录: E:/repo（工作区是其中的 packages/；下列路径相对工作区，../ 开头的在工作区之外）",
+    );
+    expect(sub).toContain(" M foo.ts");
+    expect(sub).toContain("?? ../scratch.txt");
+    expect(sub).toContain("冲突文件 2 个: foo.ts、../README.md");
+    const en = renderRepoContext(
+      { ...snapshot, prefix: "packages/" },
+      "en",
+      "standard",
+    );
+    expect(en).toContain("repo root: E:/repo (the workspace is its packages/");
+    // At the root: no such line, paths untouched.
+    const root = renderRepoContext(snapshot, "zh", "standard");
+    expect(root).not.toContain("仓库根目录");
+    expect(root).toContain(" M packages/foo.ts");
+  });
 
   it("renders branch, upstream counts, default branch, dirty set and log", () => {
     const zh = renderRepoContext(snapshot, "zh", "standard");

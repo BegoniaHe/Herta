@@ -3,6 +3,10 @@ import type {
   RepoContextSnapshot,
   RepoInProgressState,
 } from "@herta/app-server";
+import {
+  repoPathInsideWorkspace,
+  workspaceRelativeRepoPath,
+} from "@herta/core/repo-path";
 import { useRef } from "react";
 import type { MessageKey } from "../../i18n/keys.js";
 import { useT } from "../../i18n/LocaleProvider.js";
@@ -20,8 +24,11 @@ import { useRepoCard } from "./useRepoCard.js";
  * Rides the .plan-card chrome (glass, slide, fog, mark) so the rail keeps
  * one card family; the `repo-card` variant carries what differs. Facts
  * only, stated in FORM (the 2026-07-27 rule): nothing here moves. Paths
- * open in the file viewer where the bridge can read files (ADR 0050),
- * spelled the way git spells them — relative to the repository's root.
+ * are spelled from the WORKSPACE (git spells them from the repository's
+ * root; a workspace that is a subfolder sees `../` for what lies beside
+ * it — ADR 0058 amendment) and open in the file viewer where the bridge
+ * can read them (ADR 0050): inside the workspace only. The last commit
+ * opens as a commit tab (ADR 0059).
  */
 export function RepoCard(): JSX.Element | null {
   const t = useT();
@@ -57,6 +64,8 @@ export function RepoCard(): JSX.Element | null {
       : t("repo.card.dirty", { n: String(repo.dirtyTotal) });
   const hidden = repo.dirtyTotal - repo.dirty.length;
   const lastCommit = repo.recentSubjects[0] ?? null;
+  const prefix = repo.prefix;
+  const head = repo.headShort;
 
   return (
     <section
@@ -87,6 +96,11 @@ export function RepoCard(): JSX.Element | null {
           </span>
         )}
       </div>
+      {prefix.length > 0 && (
+        <p className="repo-card__scope" title={repo.root}>
+          {t("repo.card.scope", { prefix })}
+        </p>
+      )}
       {repo.inProgress !== null && (
         <p className="repo-card__flag">
           {t(IN_PROGRESS_KEY[repo.inProgress])}
@@ -103,10 +117,14 @@ export function RepoCard(): JSX.Element | null {
         >
           {repo.dirty.map((file) => {
             const mark = dirtyMark(file);
+            const shown = workspaceRelativeRepoPath(file.path, prefix);
+            const inside = repoPathInsideWorkspace(file.path, prefix);
             return (
               <li
                 key={file.path}
-                className={`plan-card__row repo-card__row is-${mark.kind}`}
+                className={`plan-card__row repo-card__row is-${mark.kind}${
+                  inside ? "" : " is-outside"
+                }`}
               >
                 <span
                   className="plan-card__mark"
@@ -114,18 +132,25 @@ export function RepoCard(): JSX.Element | null {
                 >
                   {mark.glyph}
                 </span>
-                {openFile !== null ? (
+                {openFile !== null && inside ? (
                   <button
                     type="button"
                     className="repo-card__path"
                     title={file.path}
-                    onClick={() => openFile(file.path)}
+                    onClick={() => openFile(shown)}
                   >
-                    {file.path}
+                    {shown}
                   </button>
                 ) : (
-                  <span className="repo-card__path" title={file.path}>
-                    {file.path}
+                  <span
+                    className="repo-card__path"
+                    title={
+                      inside
+                        ? file.path
+                        : `${file.path} · ${t("viewer.outside")}`
+                    }
+                  >
+                    {shown}
                   </span>
                 )}
               </li>
@@ -138,11 +163,22 @@ export function RepoCard(): JSX.Element | null {
           {t("repo.card.more", { n: String(hidden) })}
         </p>
       )}
-      {lastCommit !== null && (
-        <p className="repo-card__commit" title={lastCommit}>
-          {lastCommit}
-        </p>
-      )}
+      {lastCommit !== null &&
+        (openFile !== null && head !== null ? (
+          <button
+            type="button"
+            className="repo-card__commit"
+            title={lastCommit}
+            aria-label={`${t("activity.commit.openAria")} ${head}`}
+            onClick={() => openFile(head, { kind: "commit", label: head })}
+          >
+            {lastCommit}
+          </button>
+        ) : (
+          <p className="repo-card__commit" title={lastCommit}>
+            {lastCommit}
+          </p>
+        ))}
     </section>
   );
 }

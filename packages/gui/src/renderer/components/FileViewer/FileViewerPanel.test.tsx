@@ -66,9 +66,49 @@ function Probe(): JSX.Element {
       >
         open anchored
       </button>
+      <button
+        type="button"
+        data-testid="probe-commit"
+        onClick={() => open?.("a1b2c3d", { kind: "commit", label: "a1b2c3d" })}
+      >
+        open commit
+      </button>
     </>
   );
 }
+
+const COMMIT = {
+  sha: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+  shortSha: "a1b2c3d",
+  subject: "feat: the work",
+  body: "A body line.",
+  author: "Tester",
+  authoredAt: "2026-09-07T10:00:00+08:00",
+  parents: ["0000000000000000000000000000000000000000"],
+  files: [
+    { path: "src/a.ts", status: "modified" as const, added: 1, deleted: 1 },
+    { path: "pic.png", status: "added" as const, added: null, deleted: null },
+    { path: "gone.ts", status: "deleted" as const, added: 0, deleted: 3 },
+  ],
+  filesTotal: 3,
+  patch: [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -1 +1 @@",
+    "-one",
+    "+two",
+    "diff --git a/pic.png b/pic.png",
+    "Binary files /dev/null and b/pic.png differ",
+    "diff --git a/gone.ts b/gone.ts",
+    "@@ -1,3 +0,0 @@",
+    "-x",
+    "-y",
+    "-z",
+    "",
+  ].join("\n"),
+  patchTruncated: false,
+};
 
 function ui(): JSX.Element {
   return (
@@ -133,6 +173,97 @@ describe("FileViewerPanel (ADR 0050)", () => {
         screen.getByTestId("file-viewer").querySelector(".file-viewer__notice")
           ?.textContent,
       ).toContain("no longer exists"),
+    );
+  });
+
+  it("a commit tab reads the commit and shows the message, the files with counts, and the hunks (ADR 0059)", async () => {
+    const mock = createMockHertaBridge();
+    const readWorkspaceFile = vi.fn(async () => ({
+      ok: false as const,
+      reason: "not_found" as const,
+    }));
+    const readWorkspaceCommit = vi.fn(async () => ({
+      ok: true as const,
+      commit: COMMIT,
+    }));
+    Object.assign(mock.bridge, { readWorkspaceFile, readWorkspaceCommit });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("probe-commit"));
+    await waitFor(() =>
+      expect(screen.getByTestId("file-viewer").getAttribute("data-kind")).toBe(
+        "commit",
+      ),
+    );
+    expect(readWorkspaceCommit).toHaveBeenCalledWith("s1", "a1b2c3d");
+    expect(readWorkspaceFile).not.toHaveBeenCalled();
+    const panel = screen.getByTestId("file-viewer");
+    await waitFor(() =>
+      expect(panel.querySelector(".commit-view__subject")?.textContent).toBe(
+        "feat: the work",
+      ),
+    );
+    expect(panel.querySelector(".commit-view__message")?.textContent).toBe(
+      "A body line.",
+    );
+    expect(panel.querySelector(".commit-view__meta")?.textContent).toContain(
+      "Tester",
+    );
+    expect(panel.querySelector(".commit-view__stat")?.textContent).toBe(
+      "3 files+1 −4",
+    );
+    const files = panel.querySelectorAll(".commit-view__file");
+    expect(files).toHaveLength(3);
+    // A modified file inside the workspace opens live; a binary says so; a
+    // deleted file has nothing live to open.
+    expect(files[0]?.querySelector("button.commit-view__path")).not.toBeNull();
+    expect(files[0]?.querySelector(".commit-view__counts")?.textContent).toBe(
+      "+1 −1",
+    );
+    expect(files[0]?.querySelectorAll(".diff-body__line.is-add")).toHaveLength(
+      1,
+    );
+    expect(files[1]?.querySelector(".commit-view__counts")?.textContent).toBe(
+      "binary",
+    );
+    expect(files[1]?.querySelector(".diff-body__line.is-meta")).not.toBeNull();
+    expect(files[2]?.querySelector("button.commit-view__path")).toBeNull();
+    expect(files[2]?.querySelectorAll(".diff-body__line.is-del")).toHaveLength(
+      3,
+    );
+    // The tab is named by the short sha; no "open externally" for a commit.
+    expect(panel.querySelector(".file-viewer__tab-name")?.textContent).toBe(
+      "a1b2c3d",
+    );
+    expect(
+      panel.querySelector('[aria-label="Open in default app"]'),
+    ).toBeNull();
+    // Clicking the file opens it as a FILE tab beside the commit tab.
+    fireEvent.click(
+      files[0]?.querySelector("button.commit-view__path") as Element,
+    );
+    await waitFor(() =>
+      expect(readWorkspaceFile).toHaveBeenCalledWith("s1", "src/a.ts"),
+    );
+    expect(panel.querySelectorAll(".file-viewer__tab")).toHaveLength(2);
+  });
+
+  it("a commit git cannot show — or a bridge without the read — answers with the commit notice", async () => {
+    const mock = createMockHertaBridge();
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: vi.fn(async () => ({
+        ok: false as const,
+        reason: "not_found" as const,
+      })),
+    });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("probe-commit"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("file-viewer").querySelector(".file-viewer__notice")
+          ?.textContent,
+      ).toBe("This commit could not be read"),
     );
   });
 

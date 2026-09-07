@@ -794,6 +794,26 @@ export function createSessionService(
         return readWorkspaceBytesBounded(s.backendWorkspace, path);
       },
     );
+    // The viewer's commit tab (ADR 0059): one commit of the session's
+    // repository, read by the session against its effective workspace.
+    // The id is checked here too — a hex commit id and nothing else ever
+    // reaches a git argv (the session's reader checks again).
+    handle(
+      CMD.readWorkspaceCommit,
+      async (_e, sessionId: string, ref: string) => {
+        const s = host?.activeSession ?? null;
+        if (s === null || s.sessionId !== sessionId) {
+          return { ok: false as const, reason: "no_session" as const };
+        }
+        if (typeof ref !== "string" || !/^[0-9a-f]{4,64}$/.test(ref)) {
+          return { ok: false as const, reason: "not_found" as const };
+        }
+        const commit = (await s.describeCommit?.(ref)) ?? null;
+        return commit === null
+          ? { ok: false as const, reason: "not_found" as const }
+          : { ok: true as const, commit };
+      },
+    );
     // The viewer's 打开: hand the jailed path to the OS default app. The
     // same resolution as the read — an outside-resolving name never
     // reaches shell.openPath.

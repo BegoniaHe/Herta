@@ -10,7 +10,8 @@
     "./testing": "./dist/testing/index.js",
     "./text-sanitize": "./dist/text-sanitize.js",
     "./banzhuan-alias": "./dist/text/banzhuan-alias.js",
-    "./marker-summary": "./dist/text/marker-summary.js"
+    "./marker-summary": "./dist/text/marker-summary.js",
+    "./repo-path": "./dist/text/repo-path.js"
   },
   "files": [
     "dist"

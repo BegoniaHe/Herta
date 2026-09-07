@@ -163,6 +163,10 @@ export {
   pageMarkerLine,
   pageMarkerShape,
 } from "./text/page-marker.js";
+export {
+  repoPathInsideWorkspace,
+  workspaceRelativeRepoPath,
+} from "./text/repo-path.js";
 export { stripDisplayUnsafe } from "./text-sanitize.js";
 export { renderTodoState, TodoStore } from "./todo-store.js";
 export type { ToolRegistry } from "./tool-registry.js";

@@ -4535,6 +4535,7 @@ button.repo-card__path:hover {
   text-underline-offset: 2px;
 }
 .repo-card__more,
+.repo-card__scope,
 .repo-card__commit {
   margin: 0;
   font-size: 11.5px;
@@ -4542,6 +4543,30 @@ button.repo-card__path:hover {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* A row for a path OUTSIDE a subfolder workspace (ADR 0058 amendment):
+   stated, spelled with ../, not openable — quieter than its siblings. */
+.repo-card__row.is-outside .repo-card__path {
+  color: var(--muted-4);
+}
+/* The last commit as the commit tab's opener (ADR 0059): a button in the
+   line's own type, the same hover as a path. */
+button.repo-card__commit {
+  display: block;
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+button.repo-card__commit:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .trace-card__note.is-fail {
   color: #9a5b5b;
@@ -5493,6 +5518,110 @@ button.repo-card__path:hover {
 .file-viewer__scroll::-webkit-scrollbar-thumb:hover {
   background: var(--ink-a22);
   background-clip: padding-box;
+}
+
+/* ── The commit tab (ADR 0059) ────────────────────────────────────────────
+   The message and its facts, then one section per file: git's letter as
+   the mark, the path, the counts, the hunks in the record's own diff
+   rendering. Review, not action — nothing here touches the repository. */
+.commit-view {
+  padding: 14px 18px 24px;
+  font-size: 12.5px;
+  color: var(--slate-deep);
+}
+.commit-view__head {
+  margin: 0 0 14px;
+}
+.commit-view__subject {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.commit-view__meta {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--muted-4);
+}
+.commit-view__sha {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color: var(--muted-2);
+}
+.commit-view__message {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--hairline);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted-2);
+}
+.commit-view__stat {
+  margin: 10px 0 0;
+  display: flex;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--muted-4);
+  font-variant-numeric: tabular-nums;
+}
+.commit-view__totals {
+  color: var(--muted-2);
+}
+.commit-view__file {
+  margin: 0 0 12px;
+}
+.commit-view__file-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 0;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px;
+}
+.commit-view__mark {
+  flex: none;
+  min-width: 10px;
+  font-weight: 600;
+  color: var(--muted-4);
+}
+.commit-view__file.is-added .commit-view__mark { color: #3f7d50; }
+.commit-view__file.is-deleted .commit-view__mark { color: #a4544c; }
+.commit-view__file.is-unmerged .commit-view__mark { color: #9a5b5b; }
+.commit-view__path {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--slate-deep);
+  text-align: left;
+}
+button.commit-view__path {
+  cursor: pointer;
+}
+button.commit-view__path:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.commit-view__counts {
+  flex: none;
+  color: var(--muted-4);
+  font-variant-numeric: tabular-nums;
+}
+.commit-view .diff-body {
+  margin: 0;
 }
 .file-viewer__action.is-on {
   background: var(--ink-a13);

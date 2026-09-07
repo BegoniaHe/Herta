@@ -1,4 +1,5 @@
 import type { HertaToAgentBrief } from "../bridge/types.js";
+import { workspaceRelativeRepoPath } from "../text/repo-path.js";
 import type { ToolRegistry } from "../tool-registry.js";
 import type { BackendPromptFrame } from "../types/prompt.js";
 import type { Message } from "../types/transcript.js";
@@ -465,6 +466,19 @@ export interface RepoContextDirtyFile {
  * already held at brief start.
  */
 export interface RepoContextSnapshot {
+  /** The working tree's top-level directory as git spells it (absolute,
+   *  forward slashes even on Windows). */
+  readonly root: string;
+  /** The workspace's path INSIDE the repository — `git rev-parse
+   *  --show-prefix`: `packages/gui/` (trailing slash), "" when the
+   *  workspace is the root. `dirty` / `conflicted` keep git's root-relative
+   *  spelling; readers that resolve against the workspace rebase them with
+   *  `workspaceRelativeRepoPath` (ADR 0058 amendment, 2026-09-07). */
+  readonly prefix: string;
+  /** The (per-worktree) git dir, absolute — what a watcher follows for
+   *  commits, checkouts and fetches made outside the app. Null when it
+   *  could not be located without spawning. */
+  readonly gitDir: string | null;
   /** Current branch name, or null when detached / unknowable. */
   readonly branch: string | null;
   /** HEAD is not on any branch. */
@@ -553,6 +567,21 @@ export function renderRepoContext(
     );
   }
 
+  // A workspace that is a SUBFOLDER of its repository: say so once, and
+  // spell every path from the workspace — what the tools resolve against
+  // and what `git status` prints from that cwd. A `../` path is outside the
+  // workspace and outside the tools' reach; stating it beats a path that
+  // resolves nowhere (ADR 0058 amendment, 2026-09-07).
+  const prefix = snapshot.prefix;
+  const spell = (p: string): string => workspaceRelativeRepoPath(p, prefix);
+  if (prefix.length > 0) {
+    lines.push(
+      zh
+        ? `仓库根目录: ${snapshot.root}（工作区是其中的 ${prefix}；下列路径相对工作区，../ 开头的在工作区之外）`
+        : `repo root: ${snapshot.root} (the workspace is its ${prefix}; paths below are workspace-relative, ../ means outside the workspace)`,
+    );
+  }
+
   if (snapshot.inProgress !== null) {
     lines.push(
       zh
@@ -560,7 +589,7 @@ export function renderRepoContext(
         : `operation in progress: ${snapshot.inProgress}`,
     );
     if (snapshot.conflicted.length > 0) {
-      const shown = snapshot.conflicted.join(zh ? "、" : ", ");
+      const shown = snapshot.conflicted.map(spell).join(zh ? "、" : ", ");
       lines.push(
         zh
           ? `冲突文件 ${snapshot.conflicted.length} 个: ${shown}`
@@ -578,7 +607,7 @@ export function renderRepoContext(
         : `uncommitted changes (${snapshot.dirtyTotal}):`,
     );
     for (const f of snapshot.dirty) {
-      lines.push(`${f.x}${f.y} ${f.path}`);
+      lines.push(`${f.x}${f.y} ${spell(f.path)}`);
     }
     const omitted = snapshot.dirtyTotal - snapshot.dirty.length;
     if (omitted > 0) {

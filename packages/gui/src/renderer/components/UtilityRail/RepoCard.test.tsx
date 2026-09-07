@@ -1,9 +1,10 @@
-import type { RepoContextSnapshot } from "@herta/app-server";
-import { act, cleanup } from "@testing-library/react";
+import type { CommitDescription, RepoContextSnapshot } from "@herta/app-server";
+import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HertaBridgeProvider } from "../../context/HertaBridgeContext.js";
 import { renderWithLocale } from "../../i18n/test-util.js";
 import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
+import { FileViewerPanel } from "../FileViewer/FileViewerPanel.js";
 import { FileViewerProvider } from "../FileViewer/file-viewer-context.js";
 import { dirtyMark, RepoCard } from "./RepoCard.js";
 import { REPO_FOCUS_REFRESH_MIN_MS } from "./useRepoCard.js";
@@ -23,6 +24,9 @@ const SNAPSHOT = {
 } as const;
 
 const REPO: RepoContextSnapshot = {
+  root: "E:/repo",
+  prefix: "",
+  gitDir: "E:/repo/.git",
   branch: "feat/repo-card",
   detached: false,
   headShort: "a1b2c3d",
@@ -164,6 +168,102 @@ describe("RepoCard (ADR 0058)", () => {
     });
     const button = container.querySelector("button.repo-card__path");
     expect(button?.textContent).toBe("packages/gui/src/renderer/RepoCard.tsx");
+  });
+
+  it("a subfolder workspace names its prefix, spells paths from the workspace, and opens only what lies inside it (ADR 0058 amendment)", () => {
+    const { mock, container } = mount(true);
+    act(() => {
+      mock.emitRepo({
+        kind: "repo",
+        workspace: "/repo/packages/gui",
+        repo: { ...REPO, prefix: "packages/gui/" },
+      });
+    });
+    // The store keeps the answer: the workspace in the snapshot is /repo, so
+    // re-emit for it (the mount's snapshot) — the card reads the store.
+    act(() => {
+      mock.emitRepo({
+        kind: "repo",
+        workspace: "/repo",
+        repo: { ...REPO, prefix: "packages/gui/" },
+      });
+    });
+    const card = container.querySelector(".repo-card");
+    expect(card?.querySelector(".repo-card__scope")?.textContent).toBe(
+      "工作区位于 packages/gui/",
+    );
+    const rows = [...(card?.querySelectorAll(".repo-card__row") ?? [])];
+    expect(
+      rows.map((r) => r.querySelector(".repo-card__path")?.textContent),
+    ).toEqual([
+      "src/renderer/RepoCard.tsx",
+      "../../docs/adr/0058.md",
+      "../../scratch.txt",
+    ]);
+    // Inside: a button. Outside: a span that says so, still spelled honestly.
+    expect(rows[0]?.querySelector("button.repo-card__path")).not.toBeNull();
+    expect(rows[1]?.querySelector("button.repo-card__path")).toBeNull();
+    expect(rows[1]?.classList.contains("is-outside")).toBe(true);
+    expect(
+      rows[1]?.querySelector(".repo-card__path")?.getAttribute("title"),
+    ).toContain("docs/adr/0058.md");
+  });
+
+  it("the last commit opens as a commit tab in the viewer (ADR 0059)", async () => {
+    const mock = createMockHertaBridge();
+    const commit: CommitDescription = {
+      sha: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+      shortSha: "a1b2c3d",
+      subject: "feat(gui): the rail shows the repository",
+      body: "",
+      author: "Tester",
+      authoredAt: "2026-09-07T10:00:00+08:00",
+      parents: ["0000000000000000000000000000000000000000"],
+      files: [{ path: "src/a.ts", status: "modified", added: 1, deleted: 1 }],
+      filesTotal: 1,
+      patch: "diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-one\n+two\n",
+      patchTruncated: false,
+    };
+    const readWorkspaceCommit = vi.fn(async () => ({
+      ok: true as const,
+      commit,
+    }));
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: async () => ({ ok: false, reason: "not_found" }),
+      readWorkspaceCommit,
+    });
+    const rendered = renderWithLocale(
+      <HertaBridgeProvider bridge={mock.bridge}>
+        <FileViewerProvider>
+          <RepoCard />
+          <FileViewerPanel />
+        </FileViewerProvider>
+      </HertaBridgeProvider>,
+      { locale: "zh" },
+    );
+    act(() => {
+      mock.emitReset(SNAPSHOT);
+      mock.emitRepo({ kind: "repo", workspace: "/repo", repo: REPO });
+    });
+    const button = rendered.container.querySelector("button.repo-card__commit");
+    expect(button?.getAttribute("aria-label")).toBe("查看提交 a1b2c3d");
+    fireEvent.click(button as Element);
+    await waitFor(() =>
+      expect(readWorkspaceCommit).toHaveBeenCalledWith("s1", "a1b2c3d"),
+    );
+    await waitFor(() =>
+      expect(
+        rendered.container
+          .querySelector(".file-viewer")
+          ?.getAttribute("data-kind"),
+      ).toBe("commit"),
+    );
+    expect(
+      rendered.container.querySelector(".commit-view__subject")?.textContent,
+    ).toBe(commit.subject);
+    expect(
+      rendered.container.querySelector(".file-viewer__tab-name")?.textContent,
+    ).toBe("a1b2c3d");
   });
 
   it("a window focus asks the session to probe again, throttled", () => {

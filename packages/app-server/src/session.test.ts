@@ -11,10 +11,14 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import type { TerminalRecord } from "@herta/core";
+import type { RepoContextSnapshot, TerminalRecord } from "@herta/core";
 import type { OpeningChoice } from "@herta/herta";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SessionImpl, spanEditedFiles } from "./session.js";
+import {
+  SessionImpl,
+  type SessionInternalDeps,
+  spanEditedFiles,
+} from "./session.js";
 import { createSessionHost } from "./session-host.js";
 import { makePng } from "./testing/image-fixtures.js";
 import {
@@ -282,6 +286,9 @@ async function mkStubSession(
     lang?: "zh" | "en";
     // Title-provider override (slice 4: capture the title prompt's language).
     titleProvider?: import("@herta/core").ProviderAdapter;
+    // The repository probe behind the rail's repository card (ADR 0058).
+    // Defaults to "not a repository" so no git runs under a stub session.
+    repoDescriber?: SessionInternalDeps["repoDescriber"];
   },
 ): Promise<{
   session: SessionImpl;
@@ -363,6 +370,7 @@ async function mkStubSession(
       ...(extra?.easterEggRandom !== undefined
         ? { easterEggRandom: extra.easterEggRandom }
         : {}),
+      repoDescriber: extra?.repoDescriber ?? (async () => null),
       ...(extra?.easterEggNow !== undefined
         ? { easterEggNow: extra.easterEggNow }
         : {}),
@@ -2047,5 +2055,98 @@ describe("contract-fallback record note (ADR 0044)", () => {
     await min.session.playOpening();
     expect(noteBlocks(min.session.record)).toHaveLength(0);
     await min.cleanup();
+  });
+});
+
+// ── The repository card's stream (ADR 0058) ──────────────────────────────────
+
+describe("Session — the repository probe behind the rail's card (ADR 0058)", () => {
+  const sample: RepoContextSnapshot = {
+    branch: "main",
+    detached: false,
+    headShort: "abc1234",
+    upstream: "origin/main",
+    ahead: 0,
+    behind: 0,
+    defaultBranch: "main",
+    inProgress: null,
+    conflicted: [],
+    dirty: [],
+    dirtyTotal: 0,
+    recentSubjects: ["abc1234 init"],
+  };
+  const until = async (ok: () => boolean): Promise<void> => {
+    for (let i = 0; i < 200 && !ok(); i += 1) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(ok()).toBe(true);
+  };
+
+  it("probes on create and after a workspace change, tagging each answer with the workspace it describes", async () => {
+    const cfg = mkConfig();
+    const probed: string[] = [];
+    const { session, cleanup } = await mkStubSession(
+      cfg,
+      undefined,
+      1,
+      undefined,
+      {
+        repoDescriber: async (workspace) => {
+          probed.push(workspace);
+          return workspace === cfg.transcriptDir ? sample : null;
+        },
+      },
+    );
+    await until(() => probed.length >= 1);
+    expect(probed[0]).toBe(cfg.workspaceRoot);
+    expect(session.repo).toBeNull();
+    const got = (async () => {
+      for await (const ev of session.subscribeRepo()) {
+        if (ev.kind === "repo" && ev.workspace === cfg.transcriptDir) return ev;
+      }
+      return null;
+    })();
+    await session.setWorkspace(cfg.transcriptDir);
+    const ev = await got;
+    expect(ev?.kind).toBe("repo");
+    if (ev?.kind === "repo") expect(ev.repo).toEqual(sample);
+    expect(session.repo).toEqual(sample);
+    await cleanup();
+  });
+
+  it("coalesces refreshes: requests during a probe run exactly one more after it, and a throwing probe answers null", async () => {
+    const cfg = mkConfig();
+    let calls = 0;
+    const gates: Array<() => void> = [];
+    const { session, cleanup } = await mkStubSession(
+      cfg,
+      undefined,
+      1,
+      undefined,
+      {
+        repoDescriber: async () => {
+          calls += 1;
+          await new Promise<void>((resolve) => gates.push(resolve));
+          if (calls === 2) throw new Error("git exploded");
+          return sample;
+        },
+      },
+    );
+    // The create-time probe is parked on the first gate.
+    expect(calls).toBe(1);
+    await Promise.all([
+      session.refreshRepo(),
+      session.refreshRepo(),
+      session.refreshRepo(),
+    ]);
+    expect(calls).toBe(1);
+    gates.shift()?.();
+    await until(() => calls === 2);
+    expect(session.repo).toEqual(sample);
+    gates.shift()?.();
+    await until(() => session.repo === null);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).toBe(2);
+    await cleanup();
   });
 });

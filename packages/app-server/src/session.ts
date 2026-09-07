@@ -21,6 +21,7 @@ import {
   type LastTurnEnd,
   type ProjectCommandRuleStore,
   type ProviderAdapter,
+  type RepoContextSnapshot,
   ruleDisplay,
   type SessionTopic,
   type SystemBlock,
@@ -36,6 +37,7 @@ import {
   V2ActorDriver,
 } from "@herta/herta";
 import { type ApiKey, deepseekVisionCaptioner } from "@herta/providers";
+import { describeRepoContext } from "@herta/tools";
 import { type ImageCaptioner, migrateAttachments } from "./attachments.js";
 import { BusActorStreamingSink } from "./bus-streaming-sink.js";
 import { OverlayAskResolver } from "./overlay-ask-resolver.js";
@@ -63,6 +65,7 @@ import type {
   OverlayEvent,
   RecordEvent,
   RemoveAttachmentResult,
+  RepoEvent,
   ResolveApprovalOpts,
   RewindResult,
   Session,
@@ -183,6 +186,13 @@ export interface SessionInternalDeps {
   /** Random source for the easter-egg 50% roll + clip pick. Defaults to
    *  `Math.random`; tests inject a deterministic source. */
   readonly easterEggRandom?: () => number;
+  /** The repository probe behind the rail's repository card (ADR 0058).
+   *  Defaults to the git probe in `@herta/tools`; tests inject a stub so
+   *  no git runs under them. */
+  readonly repoDescriber?: (
+    workspace: string,
+    signal?: AbortSignal,
+  ) => Promise<RepoContextSnapshot | null>;
   /** Clock (ms) for the easter-egg per-session hourly throttle. Defaults to
    *  `Date.now`; tests inject a controllable clock. */
   readonly easterEggNow?: () => number;
@@ -214,6 +224,18 @@ export class SessionImpl implements Session {
   // Distinct from workspaceRoot (the immutable record-store anchor).
   private readonly wsHolder: { current: string };
   private wsIsDefault: boolean;
+
+  // The workspace's repository as last probed (ADR 0058) — the rail's
+  // repository card. Probed on create, on a workspace change, at every
+  // turn's end and on request; one probe at a time, a request during one
+  // runs exactly one more after it (a burst of focus events is one probe).
+  private _repo: RepoContextSnapshot | null = null;
+  private repoProbeInFlight = false;
+  private repoProbeAgain = false;
+  private readonly repoDescriber: (
+    workspace: string,
+    signal?: AbortSignal,
+  ) => Promise<RepoContextSnapshot | null>;
 
   // The block persister — owned by the driver for turn blocks, but held here
   // too so setWorkspace/resetWorkspace can append a structured workspace_set
@@ -314,6 +336,10 @@ export class SessionImpl implements Session {
     workspaceRoot: string;
     wsHolder: { current: string };
     isDefaultWorkspace: boolean;
+    repoDescriber: (
+      workspace: string,
+      signal?: AbortSignal,
+    ) => Promise<RepoContextSnapshot | null>;
     persister: V2RecordPersister;
     driver: V2ActorDriver;
     sink: BusActorStreamingSink;
@@ -336,6 +362,7 @@ export class SessionImpl implements Session {
     this.workspaceRoot = opts.workspaceRoot;
     this.wsHolder = opts.wsHolder;
     this.wsIsDefault = opts.isDefaultWorkspace;
+    this.repoDescriber = opts.repoDescriber;
     this.persister = opts.persister;
     this.driver = opts.driver;
     this.sink = opts.sink;
@@ -449,6 +476,9 @@ export class SessionImpl implements Session {
       if (hooks.rethrow) throw err;
     } finally {
       settleTurn();
+      // A turn may have committed, pushed or dirtied the tree: the
+      // repository card learns at the turn's end (ADR 0058).
+      void this.refreshRepo();
       // Clear the per-turn state only if this turn still owns it. (A second
       // entry replacing `currentTurn` mid-turn is what the callers' gates
       // forbid; the check keeps a wrong release impossible regardless.)
@@ -941,6 +971,7 @@ export class SessionImpl implements Session {
       workspace,
       isDefault: false,
     });
+    void this.refreshRepo();
     // Out-of-turn → 系统 note so the workspace change is visible, persisted,
     // and resumable in the canonical TerminalRecord.
     this.driver.appendSystemNote("系统", `workspace → ${workspace}`);
@@ -996,6 +1027,7 @@ export class SessionImpl implements Session {
       workspace: def,
       isDefault: true,
     });
+    void this.refreshRepo();
     // Out-of-turn → 系统 note (mirrors setWorkspace) so the reset is visible,
     // persisted, and resumable in the canonical TerminalRecord.
     this.driver.appendSystemNote("系统", `workspace → ${def}`);
@@ -1029,6 +1061,43 @@ export class SessionImpl implements Session {
 
   subscribeWorkspace(): AsyncIterable<WorkspaceEvent> {
     return this.projector.subscribeWorkspace();
+  }
+
+  get repo(): RepoContextSnapshot | null {
+    return this._repo;
+  }
+
+  subscribeRepo(): AsyncIterable<RepoEvent> {
+    return this.projector.subscribeRepo();
+  }
+
+  /** Probe the workspace's repository and emit the answer (ADR 0058). One
+   *  probe at a time: a request during one is remembered and runs once
+   *  after it, so a burst of triggers (focus flicker, a turn ending as the
+   *  user tabs back) costs one extra probe, not one per trigger. The probe
+   *  never throws (its own contract); a throw here still lands as null. */
+  async refreshRepo(): Promise<void> {
+    if (this.repoProbeInFlight) {
+      this.repoProbeAgain = true;
+      return;
+    }
+    this.repoProbeInFlight = true;
+    try {
+      do {
+        this.repoProbeAgain = false;
+        const workspace = this.wsHolder.current;
+        let repo: RepoContextSnapshot | null = null;
+        try {
+          repo = await this.repoDescriber(workspace);
+        } catch {
+          repo = null;
+        }
+        this._repo = repo;
+        this.projector.emitRepo({ kind: "repo", workspace, repo });
+      } while (this.repoProbeAgain);
+    } finally {
+      this.repoProbeInFlight = false;
+    }
   }
 
   subscribeVoice(): AsyncIterable<VoiceCueEvent> {
@@ -1441,8 +1510,13 @@ export class SessionImpl implements Session {
         deps.providerOverrides === undefined
           ? deepseekVisionCaptioner({ apiKey, ...baseUrl })
           : null,
+      repoDescriber: deps.repoDescriber ?? describeRepoContext,
     });
     sessionHolder.session = session;
+    // The repository card's first answer (ADR 0058): fire-and-forget, the
+    // event reaches whoever subscribes; the open/create snapshot carries
+    // whatever has landed by then.
+    void session.refreshRepo();
     return session;
   }
 }

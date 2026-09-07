@@ -53,6 +53,7 @@ export const CMD = {
   windowToggleMaximize: "window:toggleMaximize",
   windowClose: "window:close",
   windowIsMaximized: "window:isMaximized",
+  refreshRepo: "session:refreshRepo",
 } as const;
 
 export const EVT = {
@@ -67,6 +68,7 @@ export const EVT = {
   navBlocked: "session:navBlocked",
   workspace: "session:workspace",
   voice: "session:voice",
+  repo: "session:repo",
   windowMaximized: "window:maximized",
   update: "update:state",
 } as const;

@@ -33,6 +33,7 @@ const bridge: HertaBridge = {
   removeCommandRule: (display) =>
     ipcRenderer.invoke(CMD.removeCommandRule, display),
   resyncRecord: () => ipcRenderer.invoke(CMD.resyncRecord),
+  refreshRepo: () => ipcRenderer.invoke(CMD.refreshRepo),
   checkForUpdate: () => ipcRenderer.invoke(CMD.updateCheck),
   restartAndInstall: () => ipcRenderer.invoke(CMD.updateRestart),
   getUpdateState: () => ipcRenderer.invoke(CMD.updateStatus),
@@ -91,6 +92,7 @@ const bridge: HertaBridge = {
   windowIsMaximized: () => ipcRenderer.invoke(CMD.windowIsMaximized),
   onWindowMaximized: (cb) => subscribe(EVT.windowMaximized, cb),
   onWorkspace: (cb) => subscribe(EVT.workspace, cb),
+  onRepo: (cb) => subscribe(EVT.repo, cb),
   onRecord: (cb) => subscribe(EVT.record, cb),
   onOverlay: (cb) => subscribe(EVT.overlay, cb),
   onSpeech: (cb) => subscribe(EVT.speech, cb),

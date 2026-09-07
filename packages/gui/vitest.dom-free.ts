@@ -79,6 +79,7 @@ export const DOM_FREE_TESTS = [
   "src/renderer/mocks/derive-title.test.ts",
   "src/renderer/mocks/index.test.ts",
   "src/renderer/store/session-list-store.test.ts",
+  "src/renderer/store/session-store.repo.test.ts",
   "src/renderer/store/session-store.test.ts",
   "src/renderer/voice/play-voice.test.ts",
 ] as const;

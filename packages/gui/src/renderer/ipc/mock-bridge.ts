@@ -3,6 +3,7 @@ import type {
   CreateSessionOpts,
   OverlayEvent,
   RecordEvent,
+  RepoEvent,
   ResolveApprovalOpts,
   RewindResult,
   SessionAgentEvent,
@@ -142,6 +143,7 @@ export interface MockHertaBridge {
     pickWorkspace: number;
     setWorkspace: Array<[string, string]>;
     resetWorkspace: string[];
+    refreshRepo: number;
     pickAttachments: number;
     attachFiles: Array<[string, readonly string[]]>;
     removeAttachment: Array<[string, string]>;
@@ -189,6 +191,8 @@ export interface MockHertaBridge {
   emitVoice(e: VoiceCueEvent): void;
   emitUpdate(e: UpdateState): void;
   emitNavBlocked(e: NavBlockedEvent): void;
+  /** The repository card's stream (ADR 0058). */
+  emitRepo(e: RepoEvent): void;
 }
 
 const DEFAULT_SNAPSHOT: SessionSnapshot = {
@@ -215,6 +219,7 @@ export function createMockHertaBridge(
   const titleCbs = new Set<(e: TitleEvent) => void>();
   const deletedCbs = new Set<(e: SessionDeletedEvent) => void>();
   const workspaceCbs = new Set<(e: WorkspaceEvent) => void>();
+  const repoCbs = new Set<(e: RepoEvent) => void>();
   const voiceCbs = new Set<(e: VoiceCueEvent) => void>();
   const updateCbs = new Set<(e: UpdateState) => void>();
   const navBlockedCbs = new Set<(e: NavBlockedEvent) => void>();
@@ -258,6 +263,7 @@ export function createMockHertaBridge(
     windowClose: 0,
     setWorkspace: [],
     resetWorkspace: [],
+    refreshRepo: 0,
     pickAttachments: 0,
     attachFiles: [],
     removeAttachment: [],
@@ -554,6 +560,10 @@ export function createMockHertaBridge(
       interactionLanguage = choice;
     },
     onWorkspace: (cb) => sub(workspaceCbs, cb),
+    onRepo: (cb) => sub(repoCbs, cb),
+    refreshRepo: async () => {
+      calls.refreshRepo += 1;
+    },
     onRecord: (cb) => sub(recordCbs, cb),
     onOverlay: (cb) => sub(overlayCbs, cb),
     onSpeech: (cb) => sub(speechCbs, cb),
@@ -595,6 +605,9 @@ export function createMockHertaBridge(
     },
     emitWorkspace: (e) => {
       for (const cb of workspaceCbs) cb(e);
+    },
+    emitRepo: (e) => {
+      for (const cb of repoCbs) cb(e);
     },
     emitVoice: (e) => {
       for (const cb of voiceCbs) cb(e);

@@ -2,6 +2,7 @@ import type { AgentEvent, EventBus } from "@herta/core";
 import type {
   OverlayEvent,
   RecordEvent,
+  RepoEvent,
   SessionAgentEvent,
   SpeechControlEvent,
   TitleEvent,
@@ -99,6 +100,7 @@ export class SessionEventProjector {
   private readonly titleSubs = new Set<BoundedQueue<TitleEvent>>();
   private readonly workspaceSubs = new Set<BoundedQueue<WorkspaceEvent>>();
   private readonly voiceSubs = new Set<BoundedQueue<VoiceCueEvent>>();
+  private readonly repoSubs = new Set<BoundedQueue<RepoEvent>>();
   private busUnsubscribe: (() => void) | null = null;
   // Set by close() so that subscriptions created after close immediately
   // yield done without blocking.
@@ -145,6 +147,10 @@ export class SessionEventProjector {
     for (const q of this.voiceSubs) q.push(ev);
   }
 
+  emitRepo(ev: RepoEvent): void {
+    for (const q of this.repoSubs) q.push(ev);
+  }
+
   // ───── subscribe ─────
 
   subscribeRecord(): AsyncIterable<RecordEvent> {
@@ -171,6 +177,9 @@ export class SessionEventProjector {
   subscribeVoice(): AsyncIterable<VoiceCueEvent> {
     return this.makeIterable(this.voiceSubs);
   }
+  subscribeRepo(): AsyncIterable<RepoEvent> {
+    return this.makeIterable(this.repoSubs);
+  }
 
   // Test-only counters used by session-event-projector.test.ts.
   recordSubscriberCount(): number {
@@ -191,6 +200,8 @@ export class SessionEventProjector {
     for (const q of this.titleSubs) q.close();
     for (const q of this.workspaceSubs) q.close();
     for (const q of this.voiceSubs) q.close();
+    for (const q of this.repoSubs) q.close();
+    this.repoSubs.clear();
     this.recordSubs.clear();
     this.overlaySubs.clear();
     this.agentSubs.clear();

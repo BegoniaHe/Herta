@@ -230,6 +230,9 @@ function snapshot(s: Session): SessionSnapshot {
     backendWorkspaceIsDefault: s.backendWorkspaceIsDefault,
     topics: s.topics,
     lang: s.lang,
+    // Whatever the repository probe has answered by now (ADR 0058); the
+    // `session:repo` stream carries the rest.
+    repo: s.repo ?? null,
   };
 }
 
@@ -288,6 +291,10 @@ export function startForwarders(session: Session, send: Send): () => void {
   void pump(session.subscribeTitle(), EVT.title);
   void pump(session.subscribeWorkspace(), EVT.workspace);
   void pump(session.subscribeVoice(), EVT.voice);
+  // The repository card's stream (ADR 0058); optional on the interface.
+  if (session.subscribeRepo !== undefined) {
+    void pump(session.subscribeRepo(), EVT.repo);
+  }
   return () => {
     live = false;
     for (const it of iterators) {
@@ -674,6 +681,11 @@ export function createSessionService(
     // events → race-free even mid-turn). Fire-and-forget from the renderer.
     handle(CMD.resyncRecord, () => {
       host?.activeSession?.resyncRecord?.();
+    });
+    // The repository card asks for a fresh probe on window focus (ADR
+    // 0058); the answer arrives as a `session:repo` event.
+    handle(CMD.refreshRepo, async () => {
+      await host?.activeSession?.refreshRepo?.();
     });
     handle(CMD.pickWorkspace, async () => {
       const r = await dialog.showOpenDialog(win, {

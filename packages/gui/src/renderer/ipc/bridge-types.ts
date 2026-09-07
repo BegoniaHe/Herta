@@ -4,6 +4,8 @@ import type {
   CreateSessionOpts,
   OverlayEvent,
   RecordEvent,
+  RepoContextSnapshot,
+  RepoEvent,
   ResolveApprovalOpts,
   RewindResult,
   SessionAgentEvent,
@@ -49,6 +51,10 @@ export interface SessionSnapshot {
    *  alias (display + composer input) for the conversation, independent of the
    *  UI locale. Optional on the wire — older fixtures omit it; absent → "zh". */
   readonly lang?: "zh" | "en";
+  /** The workspace's repository as probed so far (ADR 0058); null when it
+   *  is not a repository or the first probe has not finished. Optional on
+   *  the wire — older fixtures and fakes omit it. */
+  readonly repo?: RepoContextSnapshot | null;
 }
 
 /** Carried by session:reset when bootstrap fails (e.g. no API key). */
@@ -488,6 +494,13 @@ export interface HertaBridge {
   /** Fires on the window's maximize/unmaximize — drives the glyph swap. */
   onWindowMaximized(cb: (maximized: boolean) => void): () => void;
   onWorkspace(cb: (e: WorkspaceEvent) => void): () => void;
+  /** The workspace's repository state (ADR 0058) — the rail's repository
+   *  card. OPTIONAL: fakes and the website demo omit the pair, and the card
+   *  then never mounts. */
+  onRepo?(cb: (e: RepoEvent) => void): () => void;
+  /** Ask the active session to probe its repository again; the answer
+   *  arrives through `onRepo`. The card asks on window focus. */
+  refreshRepo?(): Promise<void>;
   onRecord(cb: (e: RecordEvent) => void): () => void;
   onOverlay(cb: (e: OverlayEvent) => void): () => void;
   onSpeech(cb: (e: SpeechControlEvent) => void): () => void;

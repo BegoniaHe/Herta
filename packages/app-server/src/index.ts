@@ -19,6 +19,9 @@
 export type {
   AgentEvent,
   ApprovalOverlayState,
+  RepoContextDirtyFile,
+  RepoContextSnapshot,
+  RepoInProgressState,
   SessionTopic,
   TerminalRecord,
   TerminalRecordBlock,

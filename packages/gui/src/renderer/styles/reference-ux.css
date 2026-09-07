@@ -4441,6 +4441,108 @@ button.session-item__badge--dismiss {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* ── 仓库 rail card (ADR 0058) — rides the .plan-card chrome ────────────
+   The workspace's repository under the device: the branch line reads at
+   a glance (name, upstream, ↑↓), the rows are the uncommitted files with
+   git's own status letter as the mark, the last line the last commit.
+   Facts in FORM, nothing moves; the list caps like the trace card's. */
+.repo-card__branch {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13.5px;
+  color: var(--ink);
+}
+.repo-card__branch-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.repo-card__upstream {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--muted-4);
+}
+.repo-card__delta {
+  flex: none;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+}
+/* An operation left mid-flight (merge, rebase, …): a fact the next commit
+   would conclude, stated in the row's ink, not in an alarm colour — the
+   command card says what a commit would do (ADR 0049 §5). */
+.repo-card__flag {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink);
+}
+.repo-card .plan-card__list {
+  max-height: 168px;
+}
+.repo-card__row {
+  align-items: center;
+}
+.repo-card__row .plan-card__mark {
+  margin-top: 0;
+  width: auto;
+  min-width: 10px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--muted-4);
+}
+.repo-card__row.is-added .plan-card__mark {
+  color: var(--banzhuan-led);
+}
+.repo-card__row.is-untracked .plan-card__mark {
+  color: var(--muted-faint);
+}
+.repo-card__row.is-conflict .plan-card__mark {
+  color: #9a5b5b;
+}
+/* One line per path, ellipsized — a path is an address, not the content
+   (the hover title carries it whole). A button where the viewer can open
+   it (ADR 0050), a span where it cannot; same look either way. */
+.repo-card__path {
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+button.repo-card__path {
+  cursor: pointer;
+}
+button.repo-card__path:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.repo-card__more,
+.repo-card__commit {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .trace-card__note.is-fail {
   color: #9a5b5b;
 }

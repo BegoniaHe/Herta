@@ -2,6 +2,8 @@ import type {
   ApprovalOverlayState,
   OverlayEvent,
   RecordEvent,
+  RepoContextSnapshot,
+  RepoEvent,
   SessionAgentEvent,
   SessionDeletedEvent,
   SessionTopic,
@@ -133,6 +135,12 @@ export interface SessionSnapshotView {
   readonly backendWorkspace: string | null;
   /** True when `backendWorkspace` is still the managed-sandbox default. */
   readonly backendWorkspaceIsDefault: boolean;
+  /** The workspace's repository as last probed (ADR 0058) — the rail's
+   *  repository card. Null when the workspace is not a repository, no
+   *  probe has answered yet, or the bridge has no repo surface. Seeded from
+   *  the reset snapshot, live-updated by `repo` events; a workspace change
+   *  keeps the last answer until the new workspace's arrives. */
+  readonly repo: RepoContextSnapshot | null;
   /** One-shot: text to load into the composer (set by a rewind — the withdrawn
    *  user message returns here for editing). The Composer adopts it then calls
    *  `clearComposerDraft`. Null when there's nothing to restore. */
@@ -215,6 +223,7 @@ const INITIAL: SessionSnapshotView = {
   activationFirstUser: null,
   backendWorkspace: null,
   backendWorkspaceIsDefault: false,
+  repo: null,
   composerDraft: null,
   composerDraftImages: null,
   composerNotice: null,
@@ -315,6 +324,10 @@ export class SessionStore {
       // Optional: only the Electron preload emits it (tray refusals).
       ...(bridge.onNavBlocked !== undefined
         ? [bridge.onNavBlocked((e) => this.onNavBlocked(e))]
+        : []),
+      // Optional: the repository card's stream (ADR 0058).
+      ...(bridge.onRepo !== undefined
+        ? [bridge.onRepo((e) => this.onRepo(e))]
         : []),
     ];
     return () => this.disconnect();
@@ -607,6 +620,7 @@ export class SessionStore {
       // `workspace` events update it thereafter.
       backendWorkspace: e.backendWorkspace ?? null,
       backendWorkspaceIsDefault: e.backendWorkspaceIsDefault ?? false,
+      repo: e.repo ?? null,
       // A fresh activation starts the composer empty (no stale rewind draft).
       composerDraft: null,
       composerDraftImages: null,
@@ -630,6 +644,19 @@ export class SessionStore {
       backendWorkspace: e.workspace,
       backendWorkspaceIsDefault: e.isDefault,
     });
+  }
+
+  private onRepo(e: RepoEvent): void {
+    if (e.kind !== "repo") return; // ignore the dropped overflow sentinel
+    // A late answer for a workspace the session has since left describes
+    // the wrong folder; the new workspace's own probe is on its way.
+    if (
+      this.snapshot.backendWorkspace !== null &&
+      e.workspace !== this.snapshot.backendWorkspace
+    ) {
+      return;
+    }
+    this.emit({ ...this.snapshot, repo: e.repo });
   }
 
   private onSessionDeleted(e: SessionDeletedEvent): void {

@@ -1,6 +1,7 @@
 import type {
   AgentEvent,
   ApprovalOverlayState,
+  RepoContextSnapshot,
   SessionTopic,
   TerminalRecord,
   TerminalRecordBlock,
@@ -343,6 +344,20 @@ export type WorkspaceEvent =
     }
   | { readonly kind: "dropped"; readonly count: number };
 
+/** The workspace's repository state for the rail's repository card (ADR
+ *  0058): the same snapshot the backend frame carries (ADR 0049 §2),
+ *  probed again on open, on a workspace change, at every turn's end and
+ *  on request. `repo` is null when the workspace is not a repository or
+ *  git cannot answer; `workspace` names the folder it describes, so a late
+ *  answer for a folder the session has since left can be told apart. */
+export type RepoEvent =
+  | {
+      readonly kind: "repo";
+      readonly workspace: string;
+      readonly repo: RepoContextSnapshot | null;
+    }
+  | { readonly kind: "dropped"; readonly count: number };
+
 /** A cue to autoplay a voice clip in the renderer. `category` + `clipId` map to
  *  `<voiceRoot>/<category>/<clipId>.opus` (served via the `herta-voice` protocol).
  *  e.g. { category: "openings", clipId: "004-late-night-audit" }. Extensible to
@@ -520,6 +535,17 @@ export interface Session {
   /** Voice-clip autoplay cues (opening voice now; veto / particle / easter-egg
    *  later). Renderer-only playback — the server only emits what to play. */
   subscribeVoice(): AsyncIterable<VoiceCueEvent>;
+  /** The workspace's repository as last probed (ADR 0058): null when it is
+   *  not a repository, git cannot answer, or no probe has finished yet.
+   *  Optional: only the GUI SessionImpl carries the repository card's
+   *  surface. */
+  readonly repo?: RepoContextSnapshot | null;
+  /** Probe the repository again now and emit the answer as a `repo` event
+   *  (the renderer asks on window focus, so a commit made in a terminal
+   *  shows when the user looks back). Coalesced: a request during a probe
+   *  runs exactly one more after it. */
+  refreshRepo?(): Promise<void>;
+  subscribeRepo?(): AsyncIterable<RepoEvent>;
 
   close(): Promise<void>;
 }

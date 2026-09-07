@@ -38,12 +38,15 @@ import {
 } from "@herta/herta";
 import { type ApiKey, deepseekVisionCaptioner } from "@herta/providers";
 import {
+  type BranchList,
   type CommitDescription,
+  describeBranches,
   describeCommit,
   describeLog,
   describeRepoContext,
   describeWorkingDiff,
   type LogPage,
+  type LogQuery,
   type WorkingDiff,
 } from "@herta/tools";
 import { type ImageCaptioner, migrateAttachments } from "./attachments.js";
@@ -231,9 +234,15 @@ export interface SessionInternalDeps {
    *  the git reader in `@herta/tools`; tests inject a stub. */
   readonly logDescriber?: (
     workspace: string,
-    opts: { readonly skip: number; readonly limit: number },
+    opts: LogQuery,
     signal?: AbortSignal,
   ) => Promise<LogPage | null>;
+  /** The branch list for the history tab's picker (ADR 0059 §6). Defaults
+   *  to the git reader in `@herta/tools`; tests inject a stub. */
+  readonly branchesDescriber?: (
+    workspace: string,
+    signal?: AbortSignal,
+  ) => Promise<BranchList | null>;
   /** Clock (ms) for the easter-egg per-session hourly throttle. Defaults to
    *  `Date.now`; tests inject a controllable clock. */
   readonly easterEggNow?: () => number;
@@ -299,9 +308,13 @@ export class SessionImpl implements Session {
   ) => Promise<WorkingDiff | null>;
   private readonly logDescriber: (
     workspace: string,
-    opts: { readonly skip: number; readonly limit: number },
+    opts: LogQuery,
     signal?: AbortSignal,
   ) => Promise<LogPage | null>;
+  private readonly branchesDescriber: (
+    workspace: string,
+    signal?: AbortSignal,
+  ) => Promise<BranchList | null>;
 
   // The block persister — owned by the driver for turn blocks, but held here
   // too so setWorkspace/resetWorkspace can append a structured workspace_set
@@ -420,9 +433,13 @@ export class SessionImpl implements Session {
     ) => Promise<WorkingDiff | null>;
     logDescriber: (
       workspace: string,
-      opts: { readonly skip: number; readonly limit: number },
+      opts: LogQuery,
       signal?: AbortSignal,
     ) => Promise<LogPage | null>;
+    branchesDescriber: (
+      workspace: string,
+      signal?: AbortSignal,
+    ) => Promise<BranchList | null>;
     persister: V2RecordPersister;
     driver: V2ActorDriver;
     sink: BusActorStreamingSink;
@@ -451,6 +468,7 @@ export class SessionImpl implements Session {
     this.commitDescriber = opts.commitDescriber;
     this.workingDiffDescriber = opts.workingDiffDescriber;
     this.logDescriber = opts.logDescriber;
+    this.branchesDescriber = opts.branchesDescriber;
     this.persister = opts.persister;
     this.driver = opts.driver;
     this.sink = opts.sink;
@@ -1236,11 +1254,13 @@ export class SessionImpl implements Session {
   }
 
   /** A page of the workspace repository's history (ADR 0059 §6). */
-  describeLog(opts: {
-    readonly skip: number;
-    readonly limit: number;
-  }): Promise<LogPage | null> {
+  describeLog(opts: LogQuery): Promise<LogPage | null> {
     return this.logDescriber(this.wsHolder.current, opts);
+  }
+
+  /** The workspace repository's branches (ADR 0059 §6) — read-only. */
+  describeBranches(): Promise<BranchList | null> {
+    return this.branchesDescriber(this.wsHolder.current);
   }
 
   subscribeVoice(): AsyncIterable<VoiceCueEvent> {
@@ -1662,6 +1682,7 @@ export class SessionImpl implements Session {
       commitDescriber: deps.commitDescriber ?? describeCommit,
       workingDiffDescriber: deps.workingDiffDescriber ?? describeWorkingDiff,
       logDescriber: deps.logDescriber ?? describeLog,
+      branchesDescriber: deps.branchesDescriber ?? describeBranches,
     });
     sessionHolder.session = session;
     // The repository card's first answer (ADR 0058): fire-and-forget, the

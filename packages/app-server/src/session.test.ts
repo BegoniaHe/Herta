@@ -299,6 +299,7 @@ async function mkStubSession(
     workingDiffDescriber?: SessionInternalDeps["workingDiffDescriber"];
     // The history reader behind the viewer's log tab (ADR 0059 §6).
     logDescriber?: SessionInternalDeps["logDescriber"];
+    branchesDescriber?: SessionInternalDeps["branchesDescriber"];
   },
 ): Promise<{
   session: SessionImpl;
@@ -388,6 +389,7 @@ async function mkStubSession(
       commitDescriber: extra?.commitDescriber ?? (async () => null),
       workingDiffDescriber: extra?.workingDiffDescriber ?? (async () => null),
       logDescriber: extra?.logDescriber ?? (async () => null),
+      branchesDescriber: extra?.branchesDescriber ?? (async () => null),
       ...(extra?.easterEggNow !== undefined
         ? { easterEggNow: extra.easterEggNow }
         : {}),
@@ -2305,6 +2307,40 @@ describe("Session — the repository probe behind the rail's card (ADR 0058)", (
     );
     await session.describeLog({ skip: 50, limit: 50 });
     expect(asked).toEqual([[cfg.workspaceRoot, 50, 50]]);
+    await cleanup();
+  });
+
+  it("describeLog passes ref and query through; describeBranches reads the effective workspace (ADR 0059 §6 amendment)", async () => {
+    const cfg = mkConfig();
+    const logs: unknown[] = [];
+    const branchAsks: string[] = [];
+    const { session, cleanup } = await mkStubSession(
+      cfg,
+      undefined,
+      1,
+      undefined,
+      {
+        logDescriber: async (_workspace, opts) => {
+          logs.push(opts);
+          return null;
+        },
+        branchesDescriber: async (workspace) => {
+          branchAsks.push(workspace);
+          return null;
+        },
+      },
+    );
+    await session.describeLog({
+      skip: 0,
+      limit: 50,
+      ref: "feature/x",
+      query: "fix",
+    });
+    expect(logs).toEqual([
+      { skip: 0, limit: 50, ref: "feature/x", query: "fix" },
+    ]);
+    await session.describeBranches();
+    expect(branchAsks).toEqual([cfg.workspaceRoot]);
     await cleanup();
   });
 });

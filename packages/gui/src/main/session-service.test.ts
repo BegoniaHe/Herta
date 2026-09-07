@@ -18,8 +18,47 @@ import {
   pickLatest,
   resolveWorkspaceRoot,
   sanitizeCreateOpts,
+  sanitizeLogQuery,
   startForwarders,
 } from "./session-service.js";
+
+describe("sanitizeLogQuery (the history tab's IPC door, ADR 0059 §6)", () => {
+  it("passes integer paging, a branch-shaped ref and a trimmed query; drops an empty query", () => {
+    expect(sanitizeLogQuery({ skip: 0, limit: 50 })).toEqual({
+      skip: 0,
+      limit: 50,
+    });
+    expect(
+      sanitizeLogQuery({
+        skip: 50,
+        limit: 50,
+        ref: "feature/x",
+        query: " fix ",
+      }),
+    ).toEqual({ skip: 50, limit: 50, ref: "feature/x", query: "fix" });
+    expect(sanitizeLogQuery({ skip: 0, limit: 50, query: "   " })).toEqual({
+      skip: 0,
+      limit: 50,
+    });
+  });
+
+  it("refuses non-objects, bad paging, an option-shaped or malformed ref, and an oversized query", () => {
+    expect(sanitizeLogQuery(null)).toBeNull();
+    expect(sanitizeLogQuery("x")).toBeNull();
+    expect(sanitizeLogQuery({ skip: -1, limit: 50 })).toBeNull();
+    expect(sanitizeLogQuery({ skip: 0.5, limit: 50 })).toBeNull();
+    expect(sanitizeLogQuery({ skip: 0, limit: 0 })).toBeNull();
+    expect(sanitizeLogQuery({ skip: 0, limit: 10_000 })).toBeNull();
+    expect(
+      sanitizeLogQuery({ skip: 0, limit: 50, ref: "--output=x" }),
+    ).toBeNull();
+    expect(sanitizeLogQuery({ skip: 0, limit: 50, ref: "a..b" })).toBeNull();
+    expect(sanitizeLogQuery({ skip: 0, limit: 50, ref: 7 })).toBeNull();
+    expect(
+      sanitizeLogQuery({ skip: 0, limit: 50, query: "q".repeat(201) }),
+    ).toBeNull();
+  });
+});
 
 describe("isSafeSessionId (IPC boundary, audit 2026-07-13 T1.2)", () => {
   it("accepts host-minted UUIDs and plain stems", () => {

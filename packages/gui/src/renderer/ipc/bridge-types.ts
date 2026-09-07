@@ -1,9 +1,11 @@
 import type {
   ApprovalOverlayState,
   ApprovalResult,
+  BranchList,
   CommitDescription,
   CreateSessionOpts,
   LogPage,
+  LogQuery,
   OverlayEvent,
   RecordEvent,
   RepoContextSnapshot,
@@ -272,6 +274,12 @@ export type ReadWorkspaceLogReply =
   | { readonly ok: true; readonly page: LogPage }
   | { readonly ok: false; readonly reason: "not_found" | "no_session" };
 
+/** Reply from `readWorkspaceBranches` (ADR 0059 §6): the branch list for
+ *  the history tab's read-only picker. */
+export type ReadWorkspaceBranchesReply =
+  | { readonly ok: true; readonly branches: BranchList }
+  | { readonly ok: false; readonly reason: "not_found" | "no_session" };
+
 /** Reply from `stageImages`. Per-file refusals ride `rejected` so one bad
  *  item never discards its siblings; only whole-action failures use `ok:
  *  false` with a message, like every other command here. */
@@ -442,14 +450,19 @@ export interface HertaBridge {
     sessionId: string,
     path: string,
   ): Promise<ReadWorkspaceDiffReply>;
-  /** The viewer's log tab (ADR 0059 §6): a page of the repository's
-   *  history, newest first, unpushed commits marked. Optional like its
-   *  siblings; the card's list then has no "all commits" opener. */
+  /** The viewer's log tab (ADR 0059 §6): a page of a ref's history (HEAD
+   *  by default), newest first, unpushed commits marked, optionally
+   *  filtered by message. Optional like its siblings; the card's list then
+   *  has no "all commits" opener. */
   readWorkspaceLog?(
     sessionId: string,
-    skip: number,
-    limit: number,
+    opts: LogQuery,
   ): Promise<ReadWorkspaceLogReply>;
+  /** The history tab's read-only branch picker (ADR 0059 §6). Optional;
+   *  without it the tab shows HEAD's history alone. */
+  readWorkspaceBranches?(
+    sessionId: string,
+  ): Promise<ReadWorkspaceBranchesReply>;
   /** The viewer's 打开 button: open the jailed path with the OS default
    *  application (shell.openPath). False when refused/missing. */
   openWorkspaceFile?(sessionId: string, path: string): Promise<boolean>;

@@ -6,7 +6,13 @@ import type {
   TerminalRecord,
   TerminalRecordBlock,
 } from "@herta/core";
-import type { CommitDescription, LogPage, WorkingDiff } from "@herta/tools";
+import type {
+  BranchList,
+  CommitDescription,
+  LogPage,
+  LogQuery,
+  WorkingDiff,
+} from "@herta/tools";
 import type { SessionSearchHit } from "./session-search.js";
 
 // ───── Configuration ─────
@@ -559,13 +565,14 @@ export interface Session {
    *  SessionImpl only. */
   describeWorkingDiff?(path: string): Promise<WorkingDiff | null>;
   /** A page of the repository's history for the viewer's log tab (ADR
-   *  0059 §6): newest first, each commit marked when not yet on the
-   *  upstream. Null when git cannot answer. Optional: the GUI SessionImpl
+   *  0059 §6): a ref's log (HEAD by default), newest first, each commit
+   *  marked when not yet on that ref's upstream, optionally filtered by
+   *  message. Null when git cannot answer. Optional: the GUI SessionImpl
    *  only. */
-  describeLog?(opts: {
-    readonly skip: number;
-    readonly limit: number;
-  }): Promise<LogPage | null>;
+  describeLog?(opts: LogQuery): Promise<LogPage | null>;
+  /** The repository's branches for the history tab's read-only picker
+   *  (ADR 0059 §6). Optional like its siblings. */
+  describeBranches?(): Promise<BranchList | null>;
 
   close(): Promise<void>;
 }

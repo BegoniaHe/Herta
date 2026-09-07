@@ -29,11 +29,14 @@ export type {
 } from "@herta/core";
 // The viewer's commit tab (ADR 0059) reads these through the same boundary.
 export type {
+  BranchEntry,
+  BranchList,
   CommitDescription,
   CommitFileChange,
   CommitFileStatus,
   LogEntry,
   LogPage,
+  LogQuery,
   WorkingDiff,
 } from "@herta/tools";
 // The attachment ingest (ADR 0033) is deliberately NOT re-exported here: it is

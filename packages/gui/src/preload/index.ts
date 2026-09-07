@@ -61,8 +61,10 @@ const bridge: HertaBridge = {
     ipcRenderer.invoke(CMD.readWorkspaceCommit, sessionId, ref),
   readWorkspaceDiff: (sessionId, path) =>
     ipcRenderer.invoke(CMD.readWorkspaceDiff, sessionId, path),
-  readWorkspaceLog: (sessionId, skip, limit) =>
-    ipcRenderer.invoke(CMD.readWorkspaceLog, sessionId, skip, limit),
+  readWorkspaceLog: (sessionId, opts) =>
+    ipcRenderer.invoke(CMD.readWorkspaceLog, sessionId, opts),
+  readWorkspaceBranches: (sessionId) =>
+    ipcRenderer.invoke(CMD.readWorkspaceBranches, sessionId),
   openWorkspaceFile: (sessionId, path) =>
     ipcRenderer.invoke(CMD.openWorkspaceFile, sessionId, path),
   // Electron 43 removed `File.path`, and this preload is CJS + sandboxed

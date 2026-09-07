@@ -1,14 +1,20 @@
-import type { LogEntry } from "@herta/app-server";
+import type { BranchList, LogEntry } from "@herta/app-server";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useHertaBridge } from "../../../context/HertaBridgeContext.js";
 import { useReducedMotion } from "../../../hooks/useReducedMotion.js";
 import { useSessionSelector } from "../../../hooks/useSessionSelector.js";
 import { useLocale, useT } from "../../../i18n/LocaleProvider.js";
+import { Select } from "../../Settings/Select.js";
 import { useFileViewerOpen } from "../file-viewer-context.js";
 import { formatCommitDate } from "./commit-patch.js";
 
 /** Rows per page — the reader's own default (`LOG_PAGE_SIZE` in tools). */
 export const LOG_PAGE = 50;
+/** Typing settles for this long before the history is asked again. */
+export const LOG_SEARCH_DEBOUNCE_MS = 250;
+/** The picker's value for "HEAD, whatever it is" — a detached or unborn
+ *  HEAD has no branch name to stand in for it. */
+const HEAD_VALUE = "\0HEAD";
 
 type Load =
   | { readonly kind: "idle" }
@@ -21,6 +27,12 @@ type Load =
  * the upstream marked. The first page reloads when HEAD moves (a commit
  * lands while the tab is open), so the tab is as live as the card; later
  * pages append, and the appended rows ease in one after another.
+ *
+ * Two read-only controls (§6 amendment): a branch picker choosing WHOSE
+ * history to read — nothing is checked out, the working tree is untouched,
+ * and the marks are measured against the chosen branch's own upstream —
+ * and a message search, a fixed string matched case-insensitively, applied
+ * once typing settles.
  */
 export function LogView(): JSX.Element {
   const t = useT();
@@ -38,6 +50,13 @@ export function LogView(): JSX.Element {
   const [load, setLoad] = useState<Load>({ kind: "idle" });
   /** Index from which rows are "new" this render — they stagger in. */
   const [freshFrom, setFreshFrom] = useState(0);
+  /** The picked branch; null = HEAD. */
+  const [ref, setRef] = useState<string | null>(null);
+  /** The settled search (what the history was asked for) and the live
+   *  field it settles from. */
+  const [query, setQuery] = useState("");
+  const [typed, setTyped] = useState("");
+  const [branches, setBranches] = useState<BranchList | null>(null);
   const seq = useRef(0);
 
   const fetchPage = useCallback(
@@ -50,7 +69,12 @@ export function LogView(): JSX.Element {
       seq.current += 1;
       const mine = seq.current;
       setLoad({ kind: "loading", skip });
-      read(sessionId, skip, LOG_PAGE).then(
+      read(sessionId, {
+        skip,
+        limit: LOG_PAGE,
+        ...(ref !== null ? { ref } : {}),
+        ...(query.length > 0 ? { query } : {}),
+      }).then(
         (reply) => {
           if (mine !== seq.current) return;
           if (!reply.ok) {
@@ -70,14 +94,40 @@ export function LogView(): JSX.Element {
         },
       );
     },
-    [bridge, sessionId],
+    [bridge, sessionId, ref, query],
   );
 
-  // The first page — again whenever HEAD moves.
+  // The first page — again whenever HEAD moves, the branch is picked, or
+  // the search settles.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `head` is the reload trigger, not a value the fetch reads.
   useEffect(() => {
     fetchPage(0);
   }, [fetchPage, head]);
+
+  // The branch list — again whenever HEAD moves (a checkout, a new branch).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `head` is the reload trigger, not a value the read uses.
+  useEffect(() => {
+    const read = bridge.readWorkspaceBranches?.bind(bridge);
+    if (read === undefined || sessionId === null) return;
+    let alive = true;
+    read(sessionId).then(
+      (reply) => {
+        if (alive) setBranches(reply.ok ? reply.branches : null);
+      },
+      () => {
+        if (alive) setBranches(null);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [bridge, sessionId, head]);
+
+  // Typing settles into the query after a beat; Enter settles it at once.
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(typed.trim()), LOG_SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [typed]);
 
   const branch =
     repo === null
@@ -88,6 +138,21 @@ export function LogView(): JSX.Element {
           ? t("repo.card.detached")
           : t("repo.card.unborn");
 
+  // The picker: HEAD's branch first under its own name (or the detached /
+  // unborn label), then every other branch, locals before remotes.
+  const current = branches?.current ?? null;
+  const options =
+    branches === null
+      ? []
+      : [
+          ...(current === null
+            ? [{ value: HEAD_VALUE, label: branch ?? "HEAD" }]
+            : []),
+          ...branches.branches.map((b) => ({ value: b.name, label: b.name })),
+        ];
+  const pickerValue = ref ?? current ?? HEAD_VALUE;
+  const showPicker = options.length > 1;
+
   return (
     <div className="file-viewer__body">
       <div
@@ -95,22 +160,46 @@ export function LogView(): JSX.Element {
         data-testid="log-view"
       >
         <header className="commit-view__head log-view__head">
-          <p className="commit-view__meta">
-            {branch !== null && (
-              <span className="log-view__branch">{branch}</span>
+          <div className="log-view__tools">
+            {showPicker ? (
+              <span className="log-view__pick">
+                <Select<string>
+                  value={pickerValue}
+                  ariaLabel={t("viewer.log.branch")}
+                  options={options}
+                  onChange={(v) =>
+                    setRef(v === HEAD_VALUE || v === current ? null : v)
+                  }
+                />
+              </span>
+            ) : (
+              branch !== null && (
+                <span className="log-view__branch">{branch}</span>
+              )
             )}
-            {upstream !== null && (
-              <>
-                <span className="commit-view__sep" aria-hidden="true">
-                  ·
-                </span>
-                <span>{t("repo.card.upstream", { name: upstream })}</span>
-              </>
-            )}
-          </p>
+            <input
+              type="search"
+              className="log-view__search"
+              value={typed}
+              placeholder={t("viewer.log.search")}
+              aria-label={t("viewer.log.search")}
+              spellCheck={false}
+              onChange={(e) => setTyped(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") setQuery(typed.trim());
+              }}
+            />
+          </div>
+          {upstream !== null && (
+            <p className="commit-view__meta">
+              <span>{t("repo.card.upstream", { name: upstream })}</span>
+            </p>
+          )}
         </header>
         {entries.length === 0 && load.kind === "idle" && (
-          <p className="file-viewer__notice">{t("repo.card.unborn")}</p>
+          <p className="file-viewer__notice">
+            {query.length > 0 ? t("viewer.log.noMatch") : t("repo.card.unborn")}
+          </p>
         )}
         {load.kind === "failed" && entries.length === 0 && (
           <p className="file-viewer__notice">{t("viewer.log.notFound")}</p>

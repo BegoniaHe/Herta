@@ -231,7 +231,10 @@ describe("RepoCard (ADR 0058)", () => {
     expect(all?.textContent).toBe("全部");
     fireEvent.click(all as Element);
     await waitFor(() =>
-      expect(readWorkspaceLog).toHaveBeenCalledWith("s1", 0, 50),
+      expect(readWorkspaceLog).toHaveBeenCalledWith("s1", {
+        skip: 0,
+        limit: 50,
+      }),
     );
     await waitFor(() =>
       expect(

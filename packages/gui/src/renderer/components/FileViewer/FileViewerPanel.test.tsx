@@ -379,23 +379,25 @@ describe("FileViewerPanel (ADR 0050)", () => {
 
   it("the history tab pages the log, marks unpushed commits, loads more, and opens a commit (ADR 0059 §6)", async () => {
     const mock = createMockHertaBridge();
-    const readWorkspaceLog = vi.fn(async (_s: string, skip: number) => ({
-      ok: true as const,
-      page:
-        skip === 0
-          ? {
-              entries: [logEntry(1, true), logEntry(2)],
-              skip: 0,
-              hasMore: true,
-              upstream: "origin/main",
-            }
-          : {
-              entries: [logEntry(3)],
-              skip,
-              hasMore: false,
-              upstream: "origin/main",
-            },
-    }));
+    const readWorkspaceLog = vi.fn(
+      async (_s: string, opts: { readonly skip: number }) => ({
+        ok: true as const,
+        page:
+          opts.skip === 0
+            ? {
+                entries: [logEntry(1, true), logEntry(2)],
+                skip: 0,
+                hasMore: true,
+                upstream: "origin/main",
+              }
+            : {
+                entries: [logEntry(3)],
+                skip: opts.skip,
+                hasMore: false,
+                upstream: "origin/main",
+              },
+      }),
+    );
     const readWorkspaceCommit = vi.fn(async () => ({
       ok: false as const,
       reason: "not_found" as const,
@@ -421,7 +423,7 @@ describe("FileViewerPanel (ADR 0050)", () => {
     await waitFor(() =>
       expect(panel.querySelectorAll(".log-view__row")).toHaveLength(2),
     );
-    expect(readWorkspaceLog).toHaveBeenCalledWith("s1", 0, 50);
+    expect(readWorkspaceLog).toHaveBeenCalledWith("s1", { skip: 0, limit: 50 });
     const rows = panel.querySelectorAll(".log-view__row");
     expect(rows[0]?.classList.contains("is-unpushed")).toBe(true);
     expect(rows[1]?.classList.contains("is-unpushed")).toBe(false);
@@ -434,7 +436,10 @@ describe("FileViewerPanel (ADR 0050)", () => {
     // Load more appends the next page from where the list ends.
     fireEvent.click(panel.querySelector(".log-view__more") as Element);
     await waitFor(() =>
-      expect(readWorkspaceLog).toHaveBeenCalledWith("s1", 2, 50),
+      expect(readWorkspaceLog).toHaveBeenCalledWith("s1", {
+        skip: 2,
+        limit: 50,
+      }),
     );
     await waitFor(() =>
       expect(panel.querySelectorAll(".log-view__row")).toHaveLength(3),
@@ -449,6 +454,122 @@ describe("FileViewerPanel (ADR 0050)", () => {
       expect(readWorkspaceCommit).toHaveBeenCalledWith("s1", "0002aaa"),
     );
     expect(panel.querySelectorAll(".file-viewer__tab")).toHaveLength(2);
+  });
+
+  it("the history tab's search settles into a message filter, and the branch picker reads another branch without checking out (ADR 0059 §6 amendment)", async () => {
+    const mock = createMockHertaBridge();
+    const readWorkspaceLog = vi.fn(
+      async (
+        _s: string,
+        opts: {
+          readonly skip: number;
+          readonly ref?: string;
+          readonly query?: string;
+        },
+      ) => ({
+        ok: true as const,
+        page: {
+          entries:
+            opts.query === "zzz"
+              ? []
+              : opts.ref === "feature/x"
+                ? [logEntry(9)]
+                : [logEntry(1), logEntry(2)],
+          skip: opts.skip,
+          hasMore: false,
+          upstream: opts.ref === "feature/x" ? null : "origin/main",
+        },
+      }),
+    );
+    const readWorkspaceBranches = vi.fn(async () => ({
+      ok: true as const,
+      branches: {
+        current: "main",
+        branches: [
+          {
+            name: "main",
+            kind: "local" as const,
+            upstream: "origin/main",
+            current: true,
+          },
+          {
+            name: "feature/x",
+            kind: "local" as const,
+            upstream: null,
+            current: false,
+          },
+          {
+            name: "origin/main",
+            kind: "remote" as const,
+            upstream: null,
+            current: false,
+          },
+        ],
+      },
+    }));
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: vi.fn(async () => ({
+        ok: false as const,
+        reason: "not_found" as const,
+      })),
+      readWorkspaceLog,
+      readWorkspaceBranches,
+    });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("probe-log"));
+    const panel = await screen.findByTestId("file-viewer");
+    await waitFor(() =>
+      expect(panel.querySelectorAll(".log-view__row")).toHaveLength(2),
+    );
+    // The picker names HEAD's branch and lists the others. (By role: the
+    // Select labels its trigger AND its open list with the same name.)
+    const picker = await screen.findByRole("button", { name: "Branch" });
+    expect(picker.textContent).toContain("main");
+    // Typing settles into a query after the debounce; nothing matches.
+    const search = screen.getByLabelText("Search commit messages");
+    fireEvent.change(search, { target: { value: "zzz" } });
+    await waitFor(() =>
+      expect(readWorkspaceLog).toHaveBeenCalledWith("s1", {
+        skip: 0,
+        limit: 50,
+        query: "zzz",
+      }),
+    );
+    await waitFor(() =>
+      expect(panel.querySelector(".file-viewer__notice")?.textContent).toBe(
+        "No matching commits",
+      ),
+    );
+    fireEvent.change(search, { target: { value: "" } });
+    await waitFor(() =>
+      expect(panel.querySelectorAll(".log-view__row")).toHaveLength(2),
+    );
+    // Picking a branch reads ITS history; the marks follow its upstream.
+    fireEvent.click(picker);
+    fireEvent.click(screen.getByRole("option", { name: "feature/x" }));
+    await waitFor(() =>
+      expect(readWorkspaceLog).toHaveBeenCalledWith("s1", {
+        skip: 0,
+        limit: 50,
+        ref: "feature/x",
+      }),
+    );
+    await waitFor(() =>
+      expect(panel.querySelector(".log-view__subject")?.textContent).toBe(
+        "step 9",
+      ),
+    );
+    expect(panel.querySelector(".commit-view__meta")).toBeNull();
+    // Picking HEAD's own branch again asks for HEAD, not a named ref.
+    fireEvent.click(screen.getByRole("button", { name: "Branch" }));
+    fireEvent.click(screen.getByRole("option", { name: "main" }));
+    await waitFor(() =>
+      expect(readWorkspaceLog).toHaveBeenLastCalledWith("s1", {
+        skip: 0,
+        limit: 50,
+      }),
+    );
   });
 
   it("a commit git cannot show — or a bridge without the read — answers with the commit notice", async () => {

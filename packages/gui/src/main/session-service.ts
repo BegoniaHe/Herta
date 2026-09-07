@@ -5,6 +5,7 @@ import {
   type AppServerConfig,
   createSessionHost,
   defaultDirsFor,
+  type LogQuery,
   recordTail,
   type Session,
   type SessionHost,
@@ -15,6 +16,9 @@ import { validateDeepSeekKey } from "@herta/providers";
 import {
   canonicalWorkspaceRoot,
   findBash,
+  isSafeRefName,
+  MAX_LOG_LIMIT,
+  MAX_LOG_QUERY_CHARS,
   validateWorkspaceRoot,
 } from "@herta/tools";
 import {
@@ -63,6 +67,45 @@ import {
 import { resolveVoiceRoot } from "./voice-path.js";
 
 type Send = (channel: string, payload: unknown) => void;
+
+/**
+ * The history tab's query as the IPC door accepts it (ADR 0059 §6):
+ * integer paging, a branch-shaped `ref` (the same rule the reader
+ * applies, so a refused shape never reaches a spawn), a bounded `query`.
+ * Null for anything else. Exported for tests.
+ */
+export function sanitizeLogQuery(raw: unknown): LogQuery | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const skip = r.skip;
+  const limit = r.limit;
+  if (
+    typeof skip !== "number" ||
+    !Number.isInteger(skip) ||
+    skip < 0 ||
+    typeof limit !== "number" ||
+    !Number.isInteger(limit) ||
+    limit <= 0 ||
+    limit > MAX_LOG_LIMIT
+  ) {
+    return null;
+  }
+  const out: { skip: number; limit: number; ref?: string; query?: string } = {
+    skip,
+    limit,
+  };
+  if (r.ref !== undefined) {
+    if (typeof r.ref !== "string" || !isSafeRefName(r.ref)) return null;
+    out.ref = r.ref;
+  }
+  if (r.query !== undefined) {
+    if (typeof r.query !== "string") return null;
+    const q = r.query.trim();
+    if (q.length > MAX_LOG_QUERY_CHARS) return null;
+    if (q.length > 0) out.query = q;
+  }
+  return out;
+}
 
 /** Walk up from `start` to the nearest ancestor containing a `.git`
  *  marker (file or dir) — the canonical project-root indicator. Returns
@@ -841,29 +884,39 @@ export function createSessionService(
           : { ok: true as const, diff };
       },
     );
-    // The viewer's log tab (ADR 0059 §6): a page of history. Paging
-    // numbers are checked at the door; the reader bounds the limit again.
+    // The viewer's log tab (ADR 0059 §6): a page of a ref's history,
+    // optionally filtered. Every field is checked at the door — paging
+    // numbers are integers, the ref has a branch's shape (the reader
+    // checks again and hands git `--end-of-options`), the query is a
+    // bounded string — and the reader bounds the limit again.
     handle(
       CMD.readWorkspaceLog,
-      async (_e, sessionId: string, skip: number, limit: number) => {
+      async (_e, sessionId: string, raw: unknown) => {
         const s = host?.activeSession ?? null;
         if (s === null || s.sessionId !== sessionId) {
           return { ok: false as const, reason: "no_session" as const };
         }
-        if (
-          !Number.isInteger(skip) ||
-          skip < 0 ||
-          !Number.isInteger(limit) ||
-          limit <= 0
-        ) {
+        const opts = sanitizeLogQuery(raw);
+        if (opts === null) {
           return { ok: false as const, reason: "not_found" as const };
         }
-        const page = (await s.describeLog?.({ skip, limit })) ?? null;
+        const page = (await s.describeLog?.(opts)) ?? null;
         return page === null
           ? { ok: false as const, reason: "not_found" as const }
           : { ok: true as const, page };
       },
     );
+    // The history tab's read-only branch picker (ADR 0059 §6).
+    handle(CMD.readWorkspaceBranches, async (_e, sessionId: string) => {
+      const s = host?.activeSession ?? null;
+      if (s === null || s.sessionId !== sessionId) {
+        return { ok: false as const, reason: "no_session" as const };
+      }
+      const branches = (await s.describeBranches?.()) ?? null;
+      return branches === null
+        ? { ok: false as const, reason: "not_found" as const }
+        : { ok: true as const, branches };
+    });
     // The viewer's 打开: hand the jailed path to the OS default app. The
     // same resolution as the read — an outside-resolving name never
     // reaches shell.openPath.

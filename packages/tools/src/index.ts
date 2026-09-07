@@ -93,11 +93,21 @@ export {
   MAX_COMMIT_FILES,
   MAX_COMMIT_PATCH_BYTES,
 } from "./git/commit-show.js";
-export type { LogEntry, LogPage } from "./git/log-list.js";
+export type {
+  BranchEntry,
+  BranchList,
+  LogEntry,
+  LogPage,
+  LogQuery,
+} from "./git/log-list.js";
 export {
+  describeBranches,
   describeLog,
+  isSafeRefName,
   LOG_PAGE_SIZE,
+  MAX_BRANCHES,
   MAX_LOG_LIMIT,
+  MAX_LOG_QUERY_CHARS,
 } from "./git/log-list.js";
 export type { RangeChangedFile } from "./git/repo-probe.js";
 export {

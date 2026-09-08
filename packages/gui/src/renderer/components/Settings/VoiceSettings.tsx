@@ -2,7 +2,11 @@ import { type CSSProperties, useEffect, useState } from "react";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import type {
+  DeepSeekKeyStatus,
+  MiniMaxVoiceError,
+  MiniMaxVoiceState,
   RealtimeVoiceState,
+  VoiceEngine,
   VoiceModelFailure,
   VoiceModelState,
 } from "../../ipc/bridge-types.js";
@@ -10,6 +14,7 @@ import { applyVoiceVolume, stopAllVoice } from "../../voice/play-voice.js";
 import { useVoiceMuted } from "../../voice/useVoiceMuted.js";
 import { useVoiceVolume } from "../../voice/useVoiceVolume.js";
 import { setVoiceMuted, setVoiceVolume } from "../../voice/voice-prefs.js";
+import { Select } from "./Select.js";
 import { SettingRow } from "./SettingRow.js";
 import { Toggle } from "./Toggle.js";
 
@@ -36,8 +41,40 @@ function failureKey(reason: VoiceModelFailure) {
   }
 }
 
-/** The Voice settings section — real-time voice (ADR 0042), its model as a
- *  download (ADR 0061), master mute, master volume. */
+function cloneFailureKey(reason: MiniMaxVoiceError) {
+  switch (reason) {
+    case "no_key":
+      return "voice.cloneFailed.no_key" as const;
+    case "invalid_key":
+      return "voice.cloneFailed.invalid_key" as const;
+    case "auth":
+      return "voice.cloneFailed.auth" as const;
+    case "rate":
+      return "voice.cloneFailed.rate" as const;
+    case "quota":
+      return "voice.cloneFailed.quota" as const;
+    case "sensitive":
+      return "voice.cloneFailed.sensitive" as const;
+    case "voice_missing":
+      return "voice.cloneFailed.voice_missing" as const;
+    case "invalid":
+      return "voice.cloneFailed.invalid" as const;
+    case "network":
+      return "voice.cloneFailed.network" as const;
+    case "http":
+      return "voice.cloneFailed.http" as const;
+    case "cancelled":
+      return "voice.cloneFailed.cancelled" as const;
+    case "reference":
+      return "voice.cloneFailed.reference" as const;
+    case "other":
+      return "voice.cloneFailed.other" as const;
+  }
+}
+
+/** The Voice settings section — real-time voice (ADR 0042), its engine
+ *  (ADR 0062: the local model with its download, ADR 0061, or the MiniMax
+ *  clone on the user's key), master mute, master volume. */
 export function VoiceSettings(): JSX.Element {
   const t = useT();
   const { bridge } = useHertaBridge();
@@ -51,40 +88,57 @@ export function VoiceSettings(): JSX.Element {
     bridge.getRealtimeVoice !== undefined &&
     bridge.setRealtimeVoice !== undefined;
   const modelSupported = bridge.downloadVoiceModel !== undefined;
+  const engineSupported =
+    bridge.setVoiceEngine !== undefined &&
+    bridge.setMiniMaxKey !== undefined &&
+    bridge.prepareMiniMaxVoice !== undefined;
   const [rt, setRt] = useState<RealtimeVoiceState | null>(null);
   const [rtFailed, setRtFailed] = useState(false);
   const [model, setModel] = useState<VoiceModelState | null>(null);
+  const [engine, setEngine] = useState<VoiceEngine>("local");
+  const [engineFailed, setEngineFailed] = useState(false);
+  const [mmKey, setMmKey] = useState<DeepSeekKeyStatus | null>(null);
+  const [clone, setClone] = useState<MiniMaxVoiceState | null>(null);
+  const [keyDraft, setKeyDraft] = useState("");
+  const [keySaving, setKeySaving] = useState(false);
+  const [keyDeleting, setKeyDeleting] = useState(false);
+  const [keyFailed, setKeyFailed] = useState(false);
+  const [keyRejected, setKeyRejected] = useState(false);
+  const [keyUnverified, setKeyUnverified] = useState(false);
 
   useEffect(() => {
     const read = bridge.getRealtimeVoice;
     if (read === undefined) return;
     let alive = true;
-    void read().then(
-      (s) => {
-        if (!alive) return;
-        setRt(s);
-        setModel(s.model);
-      },
-      () => undefined,
-    );
-    const unsub = bridge.onVoiceModel?.((m) => {
+    const refresh = (): void => {
+      void read().then(
+        (s) => {
+          if (!alive) return;
+          setRt(s);
+          setModel(s.model);
+          setEngine(s.engine);
+          setMmKey(s.minimax.key);
+          setClone(s.minimax.voice);
+        },
+        () => undefined,
+      );
+    };
+    refresh();
+    const unsubModel = bridge.onVoiceModel?.((m) => {
       if (!alive) return;
       setModel(m);
       // A phase change may have changed what the synthesizer can see — the
       // downloaded copy landed, or went — so re-read the facts rather than
       // infer them here (a dev workspace copy would be inferred wrong).
-      if (m.phase !== "downloading") {
-        void read().then(
-          (s) => {
-            if (alive) setRt(s);
-          },
-          () => undefined,
-        );
-      }
+      if (m.phase !== "downloading") refresh();
+    });
+    const unsubClone = bridge.onMiniMaxVoice?.((c) => {
+      if (alive) setClone(c);
     });
     return () => {
       alive = false;
-      unsub?.();
+      unsubModel?.();
+      unsubClone?.();
     };
   }, [bridge]);
 
@@ -94,7 +148,10 @@ export function VoiceSettings(): JSX.Element {
     model !== null && model.phase === "ready" ? true : (rt?.bundle ?? false);
   const runtime = rt?.runtime ?? false;
   const failed = rt?.failed ?? false;
-  const canSpeak = bundle && runtime && !failed;
+  const localCanSpeak = bundle && runtime && !failed;
+  const cloudCanSpeak =
+    (mmKey?.set ?? false) && clone !== null && clone.phase === "ready";
+  const canSpeak = engine === "minimax" ? cloudCanSpeak : localCanSpeak;
 
   const onRealtimeChange = (next: boolean): void => {
     const write = bridge.setRealtimeVoice;
@@ -110,6 +167,51 @@ export function VoiceSettings(): JSX.Element {
     // Turning it OFF cuts a reply already speaking (immediate silence,
     // mirroring the mute below).
     if (!next) stopAllVoice();
+  };
+
+  const onEngineChange = (next: VoiceEngine): void => {
+    const write = bridge.setVoiceEngine;
+    if (write === undefined) return;
+    const prev = engine;
+    setEngine(next);
+    setEngineFailed(false);
+    void write(next).catch(() => {
+      setEngine(prev);
+      setEngineFailed(true);
+    });
+  };
+
+  const onKeySave = (): void => {
+    const write = bridge.setMiniMaxKey;
+    const key = keyDraft.trim();
+    if (write === undefined || key.length === 0 || keySaving) return;
+    setKeySaving(true);
+    setKeyFailed(false);
+    setKeyRejected(false);
+    setKeyUnverified(false);
+    void write(key)
+      .then((r) => {
+        if (!r.ok) {
+          setKeyRejected(true);
+          return;
+        }
+        setMmKey(r.status);
+        setKeyDraft("");
+        setKeyUnverified(r.unverified);
+      })
+      .catch(() => setKeyFailed(true))
+      .finally(() => setKeySaving(false));
+  };
+
+  const onKeyDelete = (): void => {
+    const clear = bridge.clearMiniMaxKey;
+    if (clear === undefined || keyDeleting) return;
+    setKeyDeleting(true);
+    setKeyFailed(false);
+    void clear()
+      .then((r) => setMmKey(r.status))
+      .catch(() => setKeyFailed(true))
+      .finally(() => setKeyDeleting(false));
   };
 
   const modelRow = ((): {
@@ -188,6 +290,72 @@ export function VoiceSettings(): JSX.Element {
     }
   })();
 
+  const cloneRow = ((): {
+    readonly description: string;
+    readonly control: JSX.Element | null;
+  } => {
+    const keySet = mmKey?.set ?? false;
+    const prepare = (
+      <button
+        type="button"
+        className="settings-btn settings-btn--primary"
+        disabled={!keySet || clone === null}
+        onClick={() => void bridge.prepareMiniMaxVoice?.()}
+      >
+        {t("voice.clonePrepare")}
+      </button>
+    );
+    if (clone === null) return { description: "—", control: prepare };
+    switch (clone.phase) {
+      case "preparing":
+        return {
+          description: t("voice.clonePreparing"),
+          control: (
+            <button type="button" className="settings-btn" disabled>
+              {t("voice.clonePrepare")}
+            </button>
+          ),
+        };
+      case "ready":
+        return {
+          description: t("voice.cloneReady", {
+            date: (clone.clonedAt ?? "").slice(0, 10),
+          }),
+          control: (
+            <button
+              type="button"
+              className="settings-btn"
+              disabled={!keySet}
+              onClick={() => {
+                const reset = bridge.resetMiniMaxVoice;
+                const again = bridge.prepareMiniMaxVoice;
+                if (reset === undefined || again === undefined) return;
+                void reset().then(() => again());
+              }}
+            >
+              {t("voice.cloneRedo")}
+            </button>
+          ),
+        };
+      case "failed":
+        return {
+          description: t(cloneFailureKey(clone.error ?? "other")),
+          control: (
+            <button
+              type="button"
+              className="settings-btn settings-btn--primary"
+              disabled={!keySet}
+              onClick={() => void bridge.prepareMiniMaxVoice?.()}
+            >
+              {t("voice.cloneRetry")}
+            </button>
+          ),
+        };
+      default:
+        return { description: t("voice.cloneAbsent"), control: prepare };
+    }
+  })();
+
   const progress =
     model !== null && model.phase === "downloading" && model.totalBytes > 0
       ? Math.min(
@@ -214,12 +382,32 @@ export function VoiceSettings(): JSX.Element {
           />
           {rtFailed ? (
             <p className="settings-note">{t("common.couldntSave")}</p>
-          ) : rt !== null && !runtime ? (
+          ) : engine === "local" && rt !== null && !runtime ? (
             <p className="settings-note">{t("voice.realtimeMissing")}</p>
-          ) : failed ? (
+          ) : engine === "local" && failed ? (
             <p className="settings-note">{t("voice.realtimeFailed")}</p>
           ) : null}
-          {modelSupported && (
+          {engineSupported && (
+            <SettingRow
+              title={t("voice.engine")}
+              description={t("voice.engineDesc")}
+              control={
+                <Select<VoiceEngine>
+                  value={engine}
+                  ariaLabel={t("voice.engine")}
+                  options={[
+                    { value: "local", label: t("voice.engine.local") },
+                    { value: "minimax", label: t("voice.engine.minimax") },
+                  ]}
+                  onChange={onEngineChange}
+                />
+              }
+            />
+          )}
+          {engineFailed && (
+            <p className="settings-note">{t("common.couldntSave")}</p>
+          )}
+          {modelSupported && engine === "local" && (
             <>
               <SettingRow
                 title={t("voice.model")}
@@ -241,6 +429,98 @@ export function VoiceSettings(): JSX.Element {
                   />
                 </div>
               )}
+            </>
+          )}
+          {engineSupported && engine === "minimax" && (
+            <>
+              <p className="settings-note">{t("voice.minimaxNote")}</p>
+              <SettingRow
+                title={t("voice.minimaxKey")}
+                description={t("voice.minimaxKeyDesc")}
+                control={
+                  mmKey === null ? (
+                    <span className="settings-key-state is-muted">
+                      {t("deepseek.checking")}
+                    </span>
+                  ) : mmKey.set ? (
+                    <span className="settings-key-state is-connected">
+                      <span className="settings-key-dot" aria-hidden="true" />
+                      {t("deepseek.connected")} · …{mmKey.hint}
+                    </span>
+                  ) : (
+                    <span className="settings-key-state is-muted">
+                      {t("deepseek.noKey")}
+                    </span>
+                  )
+                }
+              />
+              <div className="settings-key-form">
+                <input
+                  type="password"
+                  className="settings-key-input"
+                  placeholder={
+                    mmKey?.set ? t("deepseek.replaceKey") : "sk-api-…"
+                  }
+                  aria-label={t("voice.minimaxKeyAria")}
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={keyDraft}
+                  disabled={keySaving || keyDeleting}
+                  onChange={(e) => {
+                    setKeyDraft(e.target.value);
+                    setKeyRejected(false);
+                    setKeyUnverified(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.nativeEvent.isComposing) return;
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      onKeySave();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="settings-key-save"
+                  disabled={
+                    keyDraft.trim().length === 0 || keySaving || keyDeleting
+                  }
+                  onClick={onKeySave}
+                >
+                  {keySaving ? t("deepseek.verifying") : t("deepseek.save")}
+                </button>
+              </div>
+              {mmKey?.set && (
+                <button
+                  type="button"
+                  className="settings-key-delete"
+                  disabled={keySaving || keyDeleting}
+                  onClick={onKeyDelete}
+                >
+                  {keyDeleting
+                    ? t("deepseek.deleting")
+                    : t("deepseek.deleteKey")}
+                </button>
+              )}
+              {keyRejected && (
+                <p className="settings-note is-error">
+                  {t("voice.minimaxRejected")}
+                </p>
+              )}
+              {keyFailed && (
+                <p className="settings-note">{t("common.couldntSave")}</p>
+              )}
+              {keyUnverified && (
+                <p className="settings-note">{t("voice.minimaxUnverified")}</p>
+              )}
+              {mmKey?.set && !mmKey.encrypted && (
+                <p className="settings-note">{t("deepseek.unencrypted")}</p>
+              )}
+              <SettingRow
+                title={t("voice.clone")}
+                description={cloneRow.description}
+                control={cloneRow.control}
+              />
             </>
           )}
         </>

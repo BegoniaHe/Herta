@@ -3,32 +3,36 @@ import { join } from "node:path";
 import { app, safeStorage } from "electron";
 
 /**
- * Secure, main-process-only store for the DeepSeek API key, over Electron
- * `safeStorage` (OS keychain — Keychain on macOS, libsecret on Linux, DPAPI on
- * Windows). The raw key NEVER crosses IPC: the renderer only ever sees the
- * masked status (`set` + last-4 `hint`). See the 2026-06-24-deepseek-key design.
+ * Secure, main-process-only store for API keys, over Electron `safeStorage`
+ * (OS keychain — Keychain on macOS, libsecret on Linux, DPAPI on Windows).
+ * The raw key NEVER crosses IPC: the renderer only ever sees the masked
+ * status (`set` + last-4 `hint`). See the 2026-06-24-deepseek-key design.
  *
- * Storage lives under `app.getPath("userData")`:
- *  - `deepseek-key.enc` — `safeStorage`-encrypted bytes (preferred).
- *  - `deepseek-key.txt` — plaintext fallback when encryption is unavailable
- *    (still better than the repo file; flagged `encrypted: false` so the UI can
- *    warn).
+ * Two secrets live here, each in its own pair of files under
+ * `app.getPath("userData")`:
+ *  - `deepseek-key.enc` / `deepseek-key.txt` — the DeepSeek API key;
+ *  - `minimax-key.enc` / `minimax-key.txt` — the MiniMax API key for the
+ *    cloud voice (ADR 0062, 2026-09-08).
+ * `.enc` is the `safeStorage`-encrypted form (preferred); `.txt` the
+ * plaintext fallback when encryption is unavailable (still better than the
+ * repo file; flagged `encrypted: false` so the UI can warn).
  *
  * All reads are best-effort: a missing / corrupt / undecryptable store resolves
  * to `null` rather than throwing — a bad store must never wedge the app.
  */
+export type SecretName = "deepseek" | "minimax";
 
-function encPath(): string {
-  return join(app.getPath("userData"), "deepseek-key.enc");
+function encPath(name: SecretName): string {
+  return join(app.getPath("userData"), `${name}-key.enc`);
 }
 
-function txtPath(): string {
-  return join(app.getPath("userData"), "deepseek-key.txt");
+function txtPath(name: SecretName): string {
+  return join(app.getPath("userData"), `${name}-key.txt`);
 }
 
 /** Delete both store files. Best-effort — a missing file is success. */
-function clearFiles(): void {
-  for (const p of [encPath(), txtPath()]) {
+function clearFiles(name: SecretName): void {
+  for (const p of [encPath(name), txtPath(name)]) {
     try {
       rmSync(p, { force: true });
     } catch {
@@ -37,7 +41,7 @@ function clearFiles(): void {
   }
 }
 
-export interface DeepSeekKeyStatus {
+export interface KeyStatus {
   /** Whether a non-empty key is stored. */
   readonly set: boolean;
   /** Last 4 characters of the key, for the "Connected · …last4" UI. Null when
@@ -47,13 +51,19 @@ export interface DeepSeekKeyStatus {
   readonly encrypted: boolean;
 }
 
+/** The DeepSeek status's historical name; the same shape serves every key. */
+export type DeepSeekKeyStatus = KeyStatus;
+
 /** Persist `key` (trimmed). Encrypts via safeStorage when available, else writes
  *  a plaintext fallback. Clears the other file first so the two never coexist
  *  and shadow each other. An empty/whitespace key clears the store instead. */
-export function setDeepSeekKey(key: string): { encrypted: boolean } {
+export function setSecret(
+  name: SecretName,
+  key: string,
+): { encrypted: boolean } {
   const trimmed = key.trim();
   if (trimmed.length === 0) {
-    clearFiles();
+    clearFiles(name);
     return { encrypted: false };
   }
   // Write the NEW key before clearing the old one (audit BL7). The old order
@@ -66,12 +76,12 @@ export function setDeepSeekKey(key: string): { encrypted: boolean } {
   // Clearing the OTHER file afterwards still keeps the two from coexisting and
   // shadowing each other, which is what clearFiles was here for.
   if (safeStorage.isEncryptionAvailable()) {
-    writeFileSync(encPath(), safeStorage.encryptString(trimmed));
-    rmIfExists(txtPath());
+    writeFileSync(encPath(name), safeStorage.encryptString(trimmed));
+    rmIfExists(txtPath(name));
     return { encrypted: true };
   }
-  writeFileSync(txtPath(), trimmed, "utf-8");
-  rmIfExists(encPath());
+  writeFileSync(txtPath(name), trimmed, "utf-8");
+  rmIfExists(encPath(name));
   return { encrypted: false };
 }
 
@@ -84,20 +94,22 @@ function rmIfExists(path: string): void {
 }
 
 /** Read the stored key in plaintext, or null when none is set / readable.
- *  Main-process only — used by `buildConfig` and `setKey`, never sent to the
- *  renderer. */
-export function readDeepSeekKeyPlain(): string | null {
+ *  Main-process only — used by `buildConfig` and the synthesizers, never sent
+ *  to the renderer. */
+export function readSecretPlain(name: SecretName): string | null {
   try {
-    if (existsSync(encPath()) && safeStorage.isEncryptionAvailable()) {
-      const decoded = safeStorage.decryptString(readFileSync(encPath())).trim();
+    if (existsSync(encPath(name)) && safeStorage.isEncryptionAvailable()) {
+      const decoded = safeStorage
+        .decryptString(readFileSync(encPath(name)))
+        .trim();
       return decoded.length > 0 ? decoded : null;
     }
   } catch {
     // Corrupt/undecryptable .enc — fall through to the plaintext fallback.
   }
   try {
-    if (existsSync(txtPath())) {
-      const raw = readFileSync(txtPath(), "utf-8").trim();
+    if (existsSync(txtPath(name))) {
+      const raw = readFileSync(txtPath(name), "utf-8").trim();
       return raw.length > 0 ? raw : null;
     }
   } catch {
@@ -107,17 +119,47 @@ export function readDeepSeekKeyPlain(): string | null {
 }
 
 /** Masked status for the renderer. The raw key never leaves the main process. */
-export function getDeepSeekKeyStatus(): DeepSeekKeyStatus {
-  const key = readDeepSeekKeyPlain();
+export function getSecretStatus(name: SecretName): KeyStatus {
+  const key = readSecretPlain(name);
   if (key === null) return { set: false, hint: null, encrypted: false };
   const encrypted =
-    existsSync(encPath()) && safeStorage.isEncryptionAvailable();
+    existsSync(encPath(name)) && safeStorage.isEncryptionAvailable();
   // Last 4 only — never echo a whole (short) key back across IPC.
   const hint = key.length >= 4 ? key.slice(-4) : null;
   return { set: true, hint, encrypted };
 }
 
 /** Delete the stored key (both files). */
+export function clearSecret(name: SecretName): void {
+  clearFiles(name);
+}
+
+// ── the DeepSeek key, under its historical names ─────────────────────────────
+
+export function setDeepSeekKey(key: string): { encrypted: boolean } {
+  return setSecret("deepseek", key);
+}
+export function readDeepSeekKeyPlain(): string | null {
+  return readSecretPlain("deepseek");
+}
+export function getDeepSeekKeyStatus(): DeepSeekKeyStatus {
+  return getSecretStatus("deepseek");
+}
 export function clearDeepSeekKey(): void {
-  clearFiles();
+  clearSecret("deepseek");
+}
+
+// ── the MiniMax key (ADR 0062) ───────────────────────────────────────────────
+
+export function setMiniMaxKey(key: string): { encrypted: boolean } {
+  return setSecret("minimax", key);
+}
+export function readMiniMaxKeyPlain(): string | null {
+  return readSecretPlain("minimax");
+}
+export function getMiniMaxKeyStatus(): KeyStatus {
+  return getSecretStatus("minimax");
+}
+export function clearMiniMaxKey(): void {
+  clearSecret("minimax");
 }

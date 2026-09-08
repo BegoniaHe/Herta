@@ -72,6 +72,18 @@ if (!existsSync(STAGE_DIR)) {
   }
 }
 
+// ── the clone's reference (ADR 0062) — a notice, never a failure ──────────
+const REFERENCE = resolve(
+  GUI_ROOT,
+  "../../data/voice-clone/herta-reference.wav",
+);
+if (!existsSync(REFERENCE)) {
+  console.error(
+    "[tts-payload] NOTICE: no data/voice-clone/herta-reference.wav — the MiniMax " +
+      "clone row will report the reference missing (scripts/minimax-voice-lab.mjs merge).",
+  );
+}
+
 if (problems.length === 0) {
   const runtime = (dirBytes(STAGE_DIR) / 1e6).toFixed(1);
   const addons = readdirSync(STAGE_DIR)

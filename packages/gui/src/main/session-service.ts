@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -39,6 +41,7 @@ import type {
   SessionSnapshot,
 } from "../renderer/ipc/bridge-types.js";
 import { DEVICE_SCENE_DEFAULT } from "../shared/device-scene.js";
+import type { VoiceEngine } from "./app-global-settings.js";
 import {
   type InteractionLang,
   type Locale,
@@ -58,15 +61,29 @@ import {
 } from "./app-settings.js";
 import {
   clearDeepSeekKey,
+  clearMiniMaxKey,
   getDeepSeekKeyStatus,
+  getMiniMaxKeyStatus,
   readDeepSeekKeyPlain,
+  readMiniMaxKeyPlain,
   setDeepSeekKey,
+  setMiniMaxKey,
 } from "./key-store.js";
 import {
   readWorkspaceBytesBounded,
   readWorkspaceFileBounded,
   resolveInsideWorkspace,
 } from "./read-workspace-file.js";
+import { MiniMaxError, probeHost } from "./tts/minimax-api.js";
+import {
+  createMiniMaxSynthesizer,
+  type MiniMaxSynthesizer,
+} from "./tts/minimax-synthesizer.js";
+import {
+  createMiniMaxVoiceService,
+  type MiniMaxVoiceService,
+} from "./tts/minimax-voice.js";
+import { createSwitchingSynthesizer } from "./tts/switching-synthesizer.js";
 import {
   createTtsSynthesizer,
   resolveSherpaEntry,
@@ -74,7 +91,9 @@ import {
 } from "./tts/synthesizer.js";
 import {
   resolveTtsModelRoots,
+  resolveVoiceCloneReference,
   TTS_BUNDLE_ID,
+  TTS_EFFECT,
   voiceModelStoreRoot,
 } from "./tts/tts-path.js";
 import {
@@ -495,6 +514,12 @@ export function createSessionService(
   // owns the bundle directory under userData and tells the synthesizer to
   // re-probe when a download lands or the bundle is removed.
   let voiceModel: VoiceModelService | null = null;
+  // The cloud voice (ADR 0062): which engine speaks (cached from settings,
+  // read at every stream's start), the MiniMax synthesizer and the clone it
+  // uses. The key itself stays in the secure store and is read per call.
+  let voiceEngine: VoiceEngine = "local";
+  let minimaxSynth: MiniMaxSynthesizer | null = null;
+  let minimaxVoice: MiniMaxVoiceService | null = null;
   const send: Send = (ch, payload) => {
     if (!wc.isDestroyed()) wc.send(ch, payload);
   };
@@ -1206,7 +1231,59 @@ export function createSessionService(
           totalBytes: TTS_ARCHIVE_BYTES,
           unpackedBytes: TTS_BUNDLE_BYTES,
         },
+        engine: voiceEngine,
+        minimax: {
+          key: getMiniMaxKeyStatus(),
+          voice: minimaxVoice?.state() ?? { phase: "absent" },
+        },
       };
+    });
+    // Settings → Voice → the engine and the cloud voice (ADR 0062).
+    handle(CMD.setVoiceEngine, async (_e, engine: VoiceEngine) => {
+      const next: VoiceEngine = engine === "minimax" ? "minimax" : "local";
+      voiceEngine = next;
+      await updateGlobalSettings(app.getPath("userData"), (s) => ({
+        ...s,
+        voiceEngine: next,
+      }));
+    });
+    handle(CMD.getMiniMaxKeyStatus, async () => getMiniMaxKeyStatus());
+    // The key is checked against the platform before it is stored — a key
+    // neither host accepts is refused, like a DeepSeek key that fails its
+    // auth check. A network failure stores it unverified.
+    handle(CMD.setMiniMaxKey, async (_e, key: string) => {
+      const trimmed = typeof key === "string" ? key.trim() : "";
+      if (trimmed.length === 0) {
+        return { ok: false as const, reason: "rejected" as const };
+      }
+      let unverified = false;
+      try {
+        await probeHost((url, init) => net.fetch(url, init), trimmed);
+      } catch (err) {
+        if (err instanceof MiniMaxError && err.reason === "invalid_key") {
+          return { ok: false as const, reason: "rejected" as const };
+        }
+        unverified = true;
+      }
+      const { encrypted } = setMiniMaxKey(trimmed);
+      return {
+        ok: true as const,
+        encrypted,
+        unverified,
+        status: getMiniMaxKeyStatus(),
+      };
+    });
+    handle(CMD.clearMiniMaxKey, async () => {
+      clearMiniMaxKey();
+      return { ok: true as const, status: getMiniMaxKeyStatus() };
+    });
+    handle(CMD.prepareMiniMaxVoice, async () => {
+      if (minimaxVoice === null) throw new Error("cloud voice not up");
+      return minimaxVoice.prepare();
+    });
+    handle(CMD.resetMiniMaxVoice, async () => {
+      if (minimaxVoice === null) throw new Error("cloud voice not up");
+      return minimaxVoice.reset();
     });
     handle(CMD.setRealtimeVoice, async (_e, enabled: boolean) => {
       const next = enabled === true;
@@ -1340,6 +1417,52 @@ export function createSessionService(
           },
         });
       }
+      // The cloud voice (ADR 0062) beside the local one, both behind one
+      // switching synthesizer the app-server sees. The engine and the clone
+      // record come from settings; the key from the secure store, per call.
+      const startupSettings = await readGlobalSettings(userDataPath);
+      voiceEngine = startupSettings.voiceEngine ?? "local";
+      const referencePath = resolveVoiceCloneReference({
+        isPackaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+        workspaceRoot,
+      });
+      const fetchLike = (url: string, init: Parameters<typeof net.fetch>[1]) =>
+        net.fetch(url, init);
+      minimaxVoice = createMiniMaxVoiceService({
+        fetch: fetchLike,
+        key: readMiniMaxKeyPlain,
+        readReference: async () => {
+          try {
+            return new Uint8Array(await readFile(referencePath));
+          } catch {
+            return null;
+          }
+        },
+        initial: startupSettings.minimaxVoice ?? null,
+        save: async (record) => {
+          await updateGlobalSettings(userDataPath, (s) => ({
+            ...s,
+            minimaxVoice: record ?? undefined,
+          }));
+        },
+        onChange: (state) => send(EVT.voiceMinimax, state),
+      });
+      const voiceService = minimaxVoice;
+      minimaxSynth = createMiniMaxSynthesizer({
+        fetch: fetchLike,
+        key: readMiniMaxKeyPlain,
+        voice: () => voiceService.voice(),
+        enabled: () => realtimeVoiceEnabled && voiceEngine === "minimax",
+        applyEffect: loadCommChannelEffect(),
+        onVoiceMissing: (id) => voiceService.markMissing(id),
+        onUsed: () => voiceService.stampUsed(),
+      });
+      const speech = createSwitchingSynthesizer({
+        engine: () => voiceEngine,
+        local: synthesizer,
+        minimax: minimaxSynth,
+      });
       const config = await buildConfig(
         workspaceRoot,
         homedir(),
@@ -1354,7 +1477,7 @@ export function createSessionService(
         // (T1.3 pattern — an env-settable base URL in production would
         // redirect the API key to an arbitrary host).
         app.isPackaged ? undefined : process.env.HERTA_DEEPSEEK_BASE_URL,
-        synthesizer,
+        speech,
       );
       host = createSessionHost(config);
       // Launch lands on the connect screen (接入黑塔空间站) rather than
@@ -1399,8 +1522,40 @@ export function createSessionService(
     // synthesizer on the next start.
     voiceModel?.cancel();
     voiceModel = null;
+    minimaxSynth?.dispose();
+    minimaxSynth = null;
+    minimaxVoice = null;
     synthesizer?.dispose();
     synthesizer = null;
+  }
+
+  /**
+   * The station-terminal treatment for the cloud voice, from the vendored
+   * `.cjs` emitted beside the main bundle (the worker requires the same file
+   * the same way). Absent — a dev tree before a build — the cloud voice
+   * plays dry rather than not at all.
+   */
+  function loadCommChannelEffect():
+    | ((samples: Float32Array, sampleRate: number) => Float32Array)
+    | undefined {
+    try {
+      const mod = createRequire(__filename)(
+        join(__dirname, "comm-channel-effect.cjs"),
+      ) as {
+        applyCommChannel: (
+          samples: Float32Array,
+          sampleRate: number,
+          options: { preset: string },
+        ) => Float32Array;
+      };
+      return (samples, sampleRate) =>
+        mod.applyCommChannel(samples, sampleRate, { preset: TTS_EFFECT });
+    } catch (err) {
+      console.warn(
+        `[herta-minimax] comm-channel effect unavailable, playing dry: ${String(err)}`,
+      );
+      return undefined;
+    }
   }
 
   return {

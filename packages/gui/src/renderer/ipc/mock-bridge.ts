@@ -23,6 +23,7 @@ import type {
   DreamConfig,
   HertaBridge,
   InteractionLanguageChoice,
+  MiniMaxVoiceState,
   ModelConfig,
   NavBlockedEvent,
   RealtimeVoiceState,
@@ -35,6 +36,7 @@ import type {
   StageImagesReply,
   ThemePref,
   UpdateState,
+  VoiceEngine,
   VoiceModelState,
 } from "./bridge-types.js";
 
@@ -121,9 +123,17 @@ export interface MockHertaBridgeOpts {
   /** Seed for getRealtimeVoice (Settings → Voice, ADR 0042). Default: on,
    *  with the assets present. Mutated by setRealtimeVoice so tests observe
    *  the round-trip. */
-  readonly realtimeVoiceResult?: Omit<RealtimeVoiceState, "model"> & {
+  readonly realtimeVoiceResult?: Omit<
+    RealtimeVoiceState,
+    "model" | "engine" | "minimax"
+  > & {
     readonly model?: VoiceModelState;
+    readonly engine?: VoiceEngine;
+    readonly minimax?: RealtimeVoiceState["minimax"];
   };
+  /** When true, setMiniMaxKey rejects every key (neither platform accepts
+   *  it) — `{ ok: false, reason: "rejected" }`, status unchanged. */
+  readonly rejectMiniMaxKey?: boolean;
   /** When true, setRealtimeVoice rejects — same seam as
    *  failSetInteractionLanguage, so the snap-back + error-note path is
    *  testable. */
@@ -191,6 +201,11 @@ export interface MockHertaBridge {
     downloadVoiceModel: number;
     cancelVoiceModelDownload: number;
     removeVoiceModel: number;
+    setVoiceEngine: VoiceEngine[];
+    setMiniMaxKey: string[];
+    clearMiniMaxKey: number;
+    prepareMiniMaxVoice: number;
+    resetMiniMaxVoice: number;
     windowMinimize: number;
     windowToggleMaximize: number;
     windowClose: number;
@@ -209,6 +224,8 @@ export interface MockHertaBridge {
   emitUpdate(e: UpdateState): void;
   /** The voice model's stream (ADR 0061) — a progress tick, a phase change. */
   emitVoiceModel(e: VoiceModelState): void;
+  /** The cloud clone's stream (ADR 0062). */
+  emitMiniMaxVoice(e: MiniMaxVoiceState): void;
   emitNavBlocked(e: NavBlockedEvent): void;
   /** The repository card's stream (ADR 0058). */
   emitRepo(e: RepoEvent): void;
@@ -282,6 +299,11 @@ export function createMockHertaBridge(
     downloadVoiceModel: 0,
     cancelVoiceModelDownload: 0,
     removeVoiceModel: 0,
+    setVoiceEngine: [],
+    setMiniMaxKey: [],
+    clearMiniMaxKey: 0,
+    prepareMiniMaxVoice: 0,
+    resetMiniMaxVoice: 0,
     windowMinimize: 0,
     windowToggleMaximize: 0,
     windowClose: 0,
@@ -331,7 +353,37 @@ export function createMockHertaBridge(
     totalBytes: 60_000_000,
     unpackedBytes: 116_000_000,
   };
-  let realtimeVoice: RealtimeVoiceState = { ...seededVoice, model: voiceModel };
+  // The cloud engine (ADR 0062): the masked MiniMax key and the clone,
+  // seeded per test, mutated by the key/engine/prepare/reset calls, pushed
+  // to onMiniMaxVoice subscribers like main does.
+  let minimaxKey: DeepSeekKeyStatus = seededVoice.minimax?.key ?? {
+    set: false,
+    hint: null,
+    encrypted: false,
+  };
+  let minimaxVoice: MiniMaxVoiceState = seededVoice.minimax?.voice ?? {
+    phase: "absent",
+  };
+  let voiceEngine: VoiceEngine = seededVoice.engine ?? "local";
+  const minimaxCbs = new Set<(e: MiniMaxVoiceState) => void>();
+  const pushMiniMax = (next: MiniMaxVoiceState): void => {
+    minimaxVoice = next;
+    for (const cb of minimaxCbs) cb(next);
+  };
+  const voiceView = (): RealtimeVoiceState => ({
+    ...seededVoice,
+    bundle: realtimeVoice.bundle,
+    enabled: realtimeVoice.enabled,
+    model: voiceModel,
+    engine: voiceEngine,
+    minimax: { key: minimaxKey, voice: minimaxVoice },
+  });
+  let realtimeVoice: RealtimeVoiceState = {
+    ...seededVoice,
+    model: voiceModel,
+    engine: voiceEngine,
+    minimax: { key: minimaxKey, voice: minimaxVoice },
+  };
   const voiceModelCbs = new Set<(e: VoiceModelState) => void>();
   const pushVoiceModel = (next: VoiceModelState): void => {
     voiceModel = next;
@@ -614,7 +666,7 @@ export function createMockHertaBridge(
     },
     getRealtimeVoice: async () => {
       calls.getRealtimeVoice += 1;
-      return realtimeVoice;
+      return voiceView();
     },
     setRealtimeVoice: async (enabled) => {
       calls.setRealtimeVoice.push(enabled);
@@ -641,6 +693,55 @@ export function createMockHertaBridge(
       return voiceModel;
     },
     onVoiceModel: (cb) => sub(voiceModelCbs, cb),
+    setVoiceEngine: async (engine) => {
+      calls.setVoiceEngine.push(engine);
+      voiceEngine = engine;
+    },
+    getMiniMaxKeyStatus: async () => minimaxKey,
+    setMiniMaxKey: async (key) => {
+      calls.setMiniMaxKey.push(key);
+      if (opts.rejectMiniMaxKey === true) {
+        return { ok: false, reason: "rejected" };
+      }
+      const trimmed = key.trim();
+      minimaxKey = {
+        set: true,
+        hint: trimmed.slice(-4),
+        encrypted: true,
+      };
+      return {
+        ok: true,
+        encrypted: true,
+        unverified: false,
+        status: minimaxKey,
+      };
+    },
+    clearMiniMaxKey: async () => {
+      calls.clearMiniMaxKey += 1;
+      minimaxKey = { set: false, hint: null, encrypted: false };
+      return { ok: true, status: minimaxKey };
+    },
+    prepareMiniMaxVoice: async () => {
+      calls.prepareMiniMaxVoice += 1;
+      if (!minimaxKey.set) {
+        pushMiniMax({ phase: "failed", error: "no_key" });
+        return minimaxVoice;
+      }
+      pushMiniMax({ phase: "preparing" });
+      pushMiniMax({
+        phase: "ready",
+        voiceId: "herta_mock000001",
+        host: "https://api.minimaxi.com",
+        clonedAt: "2026-09-08T10:00:00.000Z",
+      });
+      return minimaxVoice;
+    },
+    resetMiniMaxVoice: async () => {
+      calls.resetMiniMaxVoice += 1;
+      pushMiniMax({ phase: "absent" });
+      return minimaxVoice;
+    },
+    onMiniMaxVoice: (cb) => sub(minimaxCbs, cb),
     onWorkspace: (cb) => sub(workspaceCbs, cb),
     onRepo: (cb) => sub(repoCbs, cb),
     refreshRepo: async () => {
@@ -698,6 +799,7 @@ export function createMockHertaBridge(
       for (const cb of updateCbs) cb(e);
     },
     emitVoiceModel: (e) => pushVoiceModel(e),
+    emitMiniMaxVoice: (e) => pushMiniMax(e),
     emitNavBlocked: (e) => {
       for (const cb of navBlockedCbs) cb(e);
     },

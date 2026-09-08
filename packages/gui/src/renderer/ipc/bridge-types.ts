@@ -159,6 +159,47 @@ export interface RealtimeVoiceState {
    *  while this says `absent` in DEV (the workspace's own copy); a packaged
    *  app has no bundle but the downloaded one. */
   readonly model: VoiceModelState;
+  /** Which engine speaks (ADR 0062): the local model, or the MiniMax clone
+   *  on the user's own key. */
+  readonly engine: VoiceEngine;
+  /** The cloud engine's facts: the masked key status and the clone. */
+  readonly minimax: MiniMaxState;
+}
+
+export type VoiceEngine = "local" | "minimax";
+
+export type MiniMaxVoicePhase = "absent" | "preparing" | "ready" | "failed";
+
+/** Why the clone could not be made — a key the row localizes (mirrors
+ *  `MiniMaxVoiceError` in main). */
+export type MiniMaxVoiceError =
+  | "no_key"
+  | "invalid_key"
+  | "auth"
+  | "rate"
+  | "quota"
+  | "sensitive"
+  | "voice_missing"
+  | "invalid"
+  | "network"
+  | "http"
+  | "cancelled"
+  | "other"
+  | "reference";
+
+/** The MiniMax clone this install owns (ADR 0062). `preparing` covers the
+ *  platform probe, the reference upload and the clone call. */
+export interface MiniMaxVoiceState {
+  readonly phase: MiniMaxVoicePhase;
+  readonly error?: MiniMaxVoiceError;
+  readonly voiceId?: string;
+  readonly host?: string;
+  readonly clonedAt?: string;
+}
+
+export interface MiniMaxState {
+  readonly key: DeepSeekKeyStatus;
+  readonly voice: MiniMaxVoiceState;
 }
 
 export type VoiceModelPhase = "absent" | "downloading" | "ready" | "failed";
@@ -595,6 +636,33 @@ export interface HertaBridge {
   removeVoiceModel?(): Promise<VoiceModelState>;
   /** The model's live state — every phase change and throttled progress. */
   onVoiceModel?(cb: (e: VoiceModelState) => void): () => void;
+  /** Choose which engine speaks (ADR 0062). LIVE: read at the next stream's
+   *  start; an utterance already speaking keeps its engine. */
+  setVoiceEngine?(engine: VoiceEngine): Promise<void>;
+  /** The MiniMax key, stored like the DeepSeek one: masked status only. */
+  getMiniMaxKeyStatus?(): Promise<DeepSeekKeyStatus>;
+  /** Check the key against the platform and store it; `rejected` when
+   *  neither platform accepts it, `unverified` when the check could not
+   *  run and the key was stored anyway. */
+  setMiniMaxKey?(key: string): Promise<
+    | {
+        readonly ok: true;
+        readonly encrypted: boolean;
+        readonly unverified: boolean;
+        readonly status: DeepSeekKeyStatus;
+      }
+    | { readonly ok: false; readonly reason: "rejected" }
+  >;
+  clearMiniMaxKey?(): Promise<{
+    readonly ok: true;
+    readonly status: DeepSeekKeyStatus;
+  }>;
+  /** Make the clone from the shipped reference; resolves with the state it
+   *  ended in. Progress rides `onMiniMaxVoice`. */
+  prepareMiniMaxVoice?(): Promise<MiniMaxVoiceState>;
+  /** Forget the clone (the platform's copy expires on its own). */
+  resetMiniMaxVoice?(): Promise<MiniMaxVoiceState>;
+  onMiniMaxVoice?(cb: (e: MiniMaxVoiceState) => void): () => void;
   /** Read the masked DeepSeek key status (Settings → DeepSeek). */
   getDeepSeekKeyStatus(): Promise<DeepSeekKeyStatus>;
   /** Validate a DeepSeek key (a cheap token-free auth check), and on success

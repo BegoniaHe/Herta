@@ -106,6 +106,46 @@ export const en = {
   "voice.modelFailed.verify": "The model files failed verification; discarded.",
   "voice.modelFailed.disk": "Writing to this machine failed; check disk space.",
   "voice.modelFailed.cancelled": "Cancelled.",
+  "voice.engine": "Voice engine",
+  "voice.engineDesc":
+    "The local model synthesizes on this machine; MiniMax clones her voice in the cloud on your own key.",
+  "voice.engine.local": "Local model",
+  "voice.engine.minimax": "MiniMax cloud",
+  "voice.minimaxNote":
+    "Every sentence is sent to MiniMax to synthesize and billed per character to your account; a voice idle for 7 days is deleted by the platform and re-cloned automatically.",
+  "voice.minimaxKey": "MiniMax API key",
+  "voice.minimaxKeyDesc":
+    "Stored encrypted on this device; get one from the MiniMax platform.",
+  "voice.minimaxKeyAria": "MiniMax API key",
+  "voice.minimaxRejected":
+    "MiniMax did not accept that key — check it and try again.",
+  "voice.minimaxUnverified":
+    "Saved, but MiniMax could not be reached to check it — check your connection if she stays silent.",
+  "voice.clone": "Clone voice",
+  "voice.cloneAbsent":
+    "Upload the bundled reference recording and clone her voice in your account.",
+  "voice.clonePreparing": "Uploading and cloning…",
+  "voice.cloneReady": "Ready; cloned on {date}.",
+  "voice.clonePrepare": "Prepare",
+  "voice.cloneRedo": "Re-clone",
+  "voice.cloneRetry": "Retry",
+  "voice.cloneFailed.no_key": "Enter a MiniMax key first.",
+  "voice.cloneFailed.invalid_key": "MiniMax did not accept the key.",
+  "voice.cloneFailed.auth":
+    "MiniMax refused the request; check the key and the account.",
+  "voice.cloneFailed.rate": "Too many requests; try again shortly.",
+  "voice.cloneFailed.quota": "The account is out of balance.",
+  "voice.cloneFailed.sensitive":
+    "The reference recording failed the platform's content check.",
+  "voice.cloneFailed.voice_missing": "The voice on the platform has expired.",
+  "voice.cloneFailed.invalid":
+    "The platform did not accept the request's parameters.",
+  "voice.cloneFailed.network":
+    "MiniMax could not be reached; check the network and retry.",
+  "voice.cloneFailed.http": "MiniMax returned an unexpected response.",
+  "voice.cloneFailed.cancelled": "Cancelled.",
+  "voice.cloneFailed.other": "Cloning failed; try again later.",
+  "voice.cloneFailed.reference": "This install lacks the reference recording.",
   "voice.mute": "Mute voice",
   "voice.muteDesc": "Silence all of Herta's voice.",
   "voice.volume": "Volume",

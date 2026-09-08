@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   resolveTtsModelRoots,
+  resolveVoiceCloneReference,
   ttsBundleComplete,
   voiceModelStoreRoot,
 } from "./tts-path.js";
@@ -68,6 +69,25 @@ describe("resolveTtsModelRoots (ADR 0061)", () => {
     expect(voiceModelStoreRoot("/home/u/AppData/herta")).toBe(
       join("/home/u/AppData/herta", "tts"),
     );
+  });
+});
+
+describe("resolveVoiceCloneReference (ADR 0062)", () => {
+  it("packaged: <resources>/voice-clone; dev: the workspace's data/voice-clone", () => {
+    expect(
+      resolveVoiceCloneReference({
+        isPackaged: true,
+        resourcesPath: "/app/resources",
+        workspaceRoot: "/ws",
+      }),
+    ).toBe(join("/app/resources", "voice-clone", "herta-reference.wav"));
+    expect(
+      resolveVoiceCloneReference({
+        isPackaged: false,
+        resourcesPath: "/app/resources",
+        workspaceRoot: "/ws",
+      }),
+    ).toBe(join("/ws", "data", "voice-clone", "herta-reference.wav"));
   });
 });
 

@@ -55,6 +55,15 @@ extraResources:
     to: voice
     filter:
       - "**/*.opus"
+  # The recording the MiniMax clone is made from (ADR 0062): the game's
+  # archive lines merged into one 24 kHz WAV (~8 MB), read by the main
+  # process when the user asks for the cloud voice. Its own tree, not under
+  # voice/: the clip payload check treats a .wav there as an untranscoded
+  # master.
+  - from: ../../data/voice-clone
+    to: voice-clone
+    filter:
+      - "herta-reference.wav"
   # The licence text ships with the binary (audit BL26). `files:` above is
   # app-dir relative, so the root LICENSE can never be picked up there — and
   # it is the file that carries both the MIT grant AND the scope note saying

@@ -55,6 +55,12 @@ export const CMD = {
   downloadVoiceModel: "voice:downloadModel",
   cancelVoiceModelDownload: "voice:cancelModelDownload",
   removeVoiceModel: "voice:removeModel",
+  setVoiceEngine: "voice:setEngine",
+  getMiniMaxKeyStatus: "settings:getMiniMaxKeyStatus",
+  setMiniMaxKey: "settings:setMiniMaxKey",
+  clearMiniMaxKey: "settings:clearMiniMaxKey",
+  prepareMiniMaxVoice: "voice:prepareMiniMax",
+  resetMiniMaxVoice: "voice:resetMiniMax",
   getDeepSeekKeyStatus: "settings:getDeepSeekKeyStatus",
   setDeepSeekKey: "settings:setDeepSeekKey",
   clearDeepSeekKey: "settings:clearDeepSeekKey",
@@ -81,4 +87,5 @@ export const EVT = {
   windowMaximized: "window:maximized",
   update: "update:state",
   voiceModel: "voice:model",
+  voiceMinimax: "voice:minimax",
 } as const;

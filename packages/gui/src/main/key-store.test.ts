@@ -18,9 +18,13 @@ vi.mock("electron", () => ({
 
 import {
   clearDeepSeekKey,
+  clearMiniMaxKey,
   getDeepSeekKeyStatus,
+  getMiniMaxKeyStatus,
   readDeepSeekKeyPlain,
+  readMiniMaxKeyPlain,
   setDeepSeekKey,
+  setMiniMaxKey,
 } from "./key-store.js";
 
 describe("key-store", () => {
@@ -92,5 +96,24 @@ describe("key-store", () => {
     setDeepSeekKey("sk-enc-second99");
     expect(readDeepSeekKeyPlain()).toBe("sk-enc-second99");
     expect(getDeepSeekKeyStatus().encrypted).toBe(true);
+  });
+
+  // ── the MiniMax key (ADR 0062) ────────────────────────────────────────────
+
+  it("the MiniMax key has its own store: setting one never touches the other", () => {
+    setDeepSeekKey("sk-deepseek-1111");
+    const r = setMiniMaxKey("sk-api-minimax-2222");
+    expect(r.encrypted).toBe(true);
+    expect(readMiniMaxKeyPlain()).toBe("sk-api-minimax-2222");
+    expect(getMiniMaxKeyStatus()).toEqual({
+      set: true,
+      hint: "2222",
+      encrypted: true,
+    });
+    expect(readDeepSeekKeyPlain()).toBe("sk-deepseek-1111");
+    clearMiniMaxKey();
+    expect(readMiniMaxKeyPlain()).toBeNull();
+    expect(getMiniMaxKeyStatus().set).toBe(false);
+    expect(readDeepSeekKeyPlain()).toBe("sk-deepseek-1111");
   });
 });

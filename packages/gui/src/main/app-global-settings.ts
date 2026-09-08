@@ -3,6 +3,20 @@ import { dirname, join } from "node:path";
 
 export type Locale = "zh" | "en";
 export type ThemePref = "light" | "dark" | "system";
+/** Which engine speaks Herta's replies (ADR 0062): the local Kokoro model
+ *  (ADR 0042/0061, the default) or a MiniMax cloud clone on the user's own
+ *  key. */
+export type VoiceEngine = "local" | "minimax";
+
+/** The cloned MiniMax voice this install owns (ADR 0062). `host` is the
+ *  platform the key authenticated on (international or China); `lastUsedAt`
+ *  lets the app re-clone before MiniMax's 7-day idle deletion bites. */
+export interface MiniMaxVoiceRecord {
+  readonly voiceId: string;
+  readonly host: string;
+  readonly clonedAt: string;
+  readonly lastUsedAt?: string;
+}
 /** Interaction language — the language Herta is PROMPTED in (slice 4).
  *  Distinct from `Locale` (the UI chrome language); any combination works. */
 export type InteractionLang = "zh" | "en";
@@ -57,6 +71,11 @@ export interface GlobalSettings {
    * below it silences playback but the sentences are still synthesized.
    */
   readonly realtimeVoice?: boolean;
+  /** Which engine speaks (ADR 0062). ABSENT = local. Live: the switching
+   *  synthesizer reads it at every speech stream's start. */
+  readonly voiceEngine?: VoiceEngine;
+  /** The MiniMax clone this install made, or absent when none / forgotten. */
+  readonly minimaxVoice?: MiniMaxVoiceRecord;
 }
 
 export interface WindowStateSnapshot {
@@ -90,6 +109,8 @@ export async function readGlobalSettings(
       interactionLanguage,
       deviceScene,
       realtimeVoice,
+      voiceEngine,
+      minimaxVoice,
     } = parsed as {
       locale?: unknown;
       closeToTray?: unknown;
@@ -99,8 +120,20 @@ export async function readGlobalSettings(
       interactionLanguage?: unknown;
       deviceScene?: unknown;
       realtimeVoice?: unknown;
+      voiceEngine?: unknown;
+      minimaxVoice?: unknown;
     };
     if (deviceScene !== undefined && typeof deviceScene !== "boolean") {
+      return {};
+    }
+    if (
+      voiceEngine !== undefined &&
+      voiceEngine !== "local" &&
+      voiceEngine !== "minimax"
+    ) {
+      return {};
+    }
+    if (minimaxVoice !== undefined && !isValidMiniMaxVoice(minimaxVoice)) {
       return {};
     }
     if (locale !== undefined && locale !== "zh" && locale !== "en") return {};
@@ -135,6 +168,19 @@ export async function readGlobalSettings(
   } catch {
     return {};
   }
+}
+
+function isValidMiniMaxVoice(v: unknown): v is MiniMaxVoiceRecord {
+  if (typeof v !== "object" || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return (
+    typeof r.voiceId === "string" &&
+    r.voiceId.length > 0 &&
+    typeof r.host === "string" &&
+    r.host.startsWith("https://") &&
+    typeof r.clonedAt === "string" &&
+    (r.lastUsedAt === undefined || typeof r.lastUsedAt === "string")
+  );
 }
 
 function isValidWindowState(v: unknown): v is WindowStateSnapshot {

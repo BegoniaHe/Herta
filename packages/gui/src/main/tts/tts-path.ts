@@ -59,6 +59,26 @@ export function voiceModelStoreRoot(userDataPath: string): string {
   return join(userDataPath, "tts");
 }
 
+/**
+ * The reference recording the MiniMax clone is made from (ADR 0062): the
+ * game's archive lines merged into one 24 kHz WAV, shipped beside the voice
+ * clips as `<resources>/voice-clone/` (its own tree — the clip payload check
+ * would read a `.wav` under `voice/` as an untranscoded master), dev reads
+ * `data/voice-clone/`.
+ */
+export const VOICE_CLONE_REFERENCE = "herta-reference.wav";
+
+export function resolveVoiceCloneReference(opts: {
+  readonly isPackaged: boolean;
+  readonly resourcesPath: string;
+  readonly workspaceRoot: string;
+}): string {
+  const base = opts.isPackaged
+    ? join(opts.resourcesPath, "voice-clone")
+    : join(opts.workspaceRoot, "data", "voice-clone");
+  return join(base, VOICE_CLONE_REFERENCE);
+}
+
 /** The files the Kokoro runtime actually opens (the `frontend/dict/` cppjieba
  *  tree is NOT among them — verified by smoke synthesis). `available()`
  *  reports false unless every one is present, so a partial/absent bundle

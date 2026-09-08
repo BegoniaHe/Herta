@@ -287,6 +287,114 @@ describe("VoiceSettings", () => {
     ).toBe(true);
   });
 
+  // ── The engine and the cloud voice (ADR 0062) ────────────────────────────
+
+  it("the engine picker is on the first frame; choosing MiniMax swaps the model row for the key and clone rows", async () => {
+    const { findByText, getByRole, queryByText, mock } = setup();
+    await findByText("Installed, about 116 MB on disk.");
+    const picker = getByRole("button", { name: "Voice engine" });
+    fireEvent.click(picker);
+    fireEvent.click(getByRole("option", { name: "MiniMax cloud" }));
+    expect(mock.calls.setVoiceEngine).toEqual(["minimax"]);
+    expect(queryByText("Voice model")).toBeNull();
+    expect(await findByText("MiniMax API key")).toBeTruthy();
+    expect(await findByText("Clone voice")).toBeTruthy();
+    expect(queryByText("No key set")).toBeTruthy();
+    // No key yet: the clone cannot be prepared, and she cannot speak.
+    expect(
+      (getByRole("button", { name: "Prepare" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      (getByRole("switch", { name: "Real-time voice" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+
+  it("saving a key, then Prepare: absent → preparing → ready, and the toggle comes alive", async () => {
+    const { findByText, getByRole, getByLabelText, mock } = setup({
+      realtimeVoiceResult: {
+        enabled: true,
+        bundle: true,
+        runtime: true,
+        failed: false,
+        engine: "minimax",
+      },
+    });
+    await findByText("Clone voice");
+    fireEvent.change(getByLabelText("MiniMax API key"), {
+      target: { value: "sk-api-secret-9876" },
+    });
+    fireEvent.click(getByRole("button", { name: "Save" }));
+    expect(mock.calls.setMiniMaxKey).toEqual(["sk-api-secret-9876"]);
+    expect(await findByText("Connected · …9876")).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: "Prepare" }));
+    expect(mock.calls.prepareMiniMaxVoice).toBe(1);
+    expect(await findByText("Ready; cloned on 2026-09-08.")).toBeTruthy();
+    const toggle = getByRole("switch", {
+      name: "Real-time voice",
+    }) as HTMLButtonElement;
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    // Re-clone resets then prepares again.
+    fireEvent.click(getByRole("button", { name: "Re-clone" }));
+    await findByText("Ready; cloned on 2026-09-08.");
+    expect(mock.calls.resetMiniMaxVoice).toBe(1);
+    expect(mock.calls.prepareMiniMaxVoice).toBe(2);
+  });
+
+  it("a rejected key says so and stores nothing", async () => {
+    const { findByText, getByRole, getByLabelText, mock } = setup({
+      rejectMiniMaxKey: true,
+      realtimeVoiceResult: {
+        enabled: true,
+        bundle: true,
+        runtime: true,
+        failed: false,
+        engine: "minimax",
+      },
+    });
+    await findByText("Clone voice");
+    fireEvent.change(getByLabelText("MiniMax API key"), {
+      target: { value: "bad" },
+    });
+    fireEvent.click(getByRole("button", { name: "Save" }));
+    expect(
+      await findByText(
+        "MiniMax did not accept that key — check it and try again.",
+      ),
+    ).toBeTruthy();
+    expect(mock.calls.setMiniMaxKey).toEqual(["bad"]);
+    expect(await findByText("No key set")).toBeTruthy();
+  });
+
+  it("a failed clone names its reason and offers Retry; a push updates the row", async () => {
+    const { findByText, getByRole, mock } = setup({
+      realtimeVoiceResult: {
+        enabled: true,
+        bundle: true,
+        runtime: true,
+        failed: false,
+        engine: "minimax",
+        minimax: {
+          key: { set: true, hint: "1234", encrypted: true },
+          voice: { phase: "failed", error: "sensitive" },
+        },
+      },
+    });
+    expect(
+      await findByText(
+        "The reference recording failed the platform's content check.",
+      ),
+    ).toBeTruthy();
+    expect(
+      (getByRole("button", { name: "Retry" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    act(() => {
+      mock.emitMiniMaxVoice({ phase: "preparing" });
+    });
+    expect(await findByText("Uploading and cloning…")).toBeTruthy();
+  });
+
   it("dev: the workspace's own copy shows as such, with nothing to download", async () => {
     const { findByText, queryByRole } = setup({
       realtimeVoiceResult: {

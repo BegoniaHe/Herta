@@ -7111,6 +7111,22 @@ button.commit-view__path:hover {
   background: var(--banzhuan-led);
   transition: width 0.25s ease-out;
 }
+/* An action inside a note's sentence (ADR 0062: the clone's retry) — the
+   note's own type, underlined, no chrome. */
+.settings-note-action {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--banzhuan-led);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.settings-note-action:focus-visible {
+  outline: 2px solid var(--banzhuan-led);
+  outline-offset: 2px;
+}
 .settings-toggle:focus-visible {
   outline: 2px solid var(--banzhuan-led);
   outline-offset: 2px;

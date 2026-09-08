@@ -78,15 +78,13 @@ export const en = {
   "session.group.previous7Days": "Previous 7 Days",
   "session.group.older": "Older",
   "voice.realtime": "Real-time voice",
-  "voice.realtimeDesc":
-    "Herta speaks her replies, and the text keeps pace with the audio. Synthesis costs CPU; changes apply immediately.",
+  "voice.realtimeDesc": "Open the terminal microphone.",
   "voice.realtimeMissing":
     "This install lacks the voice runtime — she can only type for now.",
   "voice.realtimeFailed":
     "The voice process failed repeatedly; it's off for this run. Restart Herta to retry.",
   "voice.model": "Voice model",
-  "voice.modelAbsent":
-    "About {size} MB; she can speak once it's on this machine.",
+  "voice.modelAbsent": "About {size} MB; available once downloaded.",
   "voice.modelDev": "Using the model in the workspace's data/tts.",
   "voice.modelDownload": "Download",
   "voice.modelDownloading": "Downloaded {received} / {total} MB",
@@ -108,26 +106,18 @@ export const en = {
   "voice.modelFailed.cancelled": "Cancelled.",
   "voice.engine": "Voice engine",
   "voice.engineDesc":
-    "The local model synthesizes on this machine; MiniMax clones her voice in the cloud on your own key.",
+    "The downloaded local model, or the cloud model that sounds better.",
   "voice.engine.local": "Local model",
   "voice.engine.minimax": "MiniMax cloud",
-  "voice.minimaxNote":
-    "Every sentence is sent to MiniMax to synthesize and billed per character to your account; a voice idle for 7 days is deleted by the platform and re-cloned automatically.",
   "voice.minimaxKey": "MiniMax API key",
   "voice.minimaxKeyDesc":
-    "Stored encrypted on this device; get one from the MiniMax platform.",
+    "Stored encrypted on this device; get one at platform.minimaxi.com.",
   "voice.minimaxKeyAria": "MiniMax API key",
   "voice.minimaxRejected":
     "MiniMax did not accept that key — check it and try again.",
   "voice.minimaxUnverified":
     "Saved, but MiniMax could not be reached to check it — check your connection if she stays silent.",
-  "voice.clone": "Clone voice",
-  "voice.cloneAbsent":
-    "Upload the bundled reference recording and clone her voice in your account.",
-  "voice.clonePreparing": "Uploading and cloning…",
-  "voice.cloneReady": "Ready; cloned on {date}.",
-  "voice.clonePrepare": "Prepare",
-  "voice.cloneRedo": "Re-clone",
+  "voice.clonePreparing": "Preparing her voice…",
   "voice.cloneRetry": "Retry",
   "voice.cloneFailed.no_key": "Enter a MiniMax key first.",
   "voice.cloneFailed.invalid_key": "MiniMax did not accept the key.",

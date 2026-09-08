@@ -1246,6 +1246,11 @@ export function createSessionService(
         ...s,
         voiceEngine: next,
       }));
+      // The clone is machinery, not a step (owner 2026-09-08): choosing
+      // the cloud with a key in the store makes it now, unasked.
+      if (next === "minimax" && readMiniMaxKeyPlain() !== null) {
+        void minimaxVoice?.prepare();
+      }
     });
     handle(CMD.getMiniMaxKeyStatus, async () => getMiniMaxKeyStatus());
     // The key is checked against the platform before it is stored — a key
@@ -1266,6 +1271,15 @@ export function createSessionService(
         unverified = true;
       }
       const { encrypted } = setMiniMaxKey(trimmed);
+      // A new key may be another account: forget the clone the old one
+      // owned, and make a fresh one now if the cloud engine is chosen.
+      const svc = minimaxVoice;
+      if (svc !== null) {
+        void svc.reset().then(() => {
+          if (voiceEngine === "minimax") return svc.prepare();
+          return undefined;
+        });
+      }
       return {
         ok: true as const,
         encrypted,
@@ -1449,6 +1463,16 @@ export function createSessionService(
         onChange: (state) => send(EVT.voiceMinimax, state),
       });
       const voiceService = minimaxVoice;
+      // An install that chose the cloud and has a key but no clone yet (a
+      // reset, a settings file from before the clone existed): make it at
+      // start, unasked — the user never operates the clone.
+      if (
+        voiceEngine === "minimax" &&
+        readMiniMaxKeyPlain() !== null &&
+        voiceService.voice() === null
+      ) {
+        void voiceService.prepare();
+      }
       minimaxSynth = createMiniMaxSynthesizer({
         fetch: fetchLike,
         key: readMiniMaxKeyPlain,

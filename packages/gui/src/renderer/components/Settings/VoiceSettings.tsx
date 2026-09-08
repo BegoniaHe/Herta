@@ -72,9 +72,17 @@ function cloneFailureKey(reason: MiniMaxVoiceError) {
   }
 }
 
-/** The Voice settings section — real-time voice (ADR 0042), its engine
- *  (ADR 0062: the local model with its download, ADR 0061, or the MiniMax
- *  clone on the user's key), master mute, master volume. */
+/**
+ * The Voice settings section — the real-time voice (ADR 0042), its engine
+ * (ADR 0062: the local model with its download, ADR 0061, or the MiniMax
+ * clone on the user's key), master mute, master volume.
+ *
+ * The clone itself is machinery the user never operates (owner,
+ * 2026-09-08): main makes it when the engine is MiniMax and a key exists,
+ * and remakes it when the platform drops it. This pane shows only what
+ * needs a hand — the key — plus a line while the voice is being prepared
+ * and a line, with a retry, when that failed.
+ */
 export function VoiceSettings(): JSX.Element {
   const t = useT();
   const { bridge } = useHertaBridge();
@@ -89,9 +97,7 @@ export function VoiceSettings(): JSX.Element {
     bridge.setRealtimeVoice !== undefined;
   const modelSupported = bridge.downloadVoiceModel !== undefined;
   const engineSupported =
-    bridge.setVoiceEngine !== undefined &&
-    bridge.setMiniMaxKey !== undefined &&
-    bridge.prepareMiniMaxVoice !== undefined;
+    bridge.setVoiceEngine !== undefined && bridge.setMiniMaxKey !== undefined;
   const [rt, setRt] = useState<RealtimeVoiceState | null>(null);
   const [rtFailed, setRtFailed] = useState(false);
   const [model, setModel] = useState<VoiceModelState | null>(null);
@@ -290,72 +296,6 @@ export function VoiceSettings(): JSX.Element {
     }
   })();
 
-  const cloneRow = ((): {
-    readonly description: string;
-    readonly control: JSX.Element | null;
-  } => {
-    const keySet = mmKey?.set ?? false;
-    const prepare = (
-      <button
-        type="button"
-        className="settings-btn settings-btn--primary"
-        disabled={!keySet || clone === null}
-        onClick={() => void bridge.prepareMiniMaxVoice?.()}
-      >
-        {t("voice.clonePrepare")}
-      </button>
-    );
-    if (clone === null) return { description: "—", control: prepare };
-    switch (clone.phase) {
-      case "preparing":
-        return {
-          description: t("voice.clonePreparing"),
-          control: (
-            <button type="button" className="settings-btn" disabled>
-              {t("voice.clonePrepare")}
-            </button>
-          ),
-        };
-      case "ready":
-        return {
-          description: t("voice.cloneReady", {
-            date: (clone.clonedAt ?? "").slice(0, 10),
-          }),
-          control: (
-            <button
-              type="button"
-              className="settings-btn"
-              disabled={!keySet}
-              onClick={() => {
-                const reset = bridge.resetMiniMaxVoice;
-                const again = bridge.prepareMiniMaxVoice;
-                if (reset === undefined || again === undefined) return;
-                void reset().then(() => again());
-              }}
-            >
-              {t("voice.cloneRedo")}
-            </button>
-          ),
-        };
-      case "failed":
-        return {
-          description: t(cloneFailureKey(clone.error ?? "other")),
-          control: (
-            <button
-              type="button"
-              className="settings-btn settings-btn--primary"
-              disabled={!keySet}
-              onClick={() => void bridge.prepareMiniMaxVoice?.()}
-            >
-              {t("voice.cloneRetry")}
-            </button>
-          ),
-        };
-      default:
-        return { description: t("voice.cloneAbsent"), control: prepare };
-    }
-  })();
-
   const progress =
     model !== null && model.phase === "downloading" && model.totalBytes > 0
       ? Math.min(
@@ -433,7 +373,6 @@ export function VoiceSettings(): JSX.Element {
           )}
           {engineSupported && engine === "minimax" && (
             <>
-              <p className="settings-note">{t("voice.minimaxNote")}</p>
               <SettingRow
                 title={t("voice.minimaxKey")}
                 description={t("voice.minimaxKeyDesc")}
@@ -516,11 +455,28 @@ export function VoiceSettings(): JSX.Element {
               {mmKey?.set && !mmKey.encrypted && (
                 <p className="settings-note">{t("deepseek.unencrypted")}</p>
               )}
-              <SettingRow
-                title={t("voice.clone")}
-                description={cloneRow.description}
-                control={cloneRow.control}
-              />
+              {/* The clone is main's business; only its two visible moments
+                  reach the pane — being made, and having failed. */}
+              {mmKey?.set && clone?.phase === "preparing" && (
+                <p className="settings-note" data-testid="voice-clone-note">
+                  {t("voice.clonePreparing")}
+                </p>
+              )}
+              {mmKey?.set && clone?.phase === "failed" && (
+                <p
+                  className="settings-note is-error"
+                  data-testid="voice-clone-note"
+                >
+                  {t(cloneFailureKey(clone.error ?? "other"))}{" "}
+                  <button
+                    type="button"
+                    className="settings-note-action"
+                    onClick={() => void bridge.prepareMiniMaxVoice?.()}
+                  >
+                    {t("voice.cloneRetry")}
+                  </button>
+                </p>
+              )}
             </>
           )}
         </>

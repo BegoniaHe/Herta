@@ -370,6 +370,21 @@ export function createMockHertaBridge(
     minimaxVoice = next;
     for (const cb of minimaxCbs) cb(next);
   };
+  /** The clone as main makes it: preparing, then ready — or failed without
+   *  a key. */
+  const mockPrepare = (): void => {
+    if (!minimaxKey.set) {
+      pushMiniMax({ phase: "failed", error: "no_key" });
+      return;
+    }
+    pushMiniMax({ phase: "preparing" });
+    pushMiniMax({
+      phase: "ready",
+      voiceId: "herta_mock000001",
+      host: "https://api.minimaxi.com",
+      clonedAt: "2026-09-08T10:00:00.000Z",
+    });
+  };
   const voiceView = (): RealtimeVoiceState => ({
     ...seededVoice,
     bundle: realtimeVoice.bundle,
@@ -696,6 +711,14 @@ export function createMockHertaBridge(
     setVoiceEngine: async (engine) => {
       calls.setVoiceEngine.push(engine);
       voiceEngine = engine;
+      // Main makes the clone unasked when the cloud is chosen with a key.
+      if (
+        engine === "minimax" &&
+        minimaxKey.set &&
+        minimaxVoice.phase !== "ready"
+      ) {
+        mockPrepare();
+      }
     },
     getMiniMaxKeyStatus: async () => minimaxKey,
     setMiniMaxKey: async (key) => {
@@ -709,6 +732,10 @@ export function createMockHertaBridge(
         hint: trimmed.slice(-4),
         encrypted: true,
       };
+      // Main forgets the old clone and, with the cloud chosen, makes a new
+      // one right away.
+      pushMiniMax({ phase: "absent" });
+      if (voiceEngine === "minimax") mockPrepare();
       return {
         ok: true,
         encrypted: true,
@@ -723,17 +750,7 @@ export function createMockHertaBridge(
     },
     prepareMiniMaxVoice: async () => {
       calls.prepareMiniMaxVoice += 1;
-      if (!minimaxKey.set) {
-        pushMiniMax({ phase: "failed", error: "no_key" });
-        return minimaxVoice;
-      }
-      pushMiniMax({ phase: "preparing" });
-      pushMiniMax({
-        phase: "ready",
-        voiceId: "herta_mock000001",
-        host: "https://api.minimaxi.com",
-        clonedAt: "2026-09-08T10:00:00.000Z",
-      });
+      mockPrepare();
       return minimaxVoice;
     },
     resetMiniMaxVoice: async () => {

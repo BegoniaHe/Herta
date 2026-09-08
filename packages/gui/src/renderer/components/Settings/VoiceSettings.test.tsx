@@ -194,7 +194,7 @@ describe("VoiceSettings", () => {
     });
     expect(
       await findByText(
-        "About 116 MB; she can speak once it's on this machine.",
+        "About 116 MB; available once downloaded.",
       ),
     ).toBeTruthy();
     const toggle = getByLabelText("Real-time voice") as HTMLButtonElement;
@@ -218,7 +218,7 @@ describe("VoiceSettings", () => {
         model: ABSENT,
       },
     });
-    await findByText("About 116 MB; she can speak once it's on this machine.");
+    await findByText("About 116 MB; available once downloaded.");
     act(() => {
       mock.emitVoiceModel({
         ...ABSENT,
@@ -233,7 +233,7 @@ describe("VoiceSettings", () => {
     expect(mock.calls.cancelVoiceModelDownload).toBe(1);
     expect(
       await findByText(
-        "About 116 MB; she can speak once it's on this machine.",
+        "About 116 MB; available once downloaded.",
       ),
     ).toBeTruthy();
   });
@@ -263,7 +263,7 @@ describe("VoiceSettings", () => {
     expect(mock.calls.removeVoiceModel).toBe(1);
     expect(
       await findByText(
-        "About 116 MB; she can speak once it's on this machine.",
+        "About 116 MB; available once downloaded.",
       ),
     ).toBeTruthy();
     expect(
@@ -281,7 +281,7 @@ describe("VoiceSettings", () => {
         model: ABSENT,
       },
     });
-    await findByText("About 116 MB; she can speak once it's on this machine.");
+    await findByText("About 116 MB; available once downloaded.");
     expect(
       (getByRole("button", { name: "Download" }) as HTMLButtonElement).disabled,
     ).toBe(true);
@@ -289,8 +289,8 @@ describe("VoiceSettings", () => {
 
   // ── The engine and the cloud voice (ADR 0062) ────────────────────────────
 
-  it("the engine picker is on the first frame; choosing MiniMax swaps the model row for the key and clone rows", async () => {
-    const { findByText, getByRole, queryByText, mock } = setup();
+  it("the engine picker is on the first frame; choosing MiniMax swaps the model row for the key row — no clone row, no note", async () => {
+    const { findByText, getByRole, queryByText, queryByTestId, mock } = setup();
     await findByText("Installed, about 116 MB on disk.");
     const picker = getByRole("button", { name: "Voice engine" });
     fireEvent.click(picker);
@@ -298,48 +298,44 @@ describe("VoiceSettings", () => {
     expect(mock.calls.setVoiceEngine).toEqual(["minimax"]);
     expect(queryByText("Voice model")).toBeNull();
     expect(await findByText("MiniMax API key")).toBeTruthy();
-    expect(await findByText("Clone voice")).toBeTruthy();
     expect(queryByText("No key set")).toBeTruthy();
-    // No key yet: the clone cannot be prepared, and she cannot speak.
-    expect(
-      (getByRole("button", { name: "Prepare" }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    // The clone is main's business: nothing to prepare, nothing to read
+    // about billing. Without a key she cannot speak.
+    expect(queryByText("Clone voice")).toBeNull();
+    expect(queryByText(/billed per character/)).toBeNull();
+    expect(queryByTestId("voice-clone-note")).toBeNull();
     expect(
       (getByRole("switch", { name: "Real-time voice" }) as HTMLButtonElement)
         .disabled,
     ).toBe(true);
   });
 
-  it("saving a key, then Prepare: absent → preparing → ready, and the toggle comes alive", async () => {
-    const { findByText, getByRole, getByLabelText, mock } = setup({
-      realtimeVoiceResult: {
-        enabled: true,
-        bundle: true,
-        runtime: true,
-        failed: false,
-        engine: "minimax",
-      },
-    });
-    await findByText("Clone voice");
+  it("saving a key is enough: the clone is made unasked and the toggle comes alive", async () => {
+    const { findByText, getByRole, getByLabelText, queryByTestId, mock } =
+      setup({
+        realtimeVoiceResult: {
+          enabled: true,
+          bundle: true,
+          runtime: true,
+          failed: false,
+          engine: "minimax",
+        },
+      });
+    await findByText("MiniMax API key");
     fireEvent.change(getByLabelText("MiniMax API key"), {
       target: { value: "sk-api-secret-9876" },
     });
     fireEvent.click(getByRole("button", { name: "Save" }));
     expect(mock.calls.setMiniMaxKey).toEqual(["sk-api-secret-9876"]);
     expect(await findByText("Connected · …9876")).toBeTruthy();
-    fireEvent.click(getByRole("button", { name: "Prepare" }));
-    expect(mock.calls.prepareMiniMaxVoice).toBe(1);
-    expect(await findByText("Ready; cloned on 2026-09-08.")).toBeTruthy();
+    // No Prepare button was ever offered; the clone landed on its own.
+    expect(mock.calls.prepareMiniMaxVoice).toBe(0);
     const toggle = getByRole("switch", {
       name: "Real-time voice",
     }) as HTMLButtonElement;
     expect(toggle.disabled).toBe(false);
     expect(toggle.getAttribute("aria-checked")).toBe("true");
-    // Re-clone resets then prepares again.
-    fireEvent.click(getByRole("button", { name: "Re-clone" }));
-    await findByText("Ready; cloned on 2026-09-08.");
-    expect(mock.calls.resetMiniMaxVoice).toBe(1);
-    expect(mock.calls.prepareMiniMaxVoice).toBe(2);
+    expect(queryByTestId("voice-clone-note")).toBeNull();
   });
 
   it("a rejected key says so and stores nothing", async () => {
@@ -353,7 +349,7 @@ describe("VoiceSettings", () => {
         engine: "minimax",
       },
     });
-    await findByText("Clone voice");
+    await findByText("MiniMax API key");
     fireEvent.change(getByLabelText("MiniMax API key"), {
       target: { value: "bad" },
     });
@@ -367,7 +363,7 @@ describe("VoiceSettings", () => {
     expect(await findByText("No key set")).toBeTruthy();
   });
 
-  it("a failed clone names its reason and offers Retry; a push updates the row", async () => {
+  it("a failed clone shows one line with its reason and a Retry; while it remakes, one line says so", async () => {
     const { findByText, getByRole, mock } = setup({
       realtimeVoiceResult: {
         enabled: true,
@@ -386,13 +382,12 @@ describe("VoiceSettings", () => {
         "The reference recording failed the platform's content check.",
       ),
     ).toBeTruthy();
-    expect(
-      (getByRole("button", { name: "Retry" }) as HTMLButtonElement).disabled,
-    ).toBe(false);
+    fireEvent.click(getByRole("button", { name: "Retry" }));
+    expect(mock.calls.prepareMiniMaxVoice).toBe(1);
     act(() => {
       mock.emitMiniMaxVoice({ phase: "preparing" });
     });
-    expect(await findByText("Uploading and cloning…")).toBeTruthy();
+    expect(await findByText("Preparing her voice…")).toBeTruthy();
   });
 
   it("dev: the workspace's own copy shows as such, with nothing to download", async () => {

@@ -57,7 +57,9 @@ const ENTRIES = [
 ];
 
 describe("extractTar (round-trips the packer's output)", () => {
-  it("restores every file byte for byte, across odd chunk boundaries", { timeout: 20_000 }, async () => {
+  it("restores every file byte for byte, across odd chunk boundaries", {
+    timeout: 20_000,
+  }, async () => {
     const tar = packTar(ENTRIES);
     // Sizes that put a boundary inside a header, inside a file, exactly on
     // a block, and nowhere (one chunk). Not 1: thousands of awaits per run

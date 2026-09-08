@@ -193,9 +193,7 @@ describe("VoiceSettings", () => {
       },
     });
     expect(
-      await findByText(
-        "About 116 MB; available once downloaded.",
-      ),
+      await findByText("About 116 MB; available once downloaded."),
     ).toBeTruthy();
     const toggle = getByLabelText("Real-time voice") as HTMLButtonElement;
     expect(toggle.disabled).toBe(true);
@@ -232,9 +230,7 @@ describe("VoiceSettings", () => {
     fireEvent.click(getByRole("button", { name: "Cancel" }));
     expect(mock.calls.cancelVoiceModelDownload).toBe(1);
     expect(
-      await findByText(
-        "About 116 MB; available once downloaded.",
-      ),
+      await findByText("About 116 MB; available once downloaded."),
     ).toBeTruthy();
   });
 
@@ -262,9 +258,7 @@ describe("VoiceSettings", () => {
     expect(vi.mocked(stopAllVoice)).toHaveBeenCalled();
     expect(mock.calls.removeVoiceModel).toBe(1);
     expect(
-      await findByText(
-        "About 116 MB; available once downloaded.",
-      ),
+      await findByText("About 116 MB; available once downloaded."),
     ).toBeTruthy();
     expect(
       (getByLabelText("Real-time voice") as HTMLButtonElement).disabled,

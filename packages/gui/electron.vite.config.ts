@@ -74,7 +74,11 @@ function bundleManifest(section: "main" | "preload" | "renderer"): Plugin {
  * silently never starts.
  */
 function ttsWorker(): Plugin {
-  const files = ["tts-worker.cjs", "comm-channel-effect.cjs"];
+  const files = [
+    "tts-worker.cjs",
+    "comm-channel-effect.cjs",
+    "sherpa-punctuation.cjs",
+  ];
   return {
     name: "herta-tts-worker",
     generateBundle() {

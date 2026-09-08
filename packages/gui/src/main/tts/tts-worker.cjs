@@ -25,11 +25,19 @@ const path = require("node:path");
 const { COMM_CHANNEL_PRESETS, applyCommChannel } = require(
   path.join(__dirname, "comm-channel-effect.cjs"),
 );
+// Punctuation placeholders that keep a Chinese sentence ONE model sequence
+// inside sherpa (see sherpa-punctuation.cjs). Used only when the bundle's
+// lexicon carries the placeholder rows; otherwise the text goes as is.
+const { lexiconHasPlaceholders, toSherpaText } = require(
+  path.join(__dirname, "sherpa-punctuation.cjs"),
+);
 
 let tts = null;
 let sherpa = null;
 /** Comm-channel preset applied to every unit, or "none" for the dry voice. */
 let effect = "none";
+/** Whether the loaded lexicon understands the punctuation placeholders. */
+let placeholders = false;
 /** FIFO of { id, utteranceId, seq, text }. */
 const queue = [];
 /** Utterance ids whose queued (not-yet-started) work should be dropped. */
@@ -129,7 +137,10 @@ async function drain() {
         // so that synthesis has a thread of its own to block, and the loop
         // yields between units below so `cancel` still lands promptly.
         const audio = tts.generate({
-          text: req.text,
+          text:
+            placeholders && req.lang === "zh"
+              ? toSherpaText(req.text)
+              : req.text,
           generationConfig: gc,
           // Electron's V8 refuses EXTERNAL ArrayBuffers ("External buffers
           // are not allowed", live run 2026-08-22) — the addon's default.
@@ -188,8 +199,19 @@ process.parentPort.on("message", (evt) => {
       effect = wanted;
       sherpa = require(data.sherpaPath);
       process.chdir(data.modelRoot);
+      placeholders = lexiconHasPlaceholders(
+        require("node:fs").readFileSync(
+          path.join(data.modelRoot, "frontend", "lexicon-zh.txt"),
+          "utf8",
+        ),
+      );
       tts = createTts(data.modelRoot, data.modelFile);
-      reply({ type: "ready", sampleRate: tts.sampleRate, effect });
+      reply({
+        type: "ready",
+        sampleRate: tts.sampleRate,
+        effect,
+        placeholders,
+      });
     } catch (err) {
       reply({
         type: "initError",
@@ -214,6 +236,7 @@ process.parentPort.on("message", (evt) => {
       utteranceId: data.utteranceId,
       seq: data.seq,
       text: data.text,
+      lang: data.lang,
     });
     void drain();
     return;

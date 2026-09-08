@@ -35,6 +35,7 @@ import type {
   StageImagesReply,
   ThemePref,
   UpdateState,
+  VoiceModelState,
 } from "./bridge-types.js";
 
 export interface MockHertaBridgeOpts {
@@ -120,7 +121,9 @@ export interface MockHertaBridgeOpts {
   /** Seed for getRealtimeVoice (Settings → Voice, ADR 0042). Default: on,
    *  with the assets present. Mutated by setRealtimeVoice so tests observe
    *  the round-trip. */
-  readonly realtimeVoiceResult?: RealtimeVoiceState;
+  readonly realtimeVoiceResult?: Omit<RealtimeVoiceState, "model"> & {
+    readonly model?: VoiceModelState;
+  };
   /** When true, setRealtimeVoice rejects — same seam as
    *  failSetInteractionLanguage, so the snap-back + error-note path is
    *  testable. */
@@ -185,6 +188,9 @@ export interface MockHertaBridge {
     setInteractionLanguage: InteractionLanguageChoice[];
     getRealtimeVoice: number;
     setRealtimeVoice: boolean[];
+    downloadVoiceModel: number;
+    cancelVoiceModelDownload: number;
+    removeVoiceModel: number;
     windowMinimize: number;
     windowToggleMaximize: number;
     windowClose: number;
@@ -201,6 +207,8 @@ export interface MockHertaBridge {
   emitWorkspace(e: WorkspaceEvent): void;
   emitVoice(e: VoiceCueEvent): void;
   emitUpdate(e: UpdateState): void;
+  /** The voice model's stream (ADR 0061) — a progress tick, a phase change. */
+  emitVoiceModel(e: VoiceModelState): void;
   emitNavBlocked(e: NavBlockedEvent): void;
   /** The repository card's stream (ADR 0058). */
   emitRepo(e: RepoEvent): void;
@@ -271,6 +279,9 @@ export function createMockHertaBridge(
     setInteractionLanguage: [],
     getRealtimeVoice: 0,
     setRealtimeVoice: [],
+    downloadVoiceModel: 0,
+    cancelVoiceModelDownload: 0,
+    removeVoiceModel: 0,
     windowMinimize: 0,
     windowToggleMaximize: 0,
     windowClose: 0,
@@ -305,11 +316,31 @@ export function createMockHertaBridge(
 
   // Live real-time-voice state (ADR 0042), seeded then mutated by
   // setRealtimeVoice. The default is the healthy install: on, assets present.
-  let realtimeVoice: RealtimeVoiceState = opts.realtimeVoiceResult ?? {
+  const seededVoice = opts.realtimeVoiceResult ?? {
     enabled: true,
     bundle: true,
     runtime: true,
     failed: false,
+  };
+  // The downloadable model (ADR 0061): ready by default (the healthy
+  // install); seeded per test, mutated by download/cancel/remove, pushed to
+  // onVoiceModel subscribers like main does.
+  let voiceModel: VoiceModelState = seededVoice.model ?? {
+    phase: seededVoice.bundle ? "ready" : "absent",
+    receivedBytes: 0,
+    totalBytes: 60_000_000,
+    unpackedBytes: 116_000_000,
+  };
+  let realtimeVoice: RealtimeVoiceState = { ...seededVoice, model: voiceModel };
+  const voiceModelCbs = new Set<(e: VoiceModelState) => void>();
+  const pushVoiceModel = (next: VoiceModelState): void => {
+    voiceModel = next;
+    realtimeVoice = {
+      ...realtimeVoice,
+      bundle: next.phase === "ready",
+      model: next,
+    };
+    for (const cb of voiceModelCbs) cb(next);
   };
 
   function sub<T>(set: Set<(e: T) => void>, cb: (e: T) => void): () => void {
@@ -590,6 +621,26 @@ export function createMockHertaBridge(
       if (opts.failSetRealtimeVoice === true) throw new Error("write failed");
       realtimeVoice = { ...realtimeVoice, enabled };
     },
+    downloadVoiceModel: async () => {
+      calls.downloadVoiceModel += 1;
+      pushVoiceModel({ ...voiceModel, phase: "downloading", receivedBytes: 0 });
+      pushVoiceModel({
+        ...voiceModel,
+        phase: "ready",
+        receivedBytes: voiceModel.totalBytes,
+      });
+      return voiceModel;
+    },
+    cancelVoiceModelDownload: async () => {
+      calls.cancelVoiceModelDownload += 1;
+      pushVoiceModel({ ...voiceModel, phase: "absent", receivedBytes: 0 });
+    },
+    removeVoiceModel: async () => {
+      calls.removeVoiceModel += 1;
+      pushVoiceModel({ ...voiceModel, phase: "absent", receivedBytes: 0 });
+      return voiceModel;
+    },
+    onVoiceModel: (cb) => sub(voiceModelCbs, cb),
     onWorkspace: (cb) => sub(workspaceCbs, cb),
     onRepo: (cb) => sub(repoCbs, cb),
     refreshRepo: async () => {
@@ -646,6 +697,7 @@ export function createMockHertaBridge(
     emitUpdate: (e) => {
       for (const cb of updateCbs) cb(e);
     },
+    emitVoiceModel: (e) => pushVoiceModel(e),
     emitNavBlocked: (e) => {
       for (const cb of navBlockedCbs) cb(e);
     },

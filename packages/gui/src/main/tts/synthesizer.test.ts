@@ -82,7 +82,7 @@ function makeBundle(root: string): string {
 function setup(over: { enabled?: () => boolean } = {}) {
   const modelRoot = makeBundle(tmp());
   const synth = createTtsSynthesizer({
-    modelRoot,
+    modelRoots: [modelRoot],
     workerPath: "/fake/tts-worker.cjs",
     sherpaPath: "/fake/sherpa-onnx.js",
     enabled: over.enabled ?? (() => true),
@@ -121,7 +121,7 @@ describe("createTtsSynthesizer", () => {
 
     let on = true;
     const toggled = createTtsSynthesizer({
-      modelRoot: makeBundle(tmp()),
+      modelRoots: [makeBundle(tmp())],
       workerPath: "/fake/w.cjs",
       sherpaPath: "/fake/s.js",
       enabled: () => on,
@@ -133,7 +133,7 @@ describe("createTtsSynthesizer", () => {
 
     // No runtime, and no bundle: both unavailable, neither throws.
     const noRuntime = createTtsSynthesizer({
-      modelRoot: makeBundle(tmp()),
+      modelRoots: [makeBundle(tmp())],
       workerPath: "/fake/w.cjs",
       sherpaPath: null,
       enabled: () => true,
@@ -143,7 +143,7 @@ describe("createTtsSynthesizer", () => {
     expect(noRuntime.status().runtime).toBe(false);
 
     const noBundle = createTtsSynthesizer({
-      modelRoot: join(tmp(), "absent"),
+      modelRoots: [join(tmp(), "absent")],
       workerPath: "/fake/w.cjs",
       sherpaPath: "/fake/s.js",
       enabled: () => true,
@@ -151,6 +151,77 @@ describe("createTtsSynthesizer", () => {
     });
     expect(noBundle.available()).toBe(false);
     expect(noBundle.status().bundle).toBe(false);
+    expect(noBundle.status().modelRoot).toBeNull();
+  });
+
+  // ── The bundle as a download (ADR 0061) ──────────────────────────────────
+
+  it("the first COMPLETE root wins: a downloaded copy shadows the dev workspace's", () => {
+    const downloaded = join(tmp(), "absent-yet");
+    const dev = makeBundle(tmp());
+    const synth = createTtsSynthesizer({
+      modelRoots: [downloaded, dev],
+      workerPath: "/fake/w.cjs",
+      sherpaPath: "/fake/s.js",
+      enabled: () => true,
+      log: () => undefined,
+    });
+    expect(synth.status().modelRoot).toBe(dev);
+    makeBundle(downloaded);
+    expect(synth.refreshBundle()).toBe(true);
+    expect(synth.status().modelRoot).toBe(downloaded);
+  });
+
+  it("refreshBundle turns available() on after a download lands, and off after a removal", async () => {
+    const root = join(tmp(), "store", "herta-best-e72");
+    const synth = createTtsSynthesizer({
+      modelRoots: [root],
+      workerPath: "/fake/w.cjs",
+      sherpaPath: "/fake/s.js",
+      enabled: () => true,
+      log: () => undefined,
+    });
+    expect(synth.available()).toBe(false);
+    await expect(synth.synthesize(REQ)).resolves.toBeNull();
+    expect(children).toHaveLength(0); // no bundle, no fork
+
+    makeBundle(root);
+    expect(synth.refreshBundle()).toBe(true);
+    expect(synth.available()).toBe(true);
+    const p = synth.synthesize(REQ);
+    const child = ready();
+    expect((child.sent[0] as { modelRoot: string }).modelRoot).toBe(root);
+    await Promise.resolve();
+    rmSync(root, { recursive: true, force: true });
+    // The worker on the vanished root is stopped; nothing answers from it.
+    expect(synth.refreshBundle()).toBe(false);
+    expect(child.killed()).toBe(true);
+    await expect(p).resolves.toBeNull();
+    expect(synth.available()).toBe(false);
+  });
+
+  it("stopWorker kills the worker without disposing or spending a restart", async () => {
+    const { synth } = setup();
+    const p = synth.synthesize(REQ);
+    const child = ready();
+    await Promise.resolve();
+    synth.stopWorker();
+    expect(child.killed()).toBe(true);
+    await expect(p).resolves.toBeNull();
+    expect(synth.available()).toBe(true);
+    expect(synth.status().running).toBe(false);
+    // Still available, and the next request forks afresh — any number of
+    // times, since a deliberate stop is not a failure.
+    for (let i = 0; i < 4; i += 1) {
+      const p2 = synth.synthesize({ ...REQ, seq: i + 1 });
+      const fresh = ready();
+      await Promise.resolve();
+      synth.stopWorker();
+      expect(fresh.killed()).toBe(true);
+      await expect(p2).resolves.toBeNull();
+    }
+    expect(synth.available()).toBe(true);
+    expect(synth.status().failed).toBe(false);
   });
 
   it("starts the worker lazily on the first request and reuses it after", async () => {

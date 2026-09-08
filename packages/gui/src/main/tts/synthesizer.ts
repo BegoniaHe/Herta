@@ -75,8 +75,11 @@ interface Pending {
 }
 
 export interface TtsSynthesizerOpts {
-  /** Absolute path to the model bundle (see `resolveTtsModelRoot`). */
-  readonly modelRoot: string;
+  /** Candidate bundle roots in priority order (see `resolveTtsModelRoots`);
+   *  the first COMPLETE one is used, re-probed on `refreshBundle()` because
+   *  the bundle is a download now (ADR 0061) and can appear or go while the
+   *  app runs. */
+  readonly modelRoots: readonly string[];
   /** The ONNX graph inside the bundle. Default `TTS_MODEL_FILE`. */
   readonly modelFile?: string;
   /** Comm-channel preset the worker applies to every unit (`"none"` for
@@ -98,6 +101,14 @@ export interface TtsSynthesizerOpts {
 export interface TtsSynthesizer extends SpeechSynthesizer {
   /** Stop the worker and reject everything in flight. Idempotent. */
   dispose(): void;
+  /** Stop the worker (rejecting everything in flight) WITHOUT disposing: the
+   *  next request forks a fresh one. For a bundle about to be deleted — the
+   *  worker holds its files open — and not counted as a restart. */
+  stopWorker(): void;
+  /** Re-probe the candidate roots (ADR 0061: after a download landed or a
+   *  bundle was removed). Returns whether a complete bundle is present; a
+   *  worker running on a root that changed is stopped. */
+  refreshBundle(): boolean;
   /** Diagnostics for the Settings pane / tests. */
   status(): {
     readonly bundle: boolean;
@@ -105,17 +116,26 @@ export interface TtsSynthesizer extends SpeechSynthesizer {
     readonly enabled: boolean;
     readonly failed: boolean;
     readonly running: boolean;
+    /** The root in use, or null without a complete bundle. */
+    readonly modelRoot: string | null;
   };
 }
 
 export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
   const log =
     opts.log ?? ((line: string) => console.log(`[herta-tts] ${line}`));
-  // Probed ONCE at construction: a missing bundle is a packaging/asset fact,
-  // not something that changes while the app runs.
-  const bundleOk = ttsBundleComplete(opts.modelRoot);
+  // Probed at construction and again on `refreshBundle()`: the bundle is a
+  // DOWNLOAD (ADR 0061), so it can appear — or be removed — while the app
+  // runs. The first complete root wins (the downloaded copy before the dev
+  // workspace's).
+  const firstComplete = (): string | null =>
+    opts.modelRoots.find((r) => ttsBundleComplete(r)) ?? null;
+  let activeRoot = firstComplete();
+  let bundleOk = activeRoot !== null;
   const runtimeOk = opts.sherpaPath !== null;
-  if (!bundleOk) log(`no model bundle at ${opts.modelRoot} — voice disabled`);
+  if (!bundleOk) {
+    log(`no model bundle under ${opts.modelRoots.join(" | ")} — voice off`);
+  }
   if (!runtimeOk) log("sherpa-onnx-node not found — voice disabled");
 
   let worker: UtilityProcess | null = null;
@@ -159,6 +179,10 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
 
   const start = (): Promise<void> => {
     if (ready !== null) return ready;
+    const modelRoot = activeRoot;
+    if (modelRoot === null) {
+      return Promise.reject(new Error("no complete model bundle"));
+    }
     ready = new Promise<void>((resolve, reject) => {
       let settled = false;
       const child = utilityProcess.fork(opts.workerPath, [], {
@@ -231,7 +255,7 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
       });
       child.postMessage({
         type: "init",
-        modelRoot: opts.modelRoot,
+        modelRoot,
         modelFile: opts.modelFile ?? TTS_MODEL_FILE,
         effect: opts.effect ?? TTS_EFFECT,
         sherpaPath: opts.sherpaPath,
@@ -318,6 +342,24 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
       teardown();
     },
 
+    stopWorker(): void {
+      rejectAll();
+      teardown();
+    },
+
+    refreshBundle(): boolean {
+      const next = firstComplete();
+      if (next !== activeRoot && worker !== null) {
+        // The worker holds the OLD root's files open; a bundle that moved
+        // or went away must not keep answering from a stale process.
+        rejectAll();
+        teardown();
+      }
+      activeRoot = next;
+      bundleOk = next !== null;
+      return bundleOk;
+    },
+
     status() {
       return {
         bundle: bundleOk,
@@ -325,6 +367,7 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
         enabled: opts.enabled(),
         failed,
         running: worker !== null,
+        modelRoot: activeRoot,
       };
     },
   };

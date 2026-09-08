@@ -7094,6 +7094,23 @@ button.commit-view__path:hover {
   opacity: 0.45;
   cursor: default;
 }
+/* The voice model's download progress (ADR 0061): a hairline under the
+   model row, LED-filled like the volume slider's track. It exists only
+   while a download runs — the settings pane's motion rule (2026-07-27):
+   motion means the live thing. */
+.settings-progress {
+  height: 3px;
+  margin: -6px 0 10px;
+  border-radius: 2px;
+  background: var(--panel-line);
+  overflow: hidden;
+}
+.settings-progress__fill {
+  display: block;
+  height: 100%;
+  background: var(--banzhuan-led);
+  transition: width 0.25s ease-out;
+}
 .settings-toggle:focus-visible {
   outline: 2px solid var(--banzhuan-led);
   outline-offset: 2px;

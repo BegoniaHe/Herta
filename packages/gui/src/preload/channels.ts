@@ -52,6 +52,9 @@ export const CMD = {
   setDeviceScene: "settings:setDeviceScene",
   getRealtimeVoice: "settings:getRealtimeVoice",
   setRealtimeVoice: "settings:setRealtimeVoice",
+  downloadVoiceModel: "voice:downloadModel",
+  cancelVoiceModelDownload: "voice:cancelModelDownload",
+  removeVoiceModel: "voice:removeModel",
   getDeepSeekKeyStatus: "settings:getDeepSeekKeyStatus",
   setDeepSeekKey: "settings:setDeepSeekKey",
   clearDeepSeekKey: "settings:clearDeepSeekKey",
@@ -77,4 +80,5 @@ export const EVT = {
   repo: "session:repo",
   windowMaximized: "window:maximized",
   update: "update:state",
+  voiceModel: "voice:model",
 } as const;

@@ -155,6 +155,38 @@ export interface RealtimeVoiceState {
   readonly runtime: boolean;
   /** The worker failed repeatedly; voice is off until the app restarts. */
   readonly failed: boolean;
+  /** The downloadable model's state (ADR 0061). `bundle` above may be true
+   *  while this says `absent` in DEV (the workspace's own copy); a packaged
+   *  app has no bundle but the downloaded one. */
+  readonly model: VoiceModelState;
+}
+
+export type VoiceModelPhase = "absent" | "downloading" | "ready" | "failed";
+
+/** Why a model download did not end in a bundle — a key the row
+ *  localizes (mirrors `VoiceModelFailure` in main's voice-model.ts). */
+export type VoiceModelFailure =
+  | "network"
+  | "http"
+  | "size"
+  | "hash"
+  | "archive"
+  | "verify"
+  | "disk"
+  | "cancelled";
+
+/**
+ * The voice model as a download (ADR 0061): not in the installer, fetched
+ * on the user's say-so from Settings → Voice, verified against the hash the
+ * app carries. `totalBytes` is the archive; `unpackedBytes` what it becomes
+ * on disk (the number the row quotes).
+ */
+export interface VoiceModelState {
+  readonly phase: VoiceModelPhase;
+  readonly receivedBytes: number;
+  readonly totalBytes: number;
+  readonly unpackedBytes: number;
+  readonly error?: VoiceModelFailure;
 }
 
 /** The UI chrome language (Settings → Language). */
@@ -552,6 +584,17 @@ export interface HertaBridge {
   /** Persist the real-time-voice toggle. LIVE: the synthesizer reads it at
    *  every speech stream's start, so it applies to the next reply. */
   setRealtimeVoice?(enabled: boolean): Promise<void>;
+  /** Start downloading the voice model (ADR 0061); resolves with the state
+   *  the download ENDED in (ready, failed, or absent after a cancel).
+   *  Progress streams through `onVoiceModel`. OPTIONAL — the website demo
+   *  and fakes omit the set, and the model row hides with it. */
+  downloadVoiceModel?(): Promise<VoiceModelState>;
+  /** Abort a running download; the partial file is discarded. */
+  cancelVoiceModelDownload?(): Promise<void>;
+  /** Delete the downloaded model (stops the voice worker first). */
+  removeVoiceModel?(): Promise<VoiceModelState>;
+  /** The model's live state — every phase change and throttled progress. */
+  onVoiceModel?(cb: (e: VoiceModelState) => void): () => void;
   /** Read the masked DeepSeek key status (Settings → DeepSeek). */
   getDeepSeekKeyStatus(): Promise<DeepSeekKeyStatus>;
   /** Validate a DeepSeek key (a cheap token-free auth check), and on success

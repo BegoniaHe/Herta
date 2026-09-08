@@ -32,22 +32,31 @@ export const TTS_MODEL_FILE = "model.int8-81mb.onnx";
 export const TTS_EFFECT = "terminal_textured";
 
 /**
- * On-disk root of the neural-voice model bundle (ADR 0042). Mirrors
- * `resolveVoiceRoot`: a packaged app serves the bundled copy from its
- * resources dir (electron-builder `extraResources` copies `data/tts` →
- * `<resources>/tts`), dev reads straight from the workspace. Pure (the
- * caller injects `app.isPackaged` / `process.resourcesPath`) so it
+ * Where the neural-voice model bundle may live (ADR 0061), in priority
+ * order: the DOWNLOADED copy under the app's user-data directory
+ * (`<userData>/tts/<bundle id>` — Settings → Voice puts it there), then, in
+ * dev only, the workspace's own `data/tts/<bundle id>` (the lab's install).
+ * The installer carries no bundle (the owner's call on its size,
+ * 2026-09-08), so a packaged app has exactly one place to look. Pure (the
+ * caller injects `app.getPath("userData")` / `app.isPackaged`) so it
  * unit-tests without electron.
  */
-export function resolveTtsModelRoot(opts: {
+export function resolveTtsModelRoots(opts: {
+  readonly userDataPath: string;
   readonly isPackaged: boolean;
-  readonly resourcesPath: string;
   readonly workspaceRoot: string;
-}): string {
-  const base = opts.isPackaged
-    ? join(opts.resourcesPath, "tts")
-    : join(opts.workspaceRoot, "data", "tts");
-  return join(base, TTS_BUNDLE_ID);
+}): readonly string[] {
+  const roots = [join(voiceModelStoreRoot(opts.userDataPath), TTS_BUNDLE_ID)];
+  if (!opts.isPackaged) {
+    roots.push(join(opts.workspaceRoot, "data", "tts", TTS_BUNDLE_ID));
+  }
+  return roots;
+}
+
+/** The directory the download installs bundles into: `<userData>/tts`. A
+ *  bundle sits in `<store>/<bundle id>`; the download's temp files beside it. */
+export function voiceModelStoreRoot(userDataPath: string): string {
+  return join(userDataPath, "tts");
 }
 
 /** The files the Kokoro runtime actually opens (the `frontend/dict/` cppjieba

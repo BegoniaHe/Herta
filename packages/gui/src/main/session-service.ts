@@ -27,6 +27,7 @@ import {
   type BrowserWindow,
   dialog,
   ipcMain,
+  net,
   shell,
   type WebContents,
 } from "electron";
@@ -71,7 +72,22 @@ import {
   resolveSherpaEntry,
   type TtsSynthesizer,
 } from "./tts/synthesizer.js";
-import { resolveTtsModelRoot } from "./tts/tts-path.js";
+import {
+  resolveTtsModelRoots,
+  TTS_BUNDLE_ID,
+  voiceModelStoreRoot,
+} from "./tts/tts-path.js";
+import {
+  TTS_ARCHIVE_BYTES,
+  TTS_ARCHIVE_SHA256,
+  TTS_ARCHIVE_URL,
+  TTS_ARCHIVE_URL_ENV,
+  TTS_BUNDLE_BYTES,
+} from "./tts/tts-release.js";
+import {
+  createVoiceModelService,
+  type VoiceModelService,
+} from "./tts/voice-model.js";
 import { resolveVoiceRoot } from "./voice-path.js";
 
 type Send = (channel: string, payload: unknown) => void;
@@ -475,6 +491,10 @@ export function createSessionService(
   // toggle applies to the very next reply.
   let synthesizer: TtsSynthesizer | null = null;
   let realtimeVoiceEnabled = true;
+  // The model as a download (ADR 0061): built beside the synthesizer, it
+  // owns the bundle directory under userData and tells the synthesizer to
+  // re-probe when a download lands or the bundle is removed.
+  let voiceModel: VoiceModelService | null = null;
   const send: Send = (ch, payload) => {
     if (!wc.isDestroyed()) wc.send(ch, payload);
   };
@@ -1180,6 +1200,12 @@ export function createSessionService(
         bundle: st?.bundle ?? false,
         runtime: st?.runtime ?? false,
         failed: st?.failed ?? false,
+        model: voiceModel?.state() ?? {
+          phase: "absent",
+          receivedBytes: 0,
+          totalBytes: TTS_ARCHIVE_BYTES,
+          unpackedBytes: TTS_BUNDLE_BYTES,
+        },
       };
     });
     handle(CMD.setRealtimeVoice, async (_e, enabled: boolean) => {
@@ -1189,6 +1215,19 @@ export function createSessionService(
         ...s,
         realtimeVoice: next,
       }));
+    });
+    // Settings → Voice → the model row (ADR 0061). Download resolves with
+    // the state the download ENDED in; progress rides EVT.voiceModel.
+    handle(CMD.downloadVoiceModel, async () => {
+      if (voiceModel === null) throw new Error("voice model service not up");
+      return voiceModel.download();
+    });
+    handle(CMD.cancelVoiceModelDownload, async () => {
+      voiceModel?.cancel();
+    });
+    handle(CMD.removeVoiceModel, async () => {
+      if (voiceModel === null) throw new Error("voice model service not up");
+      return voiceModel.remove();
     });
     // Settings → DeepSeek key. The secure store is the single source of truth;
     // `host.setDeepSeekKey` mirrors it to the running session's live key so the
@@ -1248,10 +1287,13 @@ export function createSessionService(
       realtimeVoiceEnabled =
         (await readGlobalSettings(app.getPath("userData"))).realtimeVoice ??
         true;
+      const userDataPath = app.getPath("userData");
       synthesizer = createTtsSynthesizer({
-        modelRoot: resolveTtsModelRoot({
+        // The downloaded copy first, the dev workspace's second (ADR 0061);
+        // a packaged app has only the first.
+        modelRoots: resolveTtsModelRoots({
+          userDataPath,
           isPackaged: app.isPackaged,
-          resourcesPath: process.resourcesPath,
           workspaceRoot,
         }),
         // electron.vite.config.ts emits the worker beside the main bundle;
@@ -1264,6 +1306,40 @@ export function createSessionService(
         }),
         enabled: () => realtimeVoiceEnabled,
       });
+      {
+        // The model download (ADR 0061). The archive's location is pinned
+        // with its hash; a dev run may point it at a local server for the
+        // lab — NEVER a packaged build (the T1.3 rule the update feed and
+        // the DeepSeek base URL already follow).
+        const override = app.isPackaged
+          ? undefined
+          : process.env[TTS_ARCHIVE_URL_ENV];
+        const synth = synthesizer;
+        voiceModel = createVoiceModelService({
+          root: voiceModelStoreRoot(userDataPath),
+          bundleId: TTS_BUNDLE_ID,
+          archive: {
+            url:
+              override !== undefined && override !== ""
+                ? override
+                : TTS_ARCHIVE_URL,
+            sha256: TTS_ARCHIVE_SHA256,
+            bytes: TTS_ARCHIVE_BYTES,
+            unpackedBytes: TTS_BUNDLE_BYTES,
+          },
+          // Electron's client: proxy-aware, and the session's certificate
+          // policy applies. The signal aborts the transfer on cancel.
+          fetch: (url, init) => net.fetch(url, { signal: init.signal }),
+          onChange: (state) => send(EVT.voiceModel, state),
+          // The worker holds the bundle's files open; stop it before the
+          // files go (it forks afresh on the next request if a bundle is
+          // still there).
+          beforeRemove: () => synth.stopWorker(),
+          afterChange: () => {
+            synth.refreshBundle();
+          },
+        });
+      }
       const config = await buildConfig(
         workspaceRoot,
         homedir(),
@@ -1318,6 +1394,11 @@ export function createSessionService(
     // window and hold ~200 MB of loaded model. Disposed after the sessions,
     // so a turn still unwinding can finish its last synthesis request
     // (which resolves null once the worker is gone — the reveal types it).
+    // A download in flight dies with the window (its partial file is
+    // discarded by the downloader itself); the service is rebuilt with the
+    // synthesizer on the next start.
+    voiceModel?.cancel();
+    voiceModel = null;
     synthesizer?.dispose();
     synthesizer = null;
   }

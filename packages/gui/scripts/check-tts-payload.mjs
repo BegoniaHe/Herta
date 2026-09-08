@@ -1,45 +1,32 @@
 /**
- * Report (and optionally require) the neural-voice payload before packaging.
+ * Report (and optionally require) the neural-voice RUNTIME before packaging,
+ * and refuse a build that would carry the MODEL.
  *
  *   node scripts/check-tts-payload.mjs            # report; never fails
- *   node scripts/check-tts-payload.mjs --strict   # missing payload = failure
+ *   node scripts/check-tts-payload.mjs --strict   # missing runtime = failure
  *
  * WHY (the B3 lesson, applied ahead of time). `extraResources` entries whose
  * source does not exist make electron-builder log one line and exit 0 — so a
  * voiceless build packages, uploads, and becomes the release, and at runtime
  * it fails silently too: the synthesizer reports unavailable and every reply
- * simply types. That is a legitimate build (an install without the model is
- * supposed to degrade quietly), which is exactly why it needs SAYING at build
- * time rather than being discovered by a user who expected a voice.
+ * simply types. That is a legitimate build (an install without the runtime
+ * is supposed to degrade quietly), which is exactly why it needs SAYING at
+ * build time rather than being discovered by a user who expected a voice.
  *
- * Reporting rather than failing by default is deliberate: unlike the voice
- * CLIPS — which the README promises in every official installer — the ~110 MB
- * model bundle is an asset the owner may or may not want in a given build.
- * `--strict` is there for the release script the day that decision is made.
+ * The MODEL is the other way round (ADR 0061, owner 2026-09-08): it is a
+ * download, never an installer payload, so a `data/tts` entry in
+ * electron-builder.yml is a mistake this script fails on in every mode —
+ * the installer would double in size without anyone having decided that.
  */
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GUI_ROOT = resolve(HERE, "..");
-const REPO_ROOT = resolve(GUI_ROOT, "../..");
-const MODEL_ROOT = join(REPO_ROOT, "data", "tts", "herta-best-e72");
 const STAGE_DIR = join(GUI_ROOT, "tts-runtime");
+const BUILDER_CONFIG = join(GUI_ROOT, "electron-builder.yml");
 const STRICT = process.argv.includes("--strict");
-
-/** The files the Kokoro runtime opens — mirrors `REQUIRED_FILES` in
- *  src/main/tts/tts-path.ts, which decides `available()` at runtime. */
-const REQUIRED = [
-  "model.int8-81mb.onnx",
-  "voices.bin",
-  "frontend/tokens.txt",
-  "frontend/lexicon-us-en.txt",
-  "frontend/lexicon-zh.txt",
-  "frontend/phone-zh.fst",
-  "frontend/date-zh.fst",
-  "frontend/number-zh.fst",
-];
 
 function dirBytes(dir) {
   let total = 0;
@@ -54,21 +41,22 @@ function dirBytes(dir) {
   return total;
 }
 
-const problems = [];
-
-if (!existsSync(MODEL_ROOT)) {
-  problems.push(`no model bundle at ${MODEL_ROOT}`);
-} else {
-  const missing = REQUIRED.filter((r) => !existsSync(join(MODEL_ROOT, r)));
-  if (missing.length > 0) {
-    problems.push(`model bundle incomplete — missing ${missing.join(", ")}`);
-  }
-  const espeak = join(MODEL_ROOT, "frontend", "espeak-ng-data");
-  if (!existsSync(espeak)) {
-    problems.push("model bundle has no frontend/espeak-ng-data");
-  }
+// ── the model must NOT be in the installer ──────────────────────────────────
+const builder = readFileSync(BUILDER_CONFIG, "utf8");
+const modelEntry = builder
+  .split("\n")
+  .find((line) => /^\s*-\s*from:\s*.*data\/tts\b/.test(line));
+if (modelEntry !== undefined) {
+  console.error(
+    "\n[tts-payload] ERROR: electron-builder.yml stages the voice MODEL " +
+      `(${modelEntry.trim()}). The model is a download (ADR 0061), not an ` +
+      "installer payload — remove the entry.\n",
+  );
+  process.exit(1);
 }
 
+// ── the runtime should be staged ────────────────────────────────────────────
+const problems = [];
 if (!existsSync(STAGE_DIR)) {
   problems.push(
     `no staged native runtime at ${STAGE_DIR} — run: node scripts/stage-tts.mjs`,
@@ -85,26 +73,24 @@ if (!existsSync(STAGE_DIR)) {
 }
 
 if (problems.length === 0) {
-  const model = (dirBytes(MODEL_ROOT) / 1e6).toFixed(1);
   const runtime = (dirBytes(STAGE_DIR) / 1e6).toFixed(1);
   const addons = readdirSync(STAGE_DIR)
     .filter((n) => existsSync(join(STAGE_DIR, n, "sherpa-onnx.node")))
     .join(", ");
   console.log(
-    `[tts-payload] OK — model ${model} MB, runtime ${runtime} MB (${addons})`,
+    `[tts-payload] OK — runtime ${runtime} MB (${addons}); the model is a download, not staged`,
   );
   process.exit(0);
 }
 
 const label = STRICT ? "ERROR" : "NOTICE";
 console.error(
-  `\n[tts-payload] ${label}: this build will ship WITHOUT a voice.`,
+  `\n[tts-payload] ${label}: this build will ship WITHOUT the voice runtime.`,
 );
 for (const p of problems) console.error(`  - ${p}`);
 console.error(
-  "  Herta will still run; every reply types at the read-along pace.\n" +
-    "  To include it: node scripts/tts-bundle.mjs <voice-repo>/models/herta-best\n" +
-    "  (from the repo root; installs data/tts/herta-best-e72 — see ADR 0042),\n" +
-    "  then run  node scripts/stage-tts.mjs\n",
+  "  Herta will still run; every reply types at the read-along pace, and\n" +
+    "  the Settings → Voice model row says the runtime is missing.\n" +
+    "  To include it: node scripts/stage-tts.mjs  (see ADR 0042 §5)\n",
 );
 process.exit(STRICT ? 1 : 0);

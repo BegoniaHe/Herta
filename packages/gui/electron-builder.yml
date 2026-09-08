@@ -69,26 +69,23 @@ extraResources:
   # than tidy: it requires the license text itself to accompany the code.
   - from: ../../THIRD-PARTY-NOTICES.md
     to: THIRD-PARTY-NOTICES.md
-  # ── Herta's real-time voice (ADR 0042) ────────────────────────────────────
-  # The Kokoro model bundle (~110 MB) and the native synthesis runtime
-  # (~23 MB/arch), both as extraResources rather than app payload:
+  # ── Herta's real-time voice (ADR 0042 / ADR 0061) ─────────────────────────
+  # ONLY the native synthesis runtime (~23 MB/arch) ships here. The Kokoro
+  # model bundle (~116 MB) is NOT in the installer — the owner's call on its
+  # size (2026-09-08): the user downloads it from Settings → Voice, and the
+  # app verifies it against the hash pinned in src/main/tts/tts-release.ts
+  # before a byte is extracted. `scripts/check-tts-payload.mjs` fails the
+  # build if a model entry ever creeps back in here.
   #
-  #   - the model is DATA the worker opens by path, and putting ~110 MB inside
-  #     app.asar buys nothing but a slower archive;
-  #   - the runtime is a NATIVE addon, which cannot be bundled into out/main
-  #     (the packaging invariant CI greps for) and must not sit behind the
-  #     asar boundary — the addon finds its own platform library through a
-  #     SIBLING path, so both packages need to be real directories next to
-  #     each other. `scripts/stage-tts.mjs` produces exactly that layout;
-  #     `src/main/tts/synthesizer.ts` resolves <resources>/tts-runtime/.
+  # The runtime is a NATIVE addon, which cannot be bundled into out/main (the
+  # packaging invariant CI greps for) and must not sit behind the asar
+  # boundary — the addon finds its own platform library through a SIBLING
+  # path, so both packages need to be real directories next to each other.
+  # `scripts/stage-tts.mjs` produces exactly that layout;
+  # `src/main/tts/synthesizer.ts` resolves <resources>/tts-runtime/.
   #
-  # BOTH are optional by design: absent, the synthesizer reports unavailable
-  # and every reply types at the read-along pace, exactly as before the voice
-  # existed. `scripts/check-tts-payload.mjs` (run by the dist scripts) says so
-  # at build time rather than letting a silent installer be a surprise —
-  # electron-builder itself logs one line and exits 0 for a missing source.
-  - from: ../../data/tts
-    to: tts
+  # Optional by design: absent, the synthesizer reports unavailable and every
+  # reply types at the read-along pace, exactly as before the voice existed.
   - from: tts-runtime
     to: tts-runtime
 

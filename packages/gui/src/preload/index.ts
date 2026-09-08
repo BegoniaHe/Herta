@@ -94,6 +94,11 @@ const bridge: HertaBridge = {
   getRealtimeVoice: () => ipcRenderer.invoke(CMD.getRealtimeVoice),
   setRealtimeVoice: (enabled) =>
     ipcRenderer.invoke(CMD.setRealtimeVoice, enabled),
+  downloadVoiceModel: () => ipcRenderer.invoke(CMD.downloadVoiceModel),
+  cancelVoiceModelDownload: () =>
+    ipcRenderer.invoke(CMD.cancelVoiceModelDownload),
+  removeVoiceModel: () => ipcRenderer.invoke(CMD.removeVoiceModel),
+  onVoiceModel: (cb) => subscribe(EVT.voiceModel, cb),
   getDeepSeekKeyStatus: () => ipcRenderer.invoke(CMD.getDeepSeekKeyStatus),
   setDeepSeekKey: (key) => ipcRenderer.invoke(CMD.setDeepSeekKey, key),
   clearDeepSeekKey: () => ipcRenderer.invoke(CMD.clearDeepSeekKey),

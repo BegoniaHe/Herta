@@ -1,4 +1,4 @@
-import { fireEvent } from "@testing-library/react";
+import { act, fireEvent } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HertaBridgeProvider } from "../../context/HertaBridgeContext.js";
 import { renderWithLocale } from "../../i18n/test-util.js";
@@ -46,6 +46,13 @@ function setup(
   return Object.assign(r, { mock });
 }
 
+const ABSENT = {
+  phase: "absent" as const,
+  receivedBytes: 0,
+  totalBytes: 60_000_000,
+  unpackedBytes: 116_000_000,
+};
+
 describe("VoiceSettings", () => {
   it("renders the mute toggle with localized label", () => {
     const { getByLabelText, getByText } = setup();
@@ -81,11 +88,15 @@ describe("VoiceSettings", () => {
 
   // ── Real-time voice (ADR 0042) ────────────────────────────────────────────
 
-  it("reflects the persisted real-time-voice state and writes on toggle", async () => {
-    const { findByLabelText, mock } = setup();
-    // The row is absent until its state loads (it must not claim a default
-    // that may not match disk), so the query is async.
-    const toggle = await findByLabelText("Real-time voice");
+  it("the rows are on the FIRST frame, inert until the state lands, then live", async () => {
+    const { getByLabelText, getByText, findByText, mock } = setup();
+    // Present immediately — gated on the bridge's METHODS, not on the read
+    // (settings-pane first-paint rule) — but the switch cannot flip yet.
+    const toggle = getByLabelText("Real-time voice") as HTMLButtonElement;
+    expect(toggle.disabled).toBe(true);
+    expect(getByText("Voice model")).toBeTruthy();
+    await findByText("Installed, about 116 MB on disk.");
+    expect(toggle.disabled).toBe(false);
     expect(toggle.getAttribute("aria-checked")).toBe("true");
     fireEvent.click(toggle);
     expect(mock.calls.setRealtimeVoice).toEqual([false]);
@@ -93,44 +104,43 @@ describe("VoiceSettings", () => {
   });
 
   it("turning it OFF cuts a reply that is already speaking", async () => {
-    const { findByLabelText } = setup();
-    const toggle = await findByLabelText("Real-time voice");
-    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    const { getByLabelText, findByText } = setup();
+    await findByText("Installed, about 116 MB on disk.");
+    const toggle = getByLabelText("Real-time voice");
     fireEvent.click(toggle);
     expect(vi.mocked(stopAllVoice)).toHaveBeenCalled();
   });
 
   it("a failed write snaps the toggle back and says so", async () => {
-    const { findByLabelText, findByText } = setup({
+    const { getByLabelText, findByText } = setup({
       failSetRealtimeVoice: true,
     });
-    const toggle = await findByLabelText("Real-time voice");
+    await findByText("Installed, about 116 MB on disk.");
+    const toggle = getByLabelText("Real-time voice");
     expect(toggle.getAttribute("aria-checked")).toBe("true");
     fireEvent.click(toggle);
     expect(await findByText("Couldn't save — try again.")).toBeTruthy();
     expect(toggle.getAttribute("aria-checked")).toBe("true");
   });
 
-  it("with no model bundle the toggle is inert and the row says why", async () => {
-    const { findByLabelText, findByText, mock } = setup({
+  it("without the runtime the toggle is inert and the row says why", async () => {
+    const { getByLabelText, findByText, mock } = setup({
       realtimeVoiceResult: {
         enabled: true,
-        bundle: false,
-        runtime: true,
+        bundle: true,
+        runtime: false,
         failed: false,
       },
     });
-    const toggle = (await findByLabelText(
-      "Real-time voice",
-    )) as HTMLButtonElement;
+    expect(
+      await findByText(
+        "This install lacks the voice runtime — she can only type for now.",
+      ),
+    ).toBeTruthy();
+    const toggle = getByLabelText("Real-time voice") as HTMLButtonElement;
     expect(toggle.disabled).toBe(true);
     // Reads OFF even though the stored preference is on — she cannot speak.
     expect(toggle.getAttribute("aria-checked")).toBe("false");
-    expect(
-      await findByText(
-        "No voice model shipped with this install — she can only type for now.",
-      ),
-    ).toBeTruthy();
     fireEvent.click(toggle);
     expect(mock.calls.setRealtimeVoice).toEqual([]);
   });
@@ -151,7 +161,7 @@ describe("VoiceSettings", () => {
     ).toBeTruthy();
   });
 
-  it("hides the row entirely on a bridge without the pair (website demo)", () => {
+  it("hides the rows entirely on a bridge without the pair (website demo)", () => {
     const mock = createMockHertaBridge();
     // An older bridge shape: the pair simply is not there.
     const {
@@ -165,7 +175,131 @@ describe("VoiceSettings", () => {
       </HertaBridgeProvider>,
     );
     expect(queryByLabelText("Real-time voice")).toBeNull();
+    expect(queryByLabelText("Voice model")).toBeNull();
     // The rest of the pane still renders.
     expect(queryByLabelText("Mute voice")).toBeTruthy();
+  });
+
+  // ── The model as a download (ADR 0061) ───────────────────────────────────
+
+  it("no model: the toggle is inert, the row quotes the size and offers Download", async () => {
+    const { getByLabelText, findByText, getByRole, mock } = setup({
+      realtimeVoiceResult: {
+        enabled: true,
+        bundle: false,
+        runtime: true,
+        failed: false,
+        model: ABSENT,
+      },
+    });
+    expect(
+      await findByText(
+        "About 116 MB; she can speak once it's on this machine.",
+      ),
+    ).toBeTruthy();
+    const toggle = getByLabelText("Real-time voice") as HTMLButtonElement;
+    expect(toggle.disabled).toBe(true);
+    fireEvent.click(getByRole("button", { name: "Download" }));
+    expect(mock.calls.downloadVoiceModel).toBe(1);
+    // The mock's download ends ready and pushes it: the toggle comes alive
+    // without a re-read.
+    expect(await findByText("Installed, about 116 MB on disk.")).toBeTruthy();
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("while downloading: progress in MB, a bar, and Cancel", async () => {
+    const { findByText, getByRole, mock } = setup({
+      realtimeVoiceResult: {
+        enabled: true,
+        bundle: false,
+        runtime: true,
+        failed: false,
+        model: ABSENT,
+      },
+    });
+    await findByText("About 116 MB; she can speak once it's on this machine.");
+    act(() => {
+      mock.emitVoiceModel({
+        ...ABSENT,
+        phase: "downloading",
+        receivedBytes: 15_000_000,
+      });
+    });
+    expect(await findByText("Downloaded 15 / 60 MB")).toBeTruthy();
+    const bar = getByRole("progressbar");
+    expect(bar.getAttribute("aria-valuenow")).toBe("25");
+    fireEvent.click(getByRole("button", { name: "Cancel" }));
+    expect(mock.calls.cancelVoiceModelDownload).toBe(1);
+    expect(
+      await findByText(
+        "About 116 MB; she can speak once it's on this machine.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("a failed download names the reason and offers Retry", async () => {
+    const { findByText, getByRole, mock } = setup({
+      realtimeVoiceResult: {
+        enabled: true,
+        bundle: false,
+        runtime: true,
+        failed: false,
+        model: { ...ABSENT, phase: "failed", error: "hash" },
+      },
+    });
+    expect(
+      await findByText("The downloaded file failed its checksum; discarded."),
+    ).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: "Retry" }));
+    expect(mock.calls.downloadVoiceModel).toBe(1);
+  });
+
+  it("a ready model offers Remove, which silences playback and goes back to absent", async () => {
+    const { findByText, getByLabelText, getByRole, mock } = setup();
+    await findByText("Installed, about 116 MB on disk.");
+    fireEvent.click(getByRole("button", { name: "Remove" }));
+    expect(vi.mocked(stopAllVoice)).toHaveBeenCalled();
+    expect(mock.calls.removeVoiceModel).toBe(1);
+    expect(
+      await findByText(
+        "About 116 MB; she can speak once it's on this machine.",
+      ),
+    ).toBeTruthy();
+    expect(
+      (getByLabelText("Real-time voice") as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("without the runtime the Download button is inert — nothing could play it", async () => {
+    const { findByText, getByRole } = setup({
+      realtimeVoiceResult: {
+        enabled: true,
+        bundle: false,
+        runtime: false,
+        failed: false,
+        model: ABSENT,
+      },
+    });
+    await findByText("About 116 MB; she can speak once it's on this machine.");
+    expect(
+      (getByRole("button", { name: "Download" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("dev: the workspace's own copy shows as such, with nothing to download", async () => {
+    const { findByText, queryByRole } = setup({
+      realtimeVoiceResult: {
+        enabled: true,
+        bundle: true,
+        runtime: true,
+        failed: false,
+        model: ABSENT,
+      },
+    });
+    expect(
+      await findByText("Using the model in the workspace's data/tts."),
+    ).toBeTruthy();
+    expect(queryByRole("button", { name: "Download" })).toBeNull();
   });
 });

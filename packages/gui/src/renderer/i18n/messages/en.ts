@@ -81,9 +81,31 @@ export const en = {
   "voice.realtimeDesc":
     "Herta speaks her replies, and the text keeps pace with the audio. Synthesis costs CPU; changes apply immediately.",
   "voice.realtimeMissing":
-    "No voice model shipped with this install — she can only type for now.",
+    "This install lacks the voice runtime — she can only type for now.",
   "voice.realtimeFailed":
     "The voice process failed repeatedly; it's off for this run. Restart Herta to retry.",
+  "voice.model": "Voice model",
+  "voice.modelAbsent":
+    "About {size} MB; she can speak once it's on this machine.",
+  "voice.modelDev": "Using the model in the workspace's data/tts.",
+  "voice.modelDownload": "Download",
+  "voice.modelDownloading": "Downloaded {received} / {total} MB",
+  "voice.modelCancel": "Cancel",
+  "voice.modelReady": "Installed, about {size} MB on disk.",
+  "voice.modelRemove": "Remove",
+  "voice.modelRetry": "Retry",
+  "voice.modelFailed.network":
+    "The download broke off; check the network and retry.",
+  "voice.modelFailed.http": "The server did not return the model file.",
+  "voice.modelFailed.size":
+    "The downloaded file had the wrong size; discarded.",
+  "voice.modelFailed.hash":
+    "The downloaded file failed its checksum; discarded.",
+  "voice.modelFailed.archive":
+    "The model archive could not be unpacked; discarded.",
+  "voice.modelFailed.verify": "The model files failed verification; discarded.",
+  "voice.modelFailed.disk": "Writing to this machine failed; check disk space.",
+  "voice.modelFailed.cancelled": "Cancelled.",
   "voice.mute": "Mute voice",
   "voice.muteDesc": "Silence all of Herta's voice.",
   "voice.volume": "Volume",

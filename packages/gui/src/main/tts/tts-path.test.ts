@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveTtsModelRoot, ttsBundleComplete } from "./tts-path.js";
+import {
+  resolveTtsModelRoots,
+  ttsBundleComplete,
+  voiceModelStoreRoot,
+} from "./tts-path.js";
 
 const dirs: string[] = [];
 function tmp(): string {
@@ -36,25 +40,34 @@ function makeBundle(root: string, opts: { omit?: string } = {}): void {
   }
 }
 
-describe("resolveTtsModelRoot", () => {
-  it("dev: the workspace's data/tts/<bundle id>", () => {
+describe("resolveTtsModelRoots (ADR 0061)", () => {
+  it("dev: the downloaded copy first, then the workspace's data/tts/<bundle id>", () => {
     expect(
-      resolveTtsModelRoot({
+      resolveTtsModelRoots({
+        userDataPath: "/home/u/AppData/herta",
         isPackaged: false,
-        resourcesPath: "/app/resources",
         workspaceRoot: "/ws",
       }),
-    ).toBe(join("/ws", "data", "tts", "herta-best-e72"));
+    ).toEqual([
+      join("/home/u/AppData/herta", "tts", "herta-best-e72"),
+      join("/ws", "data", "tts", "herta-best-e72"),
+    ]);
   });
 
-  it("packaged: the bundled resources copy", () => {
+  it("packaged: ONLY the downloaded copy — the installer carries no bundle", () => {
     expect(
-      resolveTtsModelRoot({
+      resolveTtsModelRoots({
+        userDataPath: "/home/u/AppData/herta",
         isPackaged: true,
-        resourcesPath: "/app/resources",
         workspaceRoot: "/ws",
       }),
-    ).toBe(join("/app/resources", "tts", "herta-best-e72"));
+    ).toEqual([join("/home/u/AppData/herta", "tts", "herta-best-e72")]);
+  });
+
+  it("the store root is <userData>/tts", () => {
+    expect(voiceModelStoreRoot("/home/u/AppData/herta")).toBe(
+      join("/home/u/AppData/herta", "tts"),
+    );
   });
 });
 

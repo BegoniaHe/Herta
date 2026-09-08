@@ -172,6 +172,20 @@ describe("FileMemoryManager", () => {
     expect(onDisk).toEqual(["foreign", "mine"]);
   });
 
+  it("recall reads the on-disk truth — a fact ANOTHER process saved after boot is served (ADR 0060)", async () => {
+    const { shim, state } = makeShim();
+    const m = new FileMemoryManager({ workspaceRoot: ROOT, fs: shim });
+    // This process boots and reads an empty store.
+    expect(await m.recall({})).toEqual([]);
+    // The CLI beside the GUI saves a fact.
+    const foreign = mkItem({ id: "foreign", text: "from the other process" });
+    state.files.set(FILE_PATH, `${JSON.stringify(foreign)}\n`);
+    // Pre-fix recall served the boot-time cache for the life of the process,
+    // so the backend's recall at brief start never saw it.
+    expect(await m.recall({})).toEqual([foreign]);
+    expect(m.currentItems()).toEqual([foreign]);
+  });
+
   it("concurrent saves both land (no shared-tmp ENOENT)", async () => {
     const { shim, state } = makeShim();
     const m = new FileMemoryManager({ workspaceRoot: ROOT, fs: shim });

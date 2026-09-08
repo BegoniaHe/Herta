@@ -48,6 +48,12 @@ export {
   fitMessagesToBudget,
 } from "./backend/context-budget.js";
 export {
+  type RenderScopedMemoryOptions,
+  renderScopedMemory,
+  SCOPED_MEMORY_MAX_CHARS,
+  SCOPED_MEMORY_MAX_ITEMS,
+} from "./backend/scoped-memory.js";
+export {
   isAbortError,
   type ModelInferenceResult,
   streamModelInference,

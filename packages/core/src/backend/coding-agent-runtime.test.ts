@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { HertaToAgentBrief } from "../bridge/types.js";
 import { InMemoryEventBus } from "../event-bus.js";
-import { NoopMemoryManager } from "../memory-manager.js";
+import {
+  type MemoryItem,
+  type MemoryManager,
+  type MemoryQuery,
+  NoopMemoryManager,
+} from "../memory-manager.js";
 import {
   NoopPermissionEngine,
   type PermissionEngine,
@@ -539,6 +544,156 @@ describe("CodingAgentRuntime.runBrief", () => {
       expect(capturedFrame.scopedRepoInstructions).toBe("scoped-repo-text");
       expect(capturedFrame.scopedMemory).toBe("scoped-memory-text");
     }
+  });
+
+  describe("project memory recall (ADR 0060)", () => {
+    // What memory_save leaves in `.herta/memory/project.jsonl` — one item,
+    // the shape the tool writes.
+    const savedItem: MemoryItem = {
+      id: "m-1",
+      scope: "repo",
+      kind: "test_command",
+      text: "pnpm vitest run --project core",
+      sourceSession: "s-0",
+      createdAt: "2026-09-01T00:00:00.000Z",
+      lastSeen: "2026-09-01T00:00:00.000Z",
+      confidence: 1,
+    };
+
+    class StubMemory implements MemoryManager {
+      recalls = 0;
+      constructor(private readonly items: MemoryItem[]) {}
+      async recall(_q: MemoryQuery): Promise<MemoryItem[]> {
+        this.recalls += 1;
+        return this.items;
+      }
+      async save(_item: MemoryItem): Promise<void> {}
+      currentItems(): readonly MemoryItem[] {
+        return this.items;
+      }
+    }
+
+    function makeRuntimeWith(
+      provider: FakeProvider,
+      memory: MemoryManager,
+    ): CodingAgentRuntime {
+      const tools = new InMemoryToolRegistry();
+      return new CodingAgentRuntime({
+        sessionId: "s-1",
+        provider,
+        tools,
+        permissions: new NoopPermissionEngine(),
+        backendBuilder: new BackendContextBuilder({ tools }),
+        bus: new InMemoryEventBus<AgentEvent>(),
+        clock: () => new Date("2026-05-07T00:00:00.000Z"),
+        workspaceRoot: wsRoot,
+        memory,
+      });
+    }
+
+    function captureFirstFrame(): {
+      provider: FakeProvider;
+      frame: () => ProviderPromptFrame | undefined;
+    } {
+      let captured: ProviderPromptFrame | undefined;
+      const provider = new FakeProvider({
+        turns: [
+          (frame) => {
+            captured = frame;
+            return [{ type: "finish", reason: "stop" }];
+          },
+        ],
+      });
+      return { provider, frame: () => captured };
+    }
+
+    it("a saved item reaches the FIRST provider call's scopedMemory when the caller supplies none", async () => {
+      // Pre-fix the runtime read `opts.scopedMemory ?? ""` and never touched
+      // the store: memory_save was write-only for four months (Codex study
+      // 2026-08-24 #43). The production dispatch passes no scopedMemory.
+      const { provider, frame } = captureFirstFrame();
+      const memory = new StubMemory([savedItem]);
+      const runtime = makeRuntimeWith(provider, memory);
+
+      await runtime.runBrief(sampleBrief, {
+        userMessages: [{ text: "run the core tests" }],
+      });
+
+      const captured = frame();
+      expect(captured).toBeDefined();
+      if (captured === undefined || !("backendSystem" in captured)) {
+        throw new Error("expected a backend frame");
+      }
+      expect(memory.recalls).toBe(1);
+      expect(captured.scopedMemory).toContain(
+        "- [test_command] pnpm vitest run --project core",
+      );
+      // Chinese by default (no lang given), the header in the session's
+      // language.
+      expect(captured.scopedMemory.split("\n")[0]).toContain("项目记忆");
+    });
+
+    it("an EN session gets the English header", async () => {
+      const { provider, frame } = captureFirstFrame();
+      const runtime = makeRuntimeWith(provider, new StubMemory([savedItem]));
+
+      await runtime.runBrief(sampleBrief, { lang: "en" });
+
+      const captured = frame();
+      if (captured === undefined || !("backendSystem" in captured)) {
+        throw new Error("expected a backend frame");
+      }
+      expect(captured.scopedMemory.split("\n")[0]).toContain("Project memory");
+    });
+
+    it("an empty store leaves scopedMemory empty — the wire is byte-identical to before", async () => {
+      const { provider, frame } = captureFirstFrame();
+      const runtime = makeRuntimeWith(provider, new StubMemory([]));
+
+      await runtime.runBrief(sampleBrief);
+
+      const captured = frame();
+      if (captured === undefined || !("backendSystem" in captured)) {
+        throw new Error("expected a backend frame");
+      }
+      expect(captured.scopedMemory).toBe("");
+    });
+
+    it("an explicit scopedMemory — even the empty string — is the caller's decision; the store is not read", async () => {
+      const { provider, frame } = captureFirstFrame();
+      const memory = new StubMemory([savedItem]);
+      const runtime = makeRuntimeWith(provider, memory);
+
+      await runtime.runBrief(sampleBrief, { scopedMemory: "" });
+
+      const captured = frame();
+      if (captured === undefined || !("backendSystem" in captured)) {
+        throw new Error("expected a backend frame");
+      }
+      expect(memory.recalls).toBe(0);
+      expect(captured.scopedMemory).toBe("");
+    });
+
+    it("a store that fails to read costs the brief its hints, not the brief", async () => {
+      const { provider, frame } = captureFirstFrame();
+      const broken: MemoryManager = {
+        recall: async () => {
+          throw new Error("EACCES: project.jsonl");
+        },
+        save: async () => {},
+        currentItems: () => [],
+      };
+      const runtime = makeRuntimeWith(provider, broken);
+
+      const report = await runtime.runBrief(sampleBrief);
+
+      expect(report.status).toBe("partial");
+      const captured = frame();
+      if (captured === undefined || !("backendSystem" in captured)) {
+        throw new Error("expected a backend frame");
+      }
+      expect(captured.scopedMemory).toBe("");
+    });
   });
 
   it("captures the actual tool name and risk in permission events", async () => {

@@ -24,6 +24,7 @@ import type {
 import { runBackendTurnLoop } from "./backend-turn-loop.js";
 import { BackgroundHost } from "./background-host.js";
 import type { BackendPromptBudget } from "./context-budget.js";
+import { renderScopedMemory } from "./scoped-memory.js";
 
 /**
  * Tools whose SUCCESS argues that the task advanced (audit 2026-07-24, 1.2).
@@ -123,6 +124,12 @@ export interface RepoRangeFile {
 export interface RunBriefOptions {
   signal?: AbortSignal;
   scopedRepoInstructions?: string;
+  /**
+   * The frame's project-memory text. UNDEFINED (the production dispatch)
+   * means the runtime recalls the store itself at brief start and renders
+   * it (`renderScopedMemory`, ADR 0060); a string — even `""` — is taken as
+   * the caller's decision and no recall happens.
+   */
   scopedMemory?: string;
   /**
    * User-only message history threaded by the actor. The backend reads
@@ -186,6 +193,22 @@ export class CodingAgentRuntime {
       return await this.deps.repoContext(signal);
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * The frame's project-memory text (ADR 0060): everything the store holds,
+   * rendered newest-last under the count/char caps — or `""` when the store
+   * is empty or could not be read. Same never-throws contract as `probeRepo`:
+   * memory is P2 context, and a corrupt or unreadable store must cost the
+   * brief its hints, not the brief.
+   */
+  private async recallScopedMemory(lang: "zh" | "en"): Promise<string> {
+    try {
+      const items = await this.deps.memory.recall({});
+      return renderScopedMemory(items, lang);
+    } catch {
+      return "";
     }
   }
 
@@ -278,10 +301,16 @@ export class CodingAgentRuntime {
       // status would report the USER's own pre-existing uncommitted work as
       // 板砖's — the same lie inverted.
       // The frame's repo snapshot (ADR 0049 §2) rides the same instant —
-      // gathered in parallel; both wrappers swallow their own failures.
-      const [baseline, repoContext] = await Promise.all([
+      // gathered in parallel; every wrapper swallows its own failures. The
+      // project-memory recall (ADR 0060) joins them: one small file read
+      // per dispatch, skipped when the caller already decided the text.
+      const lang = opts.lang ?? "zh";
+      const [baseline, repoContext, recalledMemory] = await Promise.all([
         this.probeRepo(opts.signal),
         this.describeRepo(opts.signal),
+        opts.scopedMemory === undefined
+          ? this.recallScopedMemory(lang)
+          : Promise.resolve(opts.scopedMemory),
       ]);
 
       const absorb = (event: AgentEvent): void => {
@@ -463,10 +492,10 @@ export class CodingAgentRuntime {
         userMessages: opts.userMessages ?? [],
         omittedUserMessages: opts.omittedUserMessages ?? 0,
         scopedRepoInstructions: opts.scopedRepoInstructions ?? "",
-        scopedMemory: opts.scopedMemory ?? "",
+        scopedMemory: recalledMemory,
         recentDialogue: opts.recentDialogue ?? "",
         workingHistory: opts.workingHistory ?? "",
-        lang: opts.lang ?? "zh",
+        lang,
         ...(repoContext !== null ? { repoContext } : {}),
       };
 

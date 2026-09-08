@@ -701,9 +701,10 @@ export interface BackendBuildInput {
 /**
  * Pure constructor of `BackendPromptFrame` from explicit inputs.
  *
- * Runs no capsule activation pipeline by design — the actor side
- * (`HertaActorRuntime`) is responsible for selecting which scoped repo
- * instructions and memory to pass in. This keeps the backend frame
+ * Runs no capsule activation pipeline by design — the caller decides the
+ * scoped strings (`CodingAgentRuntime` renders the project memory at brief
+ * start, ADR 0060; nothing populates the repo-instructions slot, per
+ * CLAUDE.md's no-HERTA.md rule). This keeps the backend frame
  * deterministic and free of Herta-identity context.
  */
 export class BackendContextBuilder {

@@ -54,15 +54,18 @@ export class FileMemoryManager implements MemoryManager {
     this.path = join(this.dir, PROJECT_FILE_NAME);
   }
 
-  private async ensureCache(): Promise<MemoryItem[]> {
-    if (this.cache === undefined) {
-      this.cache = await this.readAll();
-    }
-    return this.cache;
-  }
-
+  /**
+   * Reads the ON-DISK truth on every call, for the same reason `save` does
+   * (finding 19): GUI + CLI on one workspace is supported, and the store's
+   * one production reader — the backend runtime at brief start (ADR 0060)
+   * — would otherwise serve a boot-time snapshot for the life of the
+   * process, blind to every fact the other process saved. The file is at
+   * most 200 lines; one read per dispatch is nothing. The cache still
+   * refreshes here so `currentItems()` keeps its no-I/O contract.
+   */
   async recall(query: MemoryQuery): Promise<MemoryItem[]> {
-    const items = await this.ensureCache();
+    const items = await this.readAll();
+    this.cache = items;
     return items.filter((it) => {
       if (query.scope !== undefined && it.scope !== query.scope) return false;
       if (query.kind !== undefined && it.kind !== query.kind) return false;

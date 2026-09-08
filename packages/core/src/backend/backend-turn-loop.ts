@@ -110,8 +110,9 @@ export interface BackendTurnHandle {
    */
   scopedRepoInstructions?: string;
   /**
-   * Optional scoped project memory text selected by the actor for this dispatch.
-   * Threaded into `BackendPromptFrame.scopedMemory`. Defaults to `""`.
+   * The rendered project memory for this dispatch — `CodingAgentRuntime`
+   * recalls and renders it at brief start (ADR 0060). Threaded into
+   * `BackendPromptFrame.scopedMemory`. Defaults to `""`.
    */
   scopedMemory?: string;
   /** Pre-rendered recent dialogue since the last dispatch (referent resolution). */

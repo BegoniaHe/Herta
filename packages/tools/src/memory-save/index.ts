@@ -27,7 +27,7 @@ export function memorySaveTool(): HertaTool {
       return {
         name: "memory_save",
         description:
-          "Save an operational fact to project memory. Persists across sessions. Use for build/test commands, style preferences, repo facts, recurring mistakes, and lessons learned. Do NOT use for secrets, raw command output, transient task progress, or unrelated chatter.",
+          "Save an operational fact to project memory. Persists across sessions: saved facts are listed for you at the start of every later dispatch. Use for build/test commands, style preferences, repo facts, recurring mistakes, and lessons learned. Do NOT use for secrets, raw command output, transient task progress, or unrelated chatter.",
         inputSchema: memorySaveJsonSchema,
       };
     },

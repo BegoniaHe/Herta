@@ -304,18 +304,16 @@ describe("VoiceSettings", () => {
     const host = queryByText("platform.minimaxi.com");
     expect(host?.className).toBe("settings-key-host");
     expect(host?.parentElement?.textContent).toBe(
-      "Pay-as-you-go. Clones once; speaks when no plan key is set. Get one at platform.minimaxi.com.",
+      "Pay-as-you-go. Generates the voice ID; also synthesizes speech when no plan key is set. Get one at platform.minimaxi.com.",
     );
     // The token-plan key has its own row under it (ADR 0062 §1.8), and a
     // "?" after the first key's title explains the two keys' division of
     // work; a click pins the tip open, Escape closes it.
     expect(queryByText("Token Plan key")).toBeTruthy();
-    const help = getByRole("button", {
-      name: "How the two keys divide the work",
-    });
+    const help = getByRole("button", { name: "About the keys" });
     expect(help.getAttribute("aria-expanded")).toBe("false");
     expect(getByRole("tooltip").textContent).toContain(
-      "Cloning uses only the MiniMax API key",
+      "generating the voice ID and synthesizing speech",
     );
     fireEvent.click(help);
     expect(help.getAttribute("aria-expanded")).toBe("true");
@@ -323,7 +321,7 @@ describe("VoiceSettings", () => {
     expect(help.getAttribute("aria-expanded")).toBe("false");
     expect(
       queryByText(
-        "Optional. With a speech plan, speech goes through it; cloning stays pay-as-you-go.",
+        "Optional. Synthesizes speech under a Token Plan subscription.",
       ),
     ).toBeTruthy();
     // The clone is main's business: nothing to prepare, nothing to read
@@ -515,7 +513,7 @@ describe("VoiceSettings", () => {
     expect(await findByText("Connected · …7777")).toBeTruthy();
     expect(
       await findByText(
-        "Cloning needs the pay-as-you-go key; enter the MiniMax API key and retry.",
+        "Generating the voice ID needs the MiniMax API key (pay-as-you-go); enter it and retry.",
       ),
     ).toBeTruthy();
     expect(queryByText("No key set")).toBeTruthy(); // the pay-as-you-go row

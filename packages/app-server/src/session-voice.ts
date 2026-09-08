@@ -5,7 +5,7 @@ import {
   spanMatchedBaseMs,
 } from "@herta/herta";
 import { SLOW_MS_PER_CHAR } from "./bus-streaming-sink.js";
-import type { VoiceCueEvent } from "./types.js";
+import type { SpeechSynthesizer, VoiceCueEvent } from "./types.js";
 import { loadClipStems, pickClipStem } from "./voice/clip-list.js";
 import { readOpusDurationMs } from "./voice/opus-duration.js";
 import {
@@ -29,6 +29,17 @@ import { pickVetoReaction } from "./voice/veto-reaction.js";
  * pairs no clip with an EN opening); the other three are gated on the
  * language here (adversarial review 2026-07-15 found veto + easter-egg
  * firing Chinese audio in EN sessions).
+ *
+ * One voice (ADR 0042 amendment 2026-09-08, owner): with the real-time
+ * voice on, everything she says comes from the synthesizer — the opening
+ * is voiced by the sink like a reply (the session says so through
+ * `onOpeningStreamStart(voiced)`), the easter-egg line is synthesized from
+ * its text (the clip's filename stem IS the line), and the particle cue is
+ * withheld because the synthesized first unit already carries the
+ * interjection — a recorded clip would cut that unit off (the renderer
+ * plays one voice at a time, newest wins). The veto reaction stays a clip:
+ * it is a line the text does not contain, and cutting the vetoed audio is
+ * exactly what it should do.
  */
 
 /** Easter-egg voice throttle: ≤1 play per session per hour. */
@@ -45,6 +56,9 @@ export interface SessionVoiceOpts {
   readonly opening: OpeningChoice | undefined;
   /** Where a cue goes (the session's projector). */
   readonly emit: (cue: VoiceCueEvent) => void;
+  /** The host's synthesizer when the session has one (zh only): asked per
+   *  cue whether it is available, and given the easter-egg line to speak. */
+  readonly synth?: SpeechSynthesizer;
   /** Inject the opening clip's duration (ms) instead of reading the clip from
    *  disk (clip-matched cadence tests). Skips `readOpusDurationMs`. */
   readonly openingDurationMs?: number | null;
@@ -71,8 +85,9 @@ export interface SessionVoice {
   readonly openingBaseMs: number | undefined;
   /** The instant the opening's text begins streaming (after the lead beat):
    *  cue the opening clip so voice and reveal land together. No clipId → no
-   *  cue; a skip BEFORE stream start never reaches here. */
-  onOpeningStreamStart(): void;
+   *  cue; a skip BEFORE stream start never reaches here. `voiced`: the sink
+   *  is speaking the opening through the synthesizer — no clip. */
+  onOpeningStreamStart(voiced?: boolean): void;
   /** The actor fires this at the FIRST speech of each turn (not retries,
    *  beats, or regenerate): match the leading particle and cue a random
    *  variant on the same voice channel the opening uses. */
@@ -165,16 +180,25 @@ export async function loadSessionVoice(
   // session starts eligible. Enforces ≤1 play per hour.
   let lastEasterEggAt: number | null = null;
 
+  const synth = opts.synth;
+  const synthAvailable = (): boolean =>
+    voiceCuesEnabled && synth !== undefined && synth.available();
+  let eggSeq = 0;
+
   return {
     openingClipId,
     openingBaseMs,
-    onOpeningStreamStart(): void {
+    onOpeningStreamStart(voiced = false): void {
+      if (voiced) return; // the sink speaks it (ADR 0042 amendment)
       if (openingClipId !== null) {
         emit({ kind: "cue", category: "openings", clipId: openingClipId });
       }
     },
     onPrimarySpeechStart(text: string): void {
       if (!voiceCuesEnabled) return; // no EN voice in v1 (ADR 0013 §5)
+      // The synthesized reply already speaks its leading interjection; a
+      // clip on top would cut the first unit's audio (newest wins).
+      if (synthAvailable()) return;
       const token = matchLeadingParticle(text, particleCatalog);
       particleTokenThisTurn = token;
       if (token === null) return;
@@ -221,6 +245,35 @@ export async function loadSessionVoice(
       const clipId = pickClipStem(easterEggClips, easterEggRandom);
       if (clipId === null) return;
       lastEasterEggAt = now;
+      // With the real-time voice on, the line is synthesized from its text
+      // — the clip's stem is the line itself — so it sounds like the rest
+      // of her. Newest wins, like a clip: everything else stops first. A
+      // synthesis that fails falls back to the recording.
+      if (synthAvailable() && synth !== undefined) {
+        eggSeq += 1;
+        const utteranceId = `egg${eggSeq}`;
+        void synth
+          .synthesize({ utteranceId, seq: 0, text: clipId, lang: "zh" })
+          .then(
+            (audio) => {
+              if (audio === null || audio.durationMs <= 0) {
+                emit({ kind: "cue", category: "easter_egg", clipId });
+                return;
+              }
+              emit({ kind: "ttsStop" });
+              emit({
+                kind: "tts",
+                utteranceId,
+                seq: 0,
+                samples: audio.samples,
+                sampleRate: audio.sampleRate,
+                durationMs: audio.durationMs,
+              });
+            },
+            () => emit({ kind: "cue", category: "easter_egg", clipId }),
+          );
+        return;
+      }
       emit({ kind: "cue", category: "easter_egg", clipId });
     },
   };

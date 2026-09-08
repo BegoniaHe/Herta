@@ -159,6 +159,14 @@ export class BusActorStreamingSink implements ActorStreamingSink {
     this.voice = voice;
   }
 
+  /** Whether a stream opened now would be voiced — the host's synthesizer
+   *  is attached and says it is available. The session asks before the
+   *  opening so the recorded clip and the synthesized line never both
+   *  play (ADR 0042 amendment 2026-09-08). */
+  voiceAvailable(): boolean {
+    return this.voice !== null && this.voice.synth.available();
+  }
+
   /** True when the stream about to open should be voiced. */
   private voiceFor(opts?: { readonly unvoiced?: boolean }): {
     readonly synth: SpeechSynthesizer;

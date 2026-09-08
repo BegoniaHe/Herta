@@ -618,6 +618,14 @@ export class V2ActorDriver {
      * the record/screen stay converged.
      */
     signal?: AbortSignal,
+    /**
+     * The opening spoken by the SYNTHESIZER (ADR 0042 amendment 2026-09-08):
+     * with the real-time voice on, the caller cues no recorded clip and the
+     * sink voices the stream — its audio paces the reveal, so the clip's
+     * cadence override is ignored. Default false: the recorded clip and the
+     * clip-matched cadence, byte-identical to before.
+     */
+    voiced = false,
   ): Promise<void> {
     const sink = this.deps.sink;
     if (sink?.slowStreamSpeech !== undefined && block.kind === "herta") {
@@ -641,13 +649,17 @@ export class V2ActorDriver {
         });
       }
       if (signal?.aborted !== true) onStreamStart?.();
-      // `unvoiced`: the opening is voiced by its RECORDED clip (the cue the
-      // caller fires in onStreamStart); a sink with a speech synthesizer
-      // (ADR 0042) must not speak the same line over it.
-      const controller = sink.slowStreamSpeech(block.text, {
-        ...(baseMsOverride !== undefined ? { baseMsOverride } : {}),
-        unvoiced: true,
-      });
+      // `unvoiced`: by default the opening is voiced by its RECORDED clip
+      // (the cue the caller fires in onStreamStart); a sink with a speech
+      // synthesizer (ADR 0042) must not speak the same line over it. When
+      // the caller says `voiced`, it cued no clip and the sink speaks the
+      // line itself, pacing the reveal by its audio.
+      const controller = voiced
+        ? sink.slowStreamSpeech(block.text)
+        : sink.slowStreamSpeech(block.text, {
+            ...(baseMsOverride !== undefined ? { baseMsOverride } : {}),
+            unvoiced: true,
+          });
       const onAbort = (): void => controller.flushRemainder?.();
       if (signal?.aborted === true) onAbort();
       else signal?.addEventListener("abort", onAbort, { once: true });

@@ -111,17 +111,17 @@ export const en = {
   "voice.engine.minimax": "MiniMax cloud",
   "voice.minimaxKey": "MiniMax API key",
   "voice.minimaxKeyDesc":
-    "Pay-as-you-go. Clones once; speaks when no plan key is set. Get one at platform.minimaxi.com.",
+    "Pay-as-you-go. Generates the voice ID; also synthesizes speech when no plan key is set. Get one at platform.minimaxi.com.",
   "voice.minimaxKeyAria": "MiniMax API key",
   "voice.keyDelete": "Delete",
-  "voice.minimaxHelpAria": "How the two keys divide the work",
+  "voice.minimaxHelpAria": "About the keys",
   "voice.minimaxHelp":
-    "Cloning uses only the MiniMax API key (pay-as-you-go, paid once per account). Speech prefers the Token Plan key (covered by the plan) and falls back to the API key. With only a plan key and no voice on the account yet, enter the API key once.",
+    "Cloud voice needs an API key for two jobs: generating the voice ID and synthesizing speech. The voice ID can only be generated with the MiniMax API key (pay-as-you-go, once). Speech prefers the Token Plan key (free within the plan) and uses the API key when none is set.",
   "voice.minimaxKeyRejected": "Key rejected",
   "voice.minimaxKeyUnchecked": "Unchecked",
   "voice.minimaxPlanKey": "Token Plan key",
   "voice.minimaxPlanKeyDesc":
-    "Optional. With a speech plan, speech goes through it; cloning stays pay-as-you-go.",
+    "Optional. Synthesizes speech under a Token Plan subscription.",
   "voice.minimaxPlanKeyAria": "MiniMax Token Plan key",
   "voice.minimaxRejected":
     "MiniMax did not accept that key — check it and try again.",
@@ -129,7 +129,7 @@ export const en = {
   "voice.cloneRetry": "Retry",
   "voice.cloneFailed.no_key": "Enter a MiniMax key first.",
   "voice.cloneFailed.no_clone_key":
-    "Cloning needs the pay-as-you-go key; enter the MiniMax API key and retry.",
+    "Generating the voice ID needs the MiniMax API key (pay-as-you-go); enter it and retry.",
   "voice.cloneFailed.invalid_key": "MiniMax did not accept the key.",
   "voice.cloneFailed.auth":
     "MiniMax refused the request; check the key and the account.",

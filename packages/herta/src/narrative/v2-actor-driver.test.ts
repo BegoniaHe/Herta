@@ -600,7 +600,7 @@ describe("V2ActorDriver", () => {
     expect(seen.opts?.unvoiced).toBe(true);
   });
 
-  it("D3: playOpening always marks the opening UNVOICED (ADR 0042)", async () => {
+  it("D3: playOpening marks the opening UNVOICED by default; told `voiced`, it opens the stream plain for the sink to speak (ADR 0042 §7a)", async () => {
     const provider = mkProvider([[{ type: "finish", reason: "stop" }]]);
     const seen: { called: boolean; opts?: unknown } = { called: false };
     const sink: ActorStreamingSink = {
@@ -653,6 +653,14 @@ describe("V2ActorDriver", () => {
     // in onStreamStart. A sink with a speech synthesizer must not speak the
     // same line over it, so the flag is set even with no cadence override.
     expect(seen.opts).toEqual({ unvoiced: true });
+    // With the real-time voice on the session cues no clip and says so:
+    // the stream opens with neither the flag nor the clip's cadence — the
+    // sink's audio paces it.
+    seen.called = false;
+    seen.opts = "untouched";
+    await driver.playOpening(seed, 0, undefined, 137, undefined, true);
+    expect(seen.called).toBe(true);
+    expect(seen.opts).toBeUndefined();
   });
 
   it("preserves state across multiple turns (record grows)", async () => {

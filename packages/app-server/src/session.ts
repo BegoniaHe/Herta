@@ -844,14 +844,23 @@ export class SessionImpl implements Session {
     // instant the text begins streaming — so the opening's voice and its
     // text reveal land together. No clipId → no cue (opening without a voice
     // file); a skip BEFORE stream start also suppresses the cue.
+    //
+    // With the real-time voice on (ADR 0042 amendment 2026-09-08) the
+    // opening is spoken by the synthesizer like a reply — one voice for
+    // everything she says — so no clip is cued and the sink paces the
+    // reveal by its audio instead of the clip's cadence. Decided ONCE here
+    // and handed to both sides, so the clip and the synthesized line can
+    // never both play.
+    const voiced = this.sink.voiceAvailable();
     await this.runAsTurn(
       (signal) =>
         this.driver.playOpening(
           block,
           this.openingLeadMs,
-          () => this.voice.onOpeningStreamStart(),
-          this.voice.openingBaseMs,
+          () => this.voice.onOpeningStreamStart(voiced),
+          voiced ? undefined : this.voice.openingBaseMs,
           signal,
+          voiced,
         ),
       // Not rethrown — fire-and-forget; the seed is durable on disk and shows
       // as instant history on the next resume.
@@ -1600,6 +1609,11 @@ export class SessionImpl implements Session {
         : {}),
       ...(deps.easterEggNow !== undefined
         ? { easterEggNow: deps.easterEggNow }
+        : {}),
+      // One voice (ADR 0042 amendment 2026-09-08): the cues ask the same
+      // synthesizer the sink speaks with. Chinese only, like the sink.
+      ...(config.speech !== undefined && lang === "zh"
+        ? { synth: config.speech.synthesizer }
         : {}),
     });
 

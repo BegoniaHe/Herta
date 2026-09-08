@@ -109,10 +109,17 @@ async function drain() {
         continue;
       }
       try {
+        // silenceScale 1.0 = the model's own pauses. sherpa's DEFAULT is 0.2
+        // (the voice repo's example copies it), and sherpa applies it to every
+        // pause it detects in the rendered audio: on the sample sentence it
+        // cut 1.0 s of pauses out of a 5.0 s render, and the owner heard the
+        // result as "obviously degraded" against the Python-side listening
+        // reference (2026-09-05). At 1.0 sherpa's output is the raw model
+        // output to the millisecond.
         const gc = new sherpa.GenerationConfig({
           sid: 0,
           speed: 1.0,
-          silenceScale: 0.2,
+          silenceScale: 1.0,
         });
         // SYNCHRONOUS generate, not generateAsync. Under Electron's
         // utilityProcess the addon's async worker rejects every call with

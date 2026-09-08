@@ -111,6 +111,10 @@ export const SILENT_UNIT_MS = 400;
  * remove. It is set instead to "long enough that a healthy machine never
  * reaches it", leaving it to do its real job: stopping a stuck or failed
  * second unit from holding speech forever.
+ *
+ * Since sentences can be silent (a Latin fragment, a fence), the pre-roll
+ * waits for the first two VOICED units inside the synthesis window rather
+ * than for "unit 1": a silent unit is ready at once and covers nothing.
  */
 export const PREROLL_MAX_MS = 8000;
 
@@ -398,15 +402,30 @@ export function createVoicedReveal(deps: VoicedRevealDeps): VoicedReveal {
     }
     if (st === undefined || st.status === "pending") return; // audio not ready
     // Pre-roll (see PREROLL_MAX_MS): before the FIRST unit starts, give the
-    // second one a bounded chance to be ready, so a short opener does not
-    // strand the reply in silence while the next sentence synthesizes.
+    // head of the stream a bounded chance to be ready, so a short opener
+    // does not strand the reply in silence while the next sentence
+    // synthesizes. "Ready" means the first two VOICED units inside the
+    // synthesis window: a silent unit (a fence, a Latin sentence — since
+    // 2026-09-06 whole sentences can be silent) lands in a beat and gives
+    // no cover, so counting it as the second unit re-created the stall the
+    // pre-roll exists to remove (voice lab: 2.9 s after 哼。 + a silent line).
     if (playIdx === 0 && !fastForwarding && !prerollExpired) {
-      const next = units.length > 1 ? states.get(1) : undefined;
-      const nextSettled = next !== undefined && next.status !== "pending";
-      // Nothing to wait for: a lone unit on a finished input, or the second
-      // unit's audio is already in hand.
-      const noSecond = inputFinished && units.length <= 1;
-      if (!nextSettled && !noSecond) {
+      const windowEnd = Math.min(units.length, 1 + lookahead);
+      const head: number[] = [];
+      for (let idx = 0; idx < windowEnd && head.length < 2; idx += 1) {
+        if ((units[idx]?.speak.length ?? 0) > 0) head.push(idx);
+      }
+      const headSettled = head.every((idx) => {
+        const s = states.get(idx);
+        return s !== undefined && s.status !== "pending";
+      });
+      // Nothing more to wait for: two voiced units in hand, or no second
+      // voiced unit can still enter the window (input finished, or the
+      // window already holds its full complement of units — an open stream
+      // with room left may still deliver one, so it waits, up to the cap).
+      const enough =
+        head.length >= 2 || inputFinished || units.length >= 1 + lookahead;
+      if (!(headSettled && enough)) {
         if (prerollTimer === null) {
           prerollTimer = setTimeout(() => {
             prerollTimer = null;

@@ -102,10 +102,11 @@ afterEach(() => {
 describe("createVoicedReveal", () => {
   it("synthesizes a unit the moment it closes and reveals its text across the audio", async () => {
     const h = harness();
-    h.ctl.pushToken("第一句话。第二");
-    // Unit 0 ("第一句话。") closed once a char followed the ender.
+    // Sentences here are past MIN_UNIT_CHARS so each closes on its own.
+    h.ctl.pushToken("第一句话说得比较长一些。第二");
+    // Unit 0 closed once a char followed the ender.
     expect(h.synth.requests.map((r) => [r.seq, r.text])).toEqual([
-      [0, "第一句话。"],
+      [0, "第一句话说得比较长一些。"],
     ]);
     expect(h.text()).toBe(""); // nothing until the audio exists
     h.synth.resolve(0, 1000);
@@ -115,19 +116,19 @@ describe("createVoicedReveal", () => {
     // Audio emitted as the unit starts; the first char lands at t≈0 of the span.
     expect(h.tts()).toHaveLength(1);
     expect(h.begun()).toBe(1);
-    // Unit 0 = "第一句话。": 5 chars, 。 weighted 3 → total 7; char i lands
-    // at 1000·(cumulative weight)/7. By 300 ms two chars are out.
+    // Unit 0: 12 chars, 。 weighted 3 → total 14; char i lands at
+    // 1000·(cumulative weight)/14. By 300 ms four chars are out.
     await vi.advanceTimersByTimeAsync(300);
-    expect(h.text()).toBe("第一"); // 2 chars by ~285 ms
+    expect(h.text()).toBe("第一句话"); // 4 chars by ~286 ms
     await vi.advanceTimersByTimeAsync(700);
-    expect(h.text()).toBe("第一句话。");
+    expect(h.text()).toBe("第一句话说得比较长一些。");
     // Unit 1 is still open (no ender) → nothing more yet.
     h.ctl.pushToken("句。");
     h.ctl.finishInput();
     expect(h.synth.requests.map((r) => r.seq)).toEqual([0, 1]);
     h.synth.resolve(1, 500);
     await vi.advanceTimersByTimeAsync(600);
-    expect(h.text()).toBe("第一句话。第二句。");
+    expect(h.text()).toBe("第一句话说得比较长一些。第二句。");
     await h.ctl.done;
     expect(h.finished()).toEqual([true]);
     expect(h.tts().map((t) => (t as { seq: number }).seq)).toEqual([0, 1]);
@@ -139,21 +140,21 @@ describe("createVoicedReveal", () => {
       resolveVerdict = r;
     });
     const h = harness({ verdictPending });
-    h.ctl.pushToken("先说这个。再说那个。");
+    h.ctl.pushToken("先说这个问题的第一部分。再说那个问题的第二部分。");
     h.ctl.finishInput();
     h.synth.resolve(0, 400);
     h.synth.resolve(1, 400);
     await vi.advanceTimersByTimeAsync(1000);
     // Unit 0 played; unit 1 (the last) holds.
-    expect(h.text()).toBe("先说这个。");
+    expect(h.text()).toBe("先说这个问题的第一部分。");
     expect(h.tts()).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(h.text()).toBe("先说这个。");
+    expect(h.text()).toBe("先说这个问题的第一部分。");
     resolveVerdict();
     const ff = h.ctl.fastForward();
     await vi.advanceTimersByTimeAsync(500);
     await ff;
-    expect(h.text()).toBe("先说这个。再说那个。");
+    expect(h.text()).toBe("先说这个问题的第一部分。再说那个问题的第二部分。");
     expect(h.tts()).toHaveLength(2);
   });
 
@@ -170,7 +171,7 @@ describe("createVoicedReveal", () => {
 
   it("cancel (a veto) stops the audio mid-unit, rejects done, and reports the partial cursor", async () => {
     const h = harness();
-    h.ctl.pushToken("这句话会被否掉。然后");
+    h.ctl.pushToken("这句话马上就会被否掉的。然后");
     h.synth.resolve(0, 1000);
     // Past the pre-roll (the second unit is still open), then partway in.
     await vi.advanceTimersByTimeAsync(PREROLL_MAX_MS);
@@ -191,11 +192,11 @@ describe("createVoicedReveal", () => {
 
   it("flushTail (interrupt) lands the whole remainder in one emit and stops the audio", async () => {
     const h = harness();
-    h.ctl.pushToken("第一句。第二句还在生成");
+    h.ctl.pushToken("第一句话说得很长很长。第二句还在生成");
     h.synth.resolve(0, 1000);
     await vi.advanceTimersByTimeAsync(300);
     h.ctl.flushTail();
-    expect(h.text()).toBe("第一句。第二句还在生成");
+    expect(h.text()).toBe("第一句话说得很长很长。第二句还在生成");
     expect(h.emitted[h.emitted.length - 1]).toContain("第二句还在生成");
     expect(h.stops()).toHaveLength(1);
     await h.ctl.done;
@@ -243,7 +244,9 @@ describe("createVoicedReveal", () => {
 
   it("synthesizes only `lookahead` units past the one playing", async () => {
     const h = harness({ lookahead: 1 });
-    h.ctl.pushToken("一句。两句。三句。四句。");
+    const four =
+      "第一句话说得够长了吧。第二句话也说得够长了。第三句话同样够长了吧。第四句话还是够长了。";
+    h.ctl.pushToken(four);
     h.ctl.finishInput();
     expect(h.synth.requests.map((r) => r.seq)).toEqual([0, 1]);
     h.synth.resolve(0, 100);
@@ -257,7 +260,7 @@ describe("createVoicedReveal", () => {
     h.synth.resolve(3, 100);
     await vi.advanceTimersByTimeAsync(200);
     await h.ctl.done;
-    expect(h.text()).toBe("一句。两句。三句。四句。");
+    expect(h.text()).toBe(four);
   });
 
   it("finishInput on an empty stream resolves done without ever beginning", async () => {
@@ -285,28 +288,34 @@ describe("createVoicedReveal", () => {
 
   it("the reveal ceiling flushes a runaway utterance once input is finished and the verdict resolved", async () => {
     const h = harness({ maxUtteranceMs: 1000 });
-    h.ctl.pushToken("一句。两句。三句。");
+    const s1 = "第一句话说得够长了吧。";
+    const s2 = "第二句话也说得够长了。";
+    const s3 = "第三句话同样够长了吧。";
+    h.ctl.pushToken(s1 + s2 + s3);
     h.ctl.finishInput();
     h.synth.resolve(0, 800);
     h.synth.resolve(1, 800);
     h.synth.resolve(2, 800);
     await vi.advanceTimersByTimeAsync(850);
-    expect(h.text()).toBe("一句。");
+    expect(h.text()).toBe(s1);
     // Unit 1 starts at ~800 ms (under the ceiling); by its end we are past it,
     // so unit 2 is flushed rather than played.
     await vi.advanceTimersByTimeAsync(850);
-    expect(h.text()).toBe("一句。两句。三句。");
+    expect(h.text()).toBe(s1 + s2 + s3);
     expect(h.tts()).toHaveLength(2);
     expect(h.stops()).toHaveLength(1);
     await h.ctl.done;
   });
 
   it("pre-roll: a SHORT opener waits for the next unit's audio instead of stranding the reply", async () => {
-    // The shape the voice lab caught: "行。" (0.9 s of audio) followed by a
-    // sentence that takes 3 s to synthesize — starting immediately meant 2.4 s
-    // of dead silence mid-reply. The wait now sits BEFORE she speaks.
+    // The shape the voice lab caught: a short opener (0.9 s of audio) followed
+    // by a sentence that takes 3 s to synthesize — starting immediately meant
+    // 2.4 s of dead silence mid-reply. The wait now sits BEFORE she speaks.
+    // (A two-character 行。 now merges into its successor by the segmenter's
+    // minimum; the opener here is long enough to stand alone.)
     const h = harness();
-    h.ctl.pushToken("行。@板砖 去把游标重置修了。");
+    const text = "行，这个我早就知道了。@板砖 去把游标重置修了。";
+    h.ctl.pushToken(text);
     h.ctl.finishInput();
     h.synth.resolve(0, 900);
     await vi.advanceTimersByTimeAsync(50);
@@ -319,13 +328,13 @@ describe("createVoicedReveal", () => {
     await vi.advanceTimersByTimeAsync(900);
     expect(h.tts()).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(3000);
-    expect(h.text()).toBe("行。@板砖 去把游标重置修了。");
+    expect(h.text()).toBe(text);
     await h.ctl.done;
   });
 
   it("pre-roll: a slow second unit does not hold speech past the cap", async () => {
     const h = harness();
-    h.ctl.pushToken("行。再说一句。");
+    h.ctl.pushToken("行，这个我早就知道了。再说一句就够了。");
     h.ctl.finishInput();
     h.synth.resolve(0, 900);
     await vi.advanceTimersByTimeAsync(PREROLL_MAX_MS - 1);
@@ -334,7 +343,32 @@ describe("createVoicedReveal", () => {
     expect(h.tts()).toHaveLength(1); // cap reached — she starts anyway
     h.synth.resolve(1, 500);
     await vi.advanceTimersByTimeAsync(1500);
-    expect(h.text()).toBe("行。再说一句。");
+    expect(h.text()).toBe("行，这个我早就知道了。再说一句就够了。");
+    await h.ctl.done;
+  });
+
+  it("pre-roll: a silent unit gives no cover — the first two VOICED units are awaited", async () => {
+    // The voice lab's shape after sentences became units: 哼。 (spoken),
+    // a silent Latin sentence, then a long spoken sentence whose synthesis
+    // took 4 s. Waiting for "unit 1" (the silent one, ready at once) let
+    // the opener play, the silent beat pass, and 2.9 s of nothing follow.
+    const h = harness();
+    const text =
+      "哼，这个我早就知道了。\n```\nx\n```\n这一句会说得比较长一些才对。";
+    h.ctl.pushToken(text);
+    h.ctl.finishInput();
+    // Units: 0 spoken (line), 1 silent (fence), 2 spoken.
+    expect(h.synth.requests.map((r) => r.seq)).toEqual([0, 2]);
+    h.synth.resolve(0, 900);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(h.tts()).toHaveLength(0); // holding for unit 2, not for the fence
+    h.synth.resolve(2, 4000);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.tts()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(900 + SILENT_UNIT_MS + 10);
+    expect(h.tts()).toHaveLength(2); // straight on: no gap after the beat
+    await vi.advanceTimersByTimeAsync(4100);
+    expect(h.text()).toBe(text);
     await h.ctl.done;
   });
 

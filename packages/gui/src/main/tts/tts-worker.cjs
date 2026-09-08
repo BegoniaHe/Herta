@@ -28,7 +28,7 @@ const { COMM_CHANNEL_PRESETS, applyCommChannel } = require(
 // Punctuation placeholders that keep a Chinese sentence ONE model sequence
 // inside sherpa (see sherpa-punctuation.cjs). Used only when the bundle's
 // lexicon carries the placeholder rows; otherwise the text goes as is.
-const { lexiconHasPlaceholders, toSherpaText } = require(
+const { createSherpaTextMapper } = require(
   path.join(__dirname, "sherpa-punctuation.cjs"),
 );
 
@@ -36,8 +36,9 @@ let tts = null;
 let sherpa = null;
 /** Comm-channel preset applied to every unit, or "none" for the dry voice. */
 let effect = "none";
-/** Whether the loaded lexicon understands the punctuation placeholders. */
-let placeholders = false;
+/** Text mapper built from the bundle's lexicons at init (see
+ *  sherpa-punctuation.cjs); `punctuation` false = the text goes as is. */
+let mapper = { punctuation: false, english: false, toSherpaText: (t) => t };
 /** FIFO of { id, utteranceId, seq, text }. */
 const queue = [];
 /** Utterance ids whose queued (not-yet-started) work should be dropped. */
@@ -138,8 +139,8 @@ async function drain() {
         // yields between units below so `cancel` still lands promptly.
         const audio = tts.generate({
           text:
-            placeholders && req.lang === "zh"
-              ? toSherpaText(req.text)
+            mapper.punctuation && req.lang === "zh"
+              ? mapper.toSherpaText(req.text)
               : req.text,
           generationConfig: gc,
           // Electron's V8 refuses EXTERNAL ArrayBuffers ("External buffers
@@ -199,18 +200,26 @@ process.parentPort.on("message", (evt) => {
       effect = wanted;
       sherpa = require(data.sherpaPath);
       process.chdir(data.modelRoot);
-      placeholders = lexiconHasPlaceholders(
-        require("node:fs").readFileSync(
-          path.join(data.modelRoot, "frontend", "lexicon-zh.txt"),
-          "utf8",
-        ),
-      );
+      const fs = require("node:fs");
+      const frontend = path.join(data.modelRoot, "frontend");
+      const readText = (name) => {
+        try {
+          return fs.readFileSync(path.join(frontend, name), "utf8");
+        } catch {
+          return "";
+        }
+      };
+      mapper = createSherpaTextMapper({
+        lexiconZhText: readText("lexicon-zh.txt"),
+        lexiconEnText: readText("lexicon-us-en.txt"),
+      });
       tts = createTts(data.modelRoot, data.modelFile);
       reply({
         type: "ready",
         sampleRate: tts.sampleRate,
         effect,
-        placeholders,
+        placeholders: mapper.punctuation,
+        english: mapper.english,
       });
     } catch (err) {
       reply({

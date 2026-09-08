@@ -50,6 +50,8 @@ export const CMD = {
   setTheme: "settings:setTheme",
   getDeviceScene: "settings:getDeviceScene",
   setDeviceScene: "settings:setDeviceScene",
+  getRealtimeVoice: "settings:getRealtimeVoice",
+  setRealtimeVoice: "settings:setRealtimeVoice",
   getDeepSeekKeyStatus: "settings:getDeepSeekKeyStatus",
   setDeepSeekKey: "settings:setDeepSeekKey",
   clearDeepSeekKey: "settings:clearDeepSeekKey",

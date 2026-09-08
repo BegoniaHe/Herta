@@ -69,6 +69,28 @@ extraResources:
   # than tidy: it requires the license text itself to accompany the code.
   - from: ../../THIRD-PARTY-NOTICES.md
     to: THIRD-PARTY-NOTICES.md
+  # ── Herta's real-time voice (ADR 0042) ────────────────────────────────────
+  # The Kokoro model bundle (~110 MB) and the native synthesis runtime
+  # (~23 MB/arch), both as extraResources rather than app payload:
+  #
+  #   - the model is DATA the worker opens by path, and putting ~110 MB inside
+  #     app.asar buys nothing but a slower archive;
+  #   - the runtime is a NATIVE addon, which cannot be bundled into out/main
+  #     (the packaging invariant CI greps for) and must not sit behind the
+  #     asar boundary — the addon finds its own platform library through a
+  #     SIBLING path, so both packages need to be real directories next to
+  #     each other. `scripts/stage-tts.mjs` produces exactly that layout;
+  #     `src/main/tts/synthesizer.ts` resolves <resources>/tts-runtime/.
+  #
+  # BOTH are optional by design: absent, the synthesizer reports unavailable
+  # and every reply types at the read-along pace, exactly as before the voice
+  # existed. `scripts/check-tts-payload.mjs` (run by the dist scripts) says so
+  # at build time rather than letting a silent installer be a surprise —
+  # electron-builder itself logs one line and exits 0 for a missing source.
+  - from: ../../data/tts
+    to: tts
+  - from: tts-runtime
+    to: tts-runtime
 
 # Auto-update feed (2026-07-10): the PUBLIC Herta repo's GitHub Releases.
 # electron-builder embeds this as app-update.yml in the packaged app (what

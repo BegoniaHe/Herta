@@ -549,7 +549,7 @@ describe("V2ActorDriver", () => {
 
   it("D3: playOpening forwards baseMsOverride to slowStreamSpeech (wav-matched cadence)", async () => {
     const provider = mkProvider([[{ type: "finish", reason: "stop" }]]);
-    const seen: { opts?: { baseMsOverride?: number } } = {};
+    const seen: { opts?: { baseMsOverride?: number; unvoiced?: boolean } } = {};
     const sink: ActorStreamingSink = {
       beginHertaStream: () => undefined,
       streamHertaToken: () => undefined,
@@ -596,9 +596,11 @@ describe("V2ActorDriver", () => {
     // leadMs 0 → no wait; pass a base override.
     await driver.playOpening(seed, 0, undefined, 137);
     expect(seen.opts?.baseMsOverride).toBe(137);
+    // …alongside the unvoiced marker (ADR 0042) — the clip is the voice here.
+    expect(seen.opts?.unvoiced).toBe(true);
   });
 
-  it("D3: playOpening passes no opts when baseMsOverride is omitted", async () => {
+  it("D3: playOpening always marks the opening UNVOICED (ADR 0042)", async () => {
     const provider = mkProvider([[{ type: "finish", reason: "stop" }]]);
     const seen: { called: boolean; opts?: unknown } = { called: false };
     const sink: ActorStreamingSink = {
@@ -647,7 +649,10 @@ describe("V2ActorDriver", () => {
     };
     await driver.playOpening(seed, 0);
     expect(seen.called).toBe(true);
-    expect(seen.opts).toBeUndefined();
+    // The opening already HAS a voice — its recorded clip, cued by the caller
+    // in onStreamStart. A sink with a speech synthesizer must not speak the
+    // same line over it, so the flag is set even with no cadence override.
+    expect(seen.opts).toEqual({ unvoiced: true });
   });
 
   it("preserves state across multiple turns (record grows)", async () => {

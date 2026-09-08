@@ -641,10 +641,13 @@ export class V2ActorDriver {
         });
       }
       if (signal?.aborted !== true) onStreamStart?.();
-      const controller = sink.slowStreamSpeech(
-        block.text,
-        baseMsOverride !== undefined ? { baseMsOverride } : undefined,
-      );
+      // `unvoiced`: the opening is voiced by its RECORDED clip (the cue the
+      // caller fires in onStreamStart); a sink with a speech synthesizer
+      // (ADR 0042) must not speak the same line over it.
+      const controller = sink.slowStreamSpeech(block.text, {
+        ...(baseMsOverride !== undefined ? { baseMsOverride } : {}),
+        unvoiced: true,
+      });
       const onAbort = (): void => controller.flushRemainder?.();
       if (signal?.aborted === true) onAbort();
       else signal?.addEventListener("abort", onAbort, { once: true });

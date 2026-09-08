@@ -45,6 +45,18 @@ export interface GlobalSettings {
    *  (`DEVICE_SCENE_DEFAULT`); the Settings → 差分协处理器 toggle writes an
    *  explicit boolean. Live-applied in the renderer; no restart. */
   readonly deviceScene?: boolean;
+  /**
+   * Herta's synthesized real-time voice (ADR 0042): she SPEAKS her replies,
+   * and the text types in step with the audio. Default TRUE, and LIVE — the
+   * synthesizer's `available()` is read at every speech stream's start, so a
+   * toggle applies to the next reply with no restart.
+   *
+   * Default-on is safe because it is gated on assets: an install without the
+   * model bundle reports unavailable and behaves exactly as before. It is
+   * also the one switch that stops the synthesis WORK — the master mute
+   * below it silences playback but the sentences are still synthesized.
+   */
+  readonly realtimeVoice?: boolean;
 }
 
 export interface WindowStateSnapshot {
@@ -77,6 +89,7 @@ export async function readGlobalSettings(
       windowState,
       interactionLanguage,
       deviceScene,
+      realtimeVoice,
     } = parsed as {
       locale?: unknown;
       closeToTray?: unknown;
@@ -85,6 +98,7 @@ export async function readGlobalSettings(
       windowState?: unknown;
       interactionLanguage?: unknown;
       deviceScene?: unknown;
+      realtimeVoice?: unknown;
     };
     if (deviceScene !== undefined && typeof deviceScene !== "boolean") {
       return {};
@@ -101,6 +115,9 @@ export async function readGlobalSettings(
       return {};
     }
     if (autoUpdate !== undefined && typeof autoUpdate !== "boolean") {
+      return {};
+    }
+    if (realtimeVoice !== undefined && typeof realtimeVoice !== "boolean") {
       return {};
     }
     if (

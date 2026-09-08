@@ -141,6 +141,22 @@ export interface ModelConfig {
   readonly backend: BackendModelChoice;
 }
 
+/**
+ * Herta's real-time-voice state (ADR 0042) for the Settings row. `enabled`
+ * is the user's toggle; the rest is why it may still be silent — reported
+ * rather than inferred, because "the toggle is on and she does not speak"
+ * with no explanation is the worst version of this feature.
+ */
+export interface RealtimeVoiceState {
+  readonly enabled: boolean;
+  /** The model bundle is installed and complete. */
+  readonly bundle: boolean;
+  /** The native synthesis runtime was found. */
+  readonly runtime: boolean;
+  /** The worker failed repeatedly; voice is off until the app restarts. */
+  readonly failed: boolean;
+}
+
 /** The UI chrome language (Settings → Language). */
 export type Locale = "zh" | "en";
 
@@ -527,6 +543,15 @@ export interface HertaBridge {
   getDeviceScene?(): Promise<boolean>;
   /** Persist the 3D device card toggle; the card applies it live. */
   setDeviceScene?(enabled: boolean): Promise<void>;
+  /** Read Herta's real-time-voice state (ADR 0042): whether the user has it
+   *  ON, and whether it can run here at all — `available` folds in the model
+   *  bundle, the native runtime, and a worker that has failed for good, so
+   *  the Settings row can say WHY it is silent instead of lying. OPTIONAL —
+   *  fakes and the website demo omit the pair and the row hides with it. */
+  getRealtimeVoice?(): Promise<RealtimeVoiceState>;
+  /** Persist the real-time-voice toggle. LIVE: the synthesizer reads it at
+   *  every speech stream's start, so it applies to the next reply. */
+  setRealtimeVoice?(enabled: boolean): Promise<void>;
   /** Read the masked DeepSeek key status (Settings → DeepSeek). */
   getDeepSeekKeyStatus(): Promise<DeepSeekKeyStatus>;
   /** Validate a DeepSeek key (a cheap token-free auth check), and on success

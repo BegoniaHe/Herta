@@ -71,6 +71,11 @@ export const zh = {
   "session.group.yesterday": "昨天",
   "session.group.previous7Days": "前 7 天",
   "session.group.older": "更早",
+  "voice.realtime": "实时语音",
+  "voice.realtimeDesc":
+    "黑塔念出回复，文字跟着语音走。合成占用 CPU；改动立即生效。",
+  "voice.realtimeMissing": "未随本次安装附带语音模型，她暂时只能打字。",
+  "voice.realtimeFailed": "语音进程反复失败，本次运行内已停用；重启后重试。",
   "voice.mute": "静音",
   "voice.muteDesc": "关闭黑塔的全部语音。",
   "voice.volume": "音量",

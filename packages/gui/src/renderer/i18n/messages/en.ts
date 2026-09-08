@@ -77,6 +77,13 @@ export const en = {
   "session.group.yesterday": "Yesterday",
   "session.group.previous7Days": "Previous 7 Days",
   "session.group.older": "Older",
+  "voice.realtime": "Real-time voice",
+  "voice.realtimeDesc":
+    "Herta speaks her replies, and the text keeps pace with the audio. Synthesis costs CPU; changes apply immediately.",
+  "voice.realtimeMissing":
+    "No voice model shipped with this install — she can only type for now.",
+  "voice.realtimeFailed":
+    "The voice process failed repeatedly; it's off for this run. Restart Herta to retry.",
   "voice.mute": "Mute voice",
   "voice.muteDesc": "Silence all of Herta's voice.",
   "voice.volume": "Volume",

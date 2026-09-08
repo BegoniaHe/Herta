@@ -25,6 +25,7 @@ import type {
   InteractionLanguageChoice,
   ModelConfig,
   NavBlockedEvent,
+  RealtimeVoiceState,
   SessionError,
   SessionNoSession,
   SessionOpenFailure,
@@ -116,6 +117,14 @@ export interface MockHertaBridgeOpts {
   readonly updateState?: UpdateState;
   /** Seed for getAppVersion. Default "0.1.0". */
   readonly appVersion?: string;
+  /** Seed for getRealtimeVoice (Settings → Voice, ADR 0042). Default: on,
+   *  with the assets present. Mutated by setRealtimeVoice so tests observe
+   *  the round-trip. */
+  readonly realtimeVoiceResult?: RealtimeVoiceState;
+  /** When true, setRealtimeVoice rejects — same seam as
+   *  failSetInteractionLanguage, so the snap-back + error-note path is
+   *  testable. */
+  readonly failSetRealtimeVoice?: boolean;
 }
 
 export interface MockHertaBridge {
@@ -174,6 +183,8 @@ export interface MockHertaBridge {
     setDeviceScene: boolean[];
     getInteractionLanguage: number;
     setInteractionLanguage: InteractionLanguageChoice[];
+    getRealtimeVoice: number;
+    setRealtimeVoice: boolean[];
     windowMinimize: number;
     windowToggleMaximize: number;
     windowClose: number;
@@ -258,6 +269,8 @@ export function createMockHertaBridge(
     setDeviceScene: [],
     getInteractionLanguage: 0,
     setInteractionLanguage: [],
+    getRealtimeVoice: 0,
+    setRealtimeVoice: [],
     windowMinimize: 0,
     windowToggleMaximize: 0,
     windowClose: 0,
@@ -289,6 +302,15 @@ export function createMockHertaBridge(
   // Live project command rules (ADR 0030), seeded then mutated by
   // removeCommandRule so tests observe the round-trip.
   const commandRules: string[] = [...(opts.commandRules ?? [])];
+
+  // Live real-time-voice state (ADR 0042), seeded then mutated by
+  // setRealtimeVoice. The default is the healthy install: on, assets present.
+  let realtimeVoice: RealtimeVoiceState = opts.realtimeVoiceResult ?? {
+    enabled: true,
+    bundle: true,
+    runtime: true,
+    failed: false,
+  };
 
   function sub<T>(set: Set<(e: T) => void>, cb: (e: T) => void): () => void {
     set.add(cb);
@@ -558,6 +580,15 @@ export function createMockHertaBridge(
         throw new Error("write failed");
       }
       interactionLanguage = choice;
+    },
+    getRealtimeVoice: async () => {
+      calls.getRealtimeVoice += 1;
+      return realtimeVoice;
+    },
+    setRealtimeVoice: async (enabled) => {
+      calls.setRealtimeVoice.push(enabled);
+      if (opts.failSetRealtimeVoice === true) throw new Error("write failed");
+      realtimeVoice = { ...realtimeVoice, enabled };
     },
     onWorkspace: (cb) => sub(workspaceCbs, cb),
     onRepo: (cb) => sub(repoCbs, cb),

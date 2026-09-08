@@ -57,6 +57,43 @@ function bundleManifest(section: "main" | "preload" | "renderer"): Plugin {
   };
 }
 
+/**
+ * Emit the neural-voice worker beside the main bundle, verbatim (ADR 0042).
+ *
+ * `src/main/tts/tts-worker.cjs` is deliberately NOT part of the bundle: it
+ * `require`s the native `sherpa-onnx-node` addon, which rollup cannot bundle
+ * (and must not try to — the whole packaging invariant is that `out/main`
+ * references no native code). The coordinator forks it by absolute path
+ * (`join(__dirname, "tts-worker.cjs")`), so it has to exist as a real file
+ * next to `out/main/index.js`. `comm-channel-effect.cjs` (the terminal
+ * treatment, vendored from the voice repo) rides along the same way: the
+ * worker requires it as a sibling, so it must be a real file beside it.
+ *
+ * Copied through `emitFile` rather than a static `publicDir` so a missing
+ * source file fails the BUILD loudly instead of producing an app whose voice
+ * silently never starts.
+ */
+function ttsWorker(): Plugin {
+  const files = ["tts-worker.cjs", "comm-channel-effect.cjs"];
+  return {
+    name: "herta-tts-worker",
+    generateBundle() {
+      for (const name of files) {
+        const src = resolve(__dirname, "src/main/tts", name);
+        if (!existsSync(src)) {
+          this.error(`tts worker file missing at ${src}`);
+          return;
+        }
+        this.emitFile({
+          type: "asset",
+          fileName: name,
+          source: readFileSync(src, "utf8"),
+        });
+      }
+    },
+  };
+}
+
 export default defineConfig({
   // Main + preload BUNDLE their entire dependency graph (packaging strategy,
   // 2026-07-06): the former externalizeDepsPlugin left @herta/* as runtime
@@ -68,7 +105,7 @@ export default defineConfig({
   // app ships NO node_modules and NO native modules. electron + node
   // builtins stay external automatically.
   main: {
-    plugins: [bundleManifest("main")],
+    plugins: [bundleManifest("main"), ttsWorker()],
     build: { outDir: "out/main" },
   },
   preload: {

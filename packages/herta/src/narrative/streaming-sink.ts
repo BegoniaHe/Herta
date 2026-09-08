@@ -218,6 +218,10 @@ export interface ActorStreamingSink {
        *  default. Set so the reveal spans ≈ the clip duration (wav-matched
        *  opening cadence, SPEC 2026-06-23). Omitted → the sink's own base. */
       baseMsOverride?: number;
+      /** This stream already HAS a voice (the opening's recorded clip):
+       *  a sink with a speech synthesizer (ADR 0042) must not voice it a
+       *  second time. Omitted → the sink may voice the stream. */
+      unvoiced?: boolean;
     },
   ) => SlowStreamController;
 
@@ -244,6 +248,8 @@ export interface ActorStreamingSink {
   readonly slowStreamSpeechLive?: (opts?: {
     verdictPending?: Promise<void>;
     baseMsOverride?: number;
+    /** See `slowStreamSpeech`. */
+    unvoiced?: boolean;
   }) => LiveSlowStreamController;
 }
 

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useHertaBridge } from "../context/HertaBridgeContext.js";
 import { playVoiceClip, stopAllVoice } from "../voice/play-voice.js";
+import { playSpeechUnit, stopSpeech } from "../voice/speech-player.js";
 
 /**
  * Subscribe to the server's voice cues and autoplay each clip. Mount once at the
@@ -24,6 +25,10 @@ export function useVoiceCues(): void {
         // request `openings/undefined.opus`).
         if (e.kind === "cue" && typeof e.clipId === "string" && e.clipId !== "")
           playVoiceClip(e.category, e.clipId);
+        // Synthesized speech (ADR 0042): one PCM buffer per sentence unit,
+        // scheduled gapless after the previous one.
+        else if (e.kind === "tts") playSpeechUnit(e);
+        else if (e.kind === "ttsStop") stopSpeech(e.utteranceId);
       }),
       bridge.onReset(() => stopAllVoice()),
       // Scoped to the OPEN session (audit 2026-07-24, M8). Deleting some other

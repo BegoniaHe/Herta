@@ -7087,6 +7087,13 @@ button.commit-view__path:hover {
   transition: background .18s;
 }
 .settings-toggle[aria-checked="true"] { background: var(--banzhuan-led); }
+/* The setting cannot apply on this install (ADR 0042: real-time voice with
+   no model bundle). Same dimming as .settings-slider-wrap.is-disabled, so
+   the two inert controls read alike. */
+.settings-toggle.is-disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 .settings-toggle:focus-visible {
   outline: 2px solid var(--banzhuan-led);
   outline-offset: 2px;

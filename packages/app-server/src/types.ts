@@ -97,6 +97,58 @@ export interface AppServerConfig {
     readonly minNewSessions?: number;
     readonly minSessionHertaTurns?: number;
   };
+  /**
+   * Herta's synthesized voice (ADR 0042). The host owns the synthesizer —
+   * in the desktop app a utility process running the Kokoro model — and
+   * every session's streaming sink asks it, at each speech stream's start,
+   * whether it is `available()`; when it is, the reveal is VOICED: sentence
+   * units are synthesized as they arrive and the text types in lockstep
+   * with the audio. Absent (the CLI, tests) → the paced text reveal, byte-
+   * identical to before.
+   */
+  readonly speech?: {
+    readonly synthesizer: SpeechSynthesizer;
+  };
+}
+
+// ───── Speech synthesis (ADR 0042) ─────
+
+/** One unit of Herta's prose to synthesize — the speakable form of a
+ *  sentence-sized span (see voice/speakable-text.ts). `seq` orders units
+ *  within an utterance; the synthesizer may cancel by `utteranceId`. */
+export interface SynthesisRequest {
+  readonly utteranceId: string;
+  readonly seq: number;
+  readonly text: string;
+  readonly lang: "zh" | "en";
+}
+
+/** Mono PCM for one unit. Int16 so it crosses IPC compactly (24 kHz mono ≈
+ *  48 KB/s); the renderer converts for Web Audio. */
+export interface SynthesizedAudio {
+  readonly samples: Int16Array;
+  readonly sampleRate: number;
+  readonly durationMs: number;
+}
+
+/**
+ * The host-side speech synthesizer the sink drives. Surface-agnostic: the
+ * app-server never loads a model — it only asks for audio and reports what
+ * to play. Contract:
+ *   - `available()` is read at every stream start (a live toggle, the model's
+ *     presence, the worker's health all fold in); a stream that started
+ *     voiced stays voiced even if this flips mid-way.
+ *   - `synthesize` resolves the audio, or `null` when the request was
+ *     cancelled or failed — the reveal then types that unit unvoiced at the
+ *     read-along cadence rather than stalling (voice is never load-bearing
+ *     for the record).
+ *   - `cancel(utteranceId)` drops queued work for an utterance (a veto, an
+ *     interrupt); in-flight native synthesis may finish and be discarded.
+ */
+export interface SpeechSynthesizer {
+  available(): boolean;
+  synthesize(req: SynthesisRequest): Promise<SynthesizedAudio | null>;
+  cancel(utteranceId: string): void;
 }
 
 // ───── Session lifecycle opts/result ─────
@@ -372,6 +424,24 @@ export type RepoEvent =
  *  server only says what to play and when. */
 export type VoiceCueEvent =
   | { readonly kind: "cue"; readonly category: string; readonly clipId: string }
+  | {
+      /** One synthesized unit of Herta's speech (ADR 0042): play it now,
+       *  gapless after the previous `seq` of the same utterance. The sink
+       *  emits it the instant that unit's text begins to reveal, so audio
+       *  and text start together. */
+      readonly kind: "tts";
+      readonly utteranceId: string;
+      readonly seq: number;
+      readonly samples: Int16Array;
+      readonly sampleRate: number;
+      readonly durationMs: number;
+    }
+  | {
+      /** Stop playback of an utterance (a veto cut it mid-sentence, an
+       *  interrupt, the reveal ceiling). No `utteranceId` → stop everything. */
+      readonly kind: "ttsStop";
+      readonly utteranceId?: string;
+    }
   | { readonly kind: "dropped"; readonly count: number };
 
 /** Emitted after a session's files are deleted, so the renderer stores can

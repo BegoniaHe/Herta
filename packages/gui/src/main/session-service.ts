@@ -10,6 +10,7 @@ import {
   type Session,
   type SessionHost,
   type SessionMetadata,
+  type SpeechSynthesizer,
 } from "@herta/app-server";
 import { SessionFileError } from "@herta/core";
 import { validateDeepSeekKey } from "@herta/providers";
@@ -32,6 +33,7 @@ import {
 import { CMD, EVT } from "../preload/channels.js";
 import type {
   InteractionLanguageChoice,
+  RealtimeVoiceState,
   SessionOpenFailure,
   SessionSnapshot,
 } from "../renderer/ipc/bridge-types.js";
@@ -64,6 +66,12 @@ import {
   readWorkspaceFileBounded,
   resolveInsideWorkspace,
 } from "./read-workspace-file.js";
+import {
+  createTtsSynthesizer,
+  resolveSherpaEntry,
+  type TtsSynthesizer,
+} from "./tts/synthesizer.js";
+import { resolveTtsModelRoot } from "./tts/tts-path.js";
 import { resolveVoiceRoot } from "./voice-path.js";
 
 type Send = (channel: string, payload: unknown) => void;
@@ -179,6 +187,11 @@ export async function buildConfig(
   // reasoning as HERTA_UPDATE_URL, audit T1.3: a packaged build honoring an
   // env-set base URL would send the API key to an arbitrary host).
   devBaseUrl?: string,
+  // Herta's speech synthesizer (ADR 0042), injected for the same purity
+  // reason as the key and the voice root: it forks an Electron
+  // utilityProcess. Absent → sessions run the paced text reveal, exactly as
+  // before.
+  speechSynthesizer?: SpeechSynthesizer,
 ): Promise<AppServerConfig> {
   // The GUI reads the DeepSeek key from the encrypted secure store ONLY — no
   // env var, no legacy `deepseek-api-key.txt`. So "No key set" is honest: when
@@ -196,6 +209,9 @@ export async function buildConfig(
     workspaceRoot: cwd,
     ...dirs,
     ...(voiceAssetsDir !== undefined ? { voiceAssetsDir } : {}),
+    ...(speechSynthesizer !== undefined
+      ? { speech: { synthesizer: speechSynthesizer } }
+      : {}),
     dream: { enabled: settings.dream?.enabled ?? true },
     providers: {
       deepseekApiKey,
@@ -453,6 +469,12 @@ export function createSessionService(
   let host: SessionHost | null = null;
   let stopForwarders: (() => void) | null = null;
   let handlersRegistered = false;
+  // Herta's synthesized voice (ADR 0042). Built once at bootstrap and shared
+  // by every session; the enable flag is cached here so `available()` — read
+  // at every speech stream's start — never touches disk, and the Settings
+  // toggle applies to the very next reply.
+  let synthesizer: TtsSynthesizer | null = null;
+  let realtimeVoiceEnabled = true;
   const send: Send = (ch, payload) => {
     if (!wc.isDestroyed()) wc.send(ch, payload);
   };
@@ -1143,6 +1165,31 @@ export function createSessionService(
         deviceScene: enabled === true,
       }));
     });
+    // Settings → Voice: Herta's real-time synthesized voice (ADR 0042).
+    // App-global and applied LIVE — the synthesizer reads the cached flag at
+    // every speech stream's start. The read reports the ASSET facts alongside
+    // the toggle so the row can explain a silent install rather than claim
+    // the voice is on when nothing can speak.
+    handle(CMD.getRealtimeVoice, async (): Promise<RealtimeVoiceState> => {
+      const s = await readGlobalSettings(app.getPath("userData"));
+      const enabled = s.realtimeVoice ?? true;
+      realtimeVoiceEnabled = enabled;
+      const st = synthesizer?.status();
+      return {
+        enabled,
+        bundle: st?.bundle ?? false,
+        runtime: st?.runtime ?? false,
+        failed: st?.failed ?? false,
+      };
+    });
+    handle(CMD.setRealtimeVoice, async (_e, enabled: boolean) => {
+      const next = enabled === true;
+      realtimeVoiceEnabled = next;
+      await updateGlobalSettings(app.getPath("userData"), (s) => ({
+        ...s,
+        realtimeVoice: next,
+      }));
+    });
     // Settings → DeepSeek key. The secure store is the single source of truth;
     // `host.setDeepSeekKey` mirrors it to the running session's live key so the
     // NEXT turn uses it with no restart. Only the masked status crosses back to
@@ -1193,6 +1240,30 @@ export function createSessionService(
     // renderer stuck on an empty workbench.
     try {
       const workspaceRoot = appWorkspaceRoot();
+      // Herta's synthesized voice (ADR 0042). Constructed here — before the
+      // host, so every session it creates carries it — but the utility
+      // process starts LAZILY on the first sentence, so an install that
+      // never speaks never pays the model load. The enable flag is seeded
+      // from the persisted setting; the Settings handler keeps it current.
+      realtimeVoiceEnabled =
+        (await readGlobalSettings(app.getPath("userData"))).realtimeVoice ??
+        true;
+      synthesizer = createTtsSynthesizer({
+        modelRoot: resolveTtsModelRoot({
+          isPackaged: app.isPackaged,
+          resourcesPath: process.resourcesPath,
+          workspaceRoot,
+        }),
+        // electron.vite.config.ts emits the worker beside the main bundle;
+        // it is a plain .cjs on purpose — a native addon cannot be bundled.
+        workerPath: join(__dirname, "tts-worker.cjs"),
+        sherpaPath: resolveSherpaEntry({
+          isPackaged: app.isPackaged,
+          resourcesPath: process.resourcesPath,
+          startDir: __dirname,
+        }),
+        enabled: () => realtimeVoiceEnabled,
+      });
       const config = await buildConfig(
         workspaceRoot,
         homedir(),
@@ -1207,6 +1278,7 @@ export function createSessionService(
         // (T1.3 pattern — an env-settable base URL in production would
         // redirect the API key to an arbitrary host).
         app.isPackaged ? undefined : process.env.HERTA_DEEPSEEK_BASE_URL,
+        synthesizer,
       );
       host = createSessionHost(config);
       // Launch lands on the connect screen (接入黑塔空间站) rather than
@@ -1242,6 +1314,12 @@ export function createSessionService(
     await host?.closeActiveSession();
     host?.dispose();
     host = null;
+    // The voice worker is a CHILD PROCESS: left running it would outlive the
+    // window and hold ~200 MB of loaded model. Disposed after the sessions,
+    // so a turn still unwinding can finish its last synthesis request
+    // (which resolves null once the worker is gone — the reveal types it).
+    synthesizer?.dispose();
+    synthesizer = null;
   }
 
   return {

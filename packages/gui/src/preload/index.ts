@@ -91,6 +91,9 @@ const bridge: HertaBridge = {
   setTheme: (theme) => ipcRenderer.invoke(CMD.setTheme, theme),
   getDeviceScene: () => ipcRenderer.invoke(CMD.getDeviceScene),
   setDeviceScene: (enabled) => ipcRenderer.invoke(CMD.setDeviceScene, enabled),
+  getRealtimeVoice: () => ipcRenderer.invoke(CMD.getRealtimeVoice),
+  setRealtimeVoice: (enabled) =>
+    ipcRenderer.invoke(CMD.setRealtimeVoice, enabled),
   getDeepSeekKeyStatus: () => ipcRenderer.invoke(CMD.getDeepSeekKeyStatus),
   setDeepSeekKey: (key) => ipcRenderer.invoke(CMD.setDeepSeekKey, key),
   clearDeepSeekKey: () => ipcRenderer.invoke(CMD.clearDeepSeekKey),

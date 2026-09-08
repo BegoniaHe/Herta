@@ -6,6 +6,8 @@
       "!**/dist",
       "!**/out",
       "!packages/gui/release",
+      "!packages/gui/tts-runtime",
+      "!packages/gui/src/main/tts/comm-channel-effect.cjs",
       "!**/node_modules",
       "!**/reference_cc_codes",
       "!**/reference_cc_hermes",

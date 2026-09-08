@@ -569,10 +569,21 @@ export class SessionImpl implements Session {
     this.projector.emitTurnLifecycle({ kind: "started", turnId });
     try {
       await body(abortController.signal);
+      // Voiced speech (ADR 0042): a beat still sounding must not outlive its
+      // turn. Land its text, stop its audio, and release the record events it
+      // was gating — BEFORE `finished` is emitted, or the store would see the
+      // turn end with the final herta block still queued and clear the
+      // streaming bubble out from under it. In the shared runner rather than
+      // one caller, so a regenerated reply (D2) settles the same way a
+      // submitted one does; the opening is unvoiced and this is a no-op there.
+      this.sink.settleVoice();
       this._record = this.driver.getRecord();
       hooks.onFinished?.();
       this.projector.emitTurnLifecycle({ kind: "finished", turnId });
     } catch (err) {
+      // Same reason as the success path above, and the same ordering: the
+      // blocks a voiced beat gated must reach the renderer before `failed`.
+      this.sink.settleVoice();
       hooks.onFailed?.(err);
       this.projector.emitTurnLifecycle({
         kind: "failed",
@@ -859,6 +870,12 @@ export class SessionImpl implements Session {
     if (opts?.turnId !== undefined && opts.turnId !== this.currentTurn.turnId) {
       return { ok: false };
     }
+    // Silence her AT the stop click, not when the turn finishes unwinding
+    // (ADR 0042): the abort reaches the primary controller through the
+    // actor's flush arming, but an in-turn beat's audio has no such path,
+    // and a voice that keeps talking after "stop" reads as a hang. Mirrors
+    // the renderer cutting clip playback on the same click.
+    this.sink.settleVoice();
     this.currentTurn.abortController.abort(
       new DOMException("Interrupted by session.interrupt()", "AbortError"),
     );
@@ -1542,6 +1559,22 @@ export class SessionImpl implements Session {
       undefined,
       lang,
     );
+    // Herta's synthesized voice (ADR 0042). Attached when the host provides a
+    // synthesizer; the sink asks `available()` at every speech stream's start,
+    // so the user's toggle, a missing model bundle and a dead worker all fold
+    // into one live check — and every path without one (the CLI, tests) keeps
+    // the paced text reveal byte-for-byte.
+    //
+    // Chinese only in v1, for the same reason as every other voice cue (ADR
+    // 0013 §5): the model IS bilingual, but her English speaking voice has
+    // never been reviewed, and shipping an unreviewed voice is a bigger claim
+    // than shipping none.
+    if (config.speech !== undefined && lang === "zh") {
+      sink.attachVoice({
+        synth: config.speech.synthesizer,
+        emitVoice: (ev) => projector.emitVoice(ev),
+      });
+    }
 
     // 3. Voice (session-voice.ts): the opening's clip and clip-matched
     //    cadence, the particle cue, the veto reaction and the easter egg,

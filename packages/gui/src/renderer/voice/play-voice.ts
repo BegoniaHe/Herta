@@ -1,4 +1,10 @@
 import { voiceClipUrl } from "../../shared/voice.js";
+import {
+  applySpeechVolume,
+  isSpeechPlaying,
+  stopSpeech,
+  subscribeSpeechPlaying,
+} from "./speech-player.js";
 import { getVoiceVolume, isVoiceMuted } from "./voice-prefs.js";
 
 /**
@@ -18,16 +24,19 @@ function notifyPlaying(): void {
   for (const l of playingListeners) l();
 }
 
-/** True while at least one voice clip is playing. */
+/** True while at least one voice clip — recorded OR synthesized (ADR 0042)
+ *  — is playing. Both feed the aura's speaking state. */
 export function isVoicePlaying(): boolean {
-  return active.size > 0;
+  return active.size > 0 || isSpeechPlaying();
 }
 
 /** Subscribe to changes in `isVoicePlaying()`. Returns an unsubscribe fn. */
 export function subscribeVoicePlaying(listener: () => void): () => void {
   playingListeners.add(listener);
+  const unsubSpeech = subscribeSpeechPlaying(listener);
   return () => {
     playingListeners.delete(listener);
+    unsubSpeech();
   };
 }
 
@@ -89,6 +98,8 @@ export function applyVoiceVolume(): void {
       // ignore — best-effort
     }
   }
+  // Synthesized speech rides its own gain node (ADR 0042).
+  applySpeechVolume();
 }
 
 export function stopAllVoice(): void {
@@ -101,5 +112,9 @@ export function stopAllVoice(): void {
     }
   }
   active.clear();
+  // Everything that cuts clip playback — the stop click, a session switch, a
+  // failed turn — must cut her SYNTHESIZED voice too, or she keeps talking
+  // over the next session (ADR 0042).
+  stopSpeech();
   notifyPlaying();
 }

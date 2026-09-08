@@ -6946,10 +6946,104 @@ button.commit-view__path:hover {
   gap: 8px;
   align-items: stretch;
 }
-/* The voice pane's key form hangs under its row card (the DeepSeek pane's
-   sits under a status line that carries its own margin): the same 12px
-   breath, or the input reads as glued to the card's edge (owner 2026-09-08). */
-.settings-row + .settings-key-form { margin-top: 12px; }
+/* A key as one card row (the voice pane's two MiniMax keys, owner
+   2026-09-08 — "a card with a form hanging under it is ugly"): the field
+   sits inside the row under the description, compact; the masked status
+   and the delete link stack in the control column; a note a save leaves
+   stays inside the row, so the card group never breaks around it. */
+/* The text column takes the row's width in a key row (its content would
+   otherwise size it, and a short description left the second key's field
+   a hundred pixels narrower than the first's — measured 387 vs 286). */
+.settings-row--key .settings-row-text { flex: 1 1 auto; }
+.settings-key-inline {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  margin-top: 8px;
+  max-width: 420px;
+}
+.settings-key-input.is-compact {
+  height: 30px;
+  font-size: 12.5px;
+  border-radius: 8px;
+}
+.settings-key-save.is-compact {
+  height: 30px;
+  padding: 0 13px;
+  font-size: 12.5px;
+  border-radius: 8px;
+}
+.settings-key-control {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.settings-key-delete.is-inline { margin: 0; font-size: 12px; }
+.settings-note.is-inline { margin-top: 8px; }
+/* The "?" help circle after a row title (owner 2026-09-08: the two MiniMax
+   keys' roles wanted a word in place). Hover and keyboard focus open the
+   tip through CSS; a click pins it (`.is-open`). The tip floats ABOVE the
+   circle inside the scrolling rows box — the rows above the first key row
+   give it room, and the box's overflow clip is why it does not float
+   below, where the next rows would hide it. */
+.settings-help {
+  position: relative;
+  display: inline-flex;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+.settings-help-btn {
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--muted);
+  background: var(--ink-a03);
+  border: 1px solid var(--ink-a22);
+  border-radius: 50%;
+  cursor: help;
+  transition: color .15s, border-color .15s;
+}
+.settings-help-btn:hover,
+.settings-help-btn:focus-visible,
+.settings-help.is-open .settings-help-btn {
+  color: var(--ink);
+  border-color: var(--ink-a40);
+}
+.settings-help-btn:focus-visible {
+  outline: 2px solid var(--banzhuan-led);
+  outline-offset: 2px;
+}
+.settings-help-tip {
+  display: none;
+  position: absolute;
+  left: -10px;
+  bottom: calc(100% + 9px);
+  width: 330px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--surface-pop);
+  border: 1px solid var(--ink-a14);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(17, 20, 23, 0.18);
+  z-index: 5;
+  white-space: normal;
+}
+.settings-help:hover .settings-help-tip,
+.settings-help:focus-within .settings-help-tip,
+.settings-help.is-open .settings-help-tip {
+  display: block;
+}
 .settings-key-input {
   flex: 1 1 auto;
   min-width: 0;

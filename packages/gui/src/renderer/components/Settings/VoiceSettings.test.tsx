@@ -304,10 +304,23 @@ describe("VoiceSettings", () => {
     const host = queryByText("platform.minimaxi.com");
     expect(host?.className).toBe("settings-key-host");
     expect(host?.parentElement?.textContent).toBe(
-      "Pay-as-you-go. Used once to clone her voice, and for speech when no plan key is set. Get one at platform.minimaxi.com.",
+      "Pay-as-you-go. Clones once; speaks when no plan key is set. Get one at platform.minimaxi.com.",
     );
-    // The token-plan key has its own row under it (ADR 0062 §1.8).
+    // The token-plan key has its own row under it (ADR 0062 §1.8), and a
+    // "?" after the first key's title explains the two keys' division of
+    // work; a click pins the tip open, Escape closes it.
     expect(queryByText("Token Plan key")).toBeTruthy();
+    const help = getByRole("button", {
+      name: "How the two keys divide the work",
+    });
+    expect(help.getAttribute("aria-expanded")).toBe("false");
+    expect(getByRole("tooltip").textContent).toContain(
+      "Cloning uses only the MiniMax API key",
+    );
+    fireEvent.click(help);
+    expect(help.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.keyDown(help, { key: "Escape" });
+    expect(help.getAttribute("aria-expanded")).toBe("false");
     expect(
       queryByText(
         "Optional. With a speech plan, speech goes through it; cloning stays pay-as-you-go.",

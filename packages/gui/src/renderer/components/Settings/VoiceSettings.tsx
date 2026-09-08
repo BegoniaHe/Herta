@@ -75,8 +75,44 @@ function cloneFailureKey(reason: MiniMaxVoiceError) {
   }
 }
 
+/** A "?" circle that explains something in place (owner 2026-09-08: the
+ *  two MiniMax keys' division of labour is hard to read from two rows).
+ *  The tip opens on hover and on keyboard focus through CSS alone, and a
+ *  click pins it open for touch and for reading; Escape or leaving closes
+ *  it. The text is in the DOM always — it is the button's description. */
+function HelpTip(p: {
+  readonly label: string;
+  readonly text: string;
+  readonly id: string;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className={`settings-help${open ? " is-open" : ""}`}>
+      <button
+        type="button"
+        className="settings-help-btn"
+        aria-label={p.label}
+        aria-expanded={open}
+        aria-describedby={p.id}
+        onClick={() => setOpen((v) => !v)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setOpen(false);
+        }}
+      >
+        ?
+      </button>
+      <span role="tooltip" id={p.id} className="settings-help-tip">
+        {p.text}
+      </span>
+    </span>
+  );
+}
+
 interface KeyRowProps {
   readonly title: string;
+  /** Rendered after the title — the help "?" for the row that needs it. */
+  readonly help?: ReactNode;
   readonly description: ReactNode;
   readonly placeholder: string;
   readonly ariaLabel: string;
@@ -144,85 +180,99 @@ function KeyRow(p: KeyRowProps): JSX.Element {
       .finally(() => setDeleting(false));
   };
 
+  // One card row like every other setting (owner 2026-09-08: a card with a
+  // form hanging under it read as two things). The field lives INSIDE the
+  // row, under the description; the masked status and the delete link sit
+  // in the control column; a note a save leaves stays inside the row too,
+  // so the card group never breaks. The row is a `.settings-row` itself so
+  // it fuses with its neighbours.
+  const state =
+    status === null ? (
+      <span className="settings-key-state is-muted">
+        {t("deepseek.checking")}
+      </span>
+    ) : status.set && p.refused ? (
+      <span className="settings-key-state is-rejected">
+        {t("voice.minimaxKeyRejected")} · …{status.hint}
+      </span>
+    ) : status.set && p.unchecked ? (
+      <span className="settings-key-state is-muted">
+        {t("voice.minimaxKeyUnchecked")} · …{status.hint}
+      </span>
+    ) : status.set ? (
+      <span className="settings-key-state is-connected">
+        <span className="settings-key-dot" aria-hidden="true" />
+        {t("deepseek.connected")} · …{status.hint}
+      </span>
+    ) : (
+      <span className="settings-key-state is-muted">{t("deepseek.noKey")}</span>
+    );
+
   return (
-    <>
-      <SettingRow
-        title={p.title}
-        description={p.description}
-        control={
-          status === null ? (
-            <span className="settings-key-state is-muted">
-              {t("deepseek.checking")}
-            </span>
-          ) : status.set && p.refused ? (
-            <span className="settings-key-state is-rejected">
-              {t("voice.minimaxKeyRejected")} · …{status.hint}
-            </span>
-          ) : status.set && p.unchecked ? (
-            <span className="settings-key-state is-muted">
-              {t("voice.minimaxKeyUnchecked")} · …{status.hint}
-            </span>
-          ) : status.set ? (
-            <span className="settings-key-state is-connected">
-              <span className="settings-key-dot" aria-hidden="true" />
-              {t("deepseek.connected")} · …{status.hint}
-            </span>
-          ) : (
-            <span className="settings-key-state is-muted">
-              {t("deepseek.noKey")}
-            </span>
-          )
-        }
-      />
-      <div className="settings-key-form">
-        <input
-          type="password"
-          className="settings-key-input"
-          placeholder={status?.set ? t("deepseek.replaceKey") : p.placeholder}
-          aria-label={p.ariaLabel}
-          autoComplete="off"
-          spellCheck={false}
-          value={draft}
-          disabled={busy}
-          onChange={(e) => {
-            setDraft(e.target.value);
-            setRejected(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.nativeEvent.isComposing) return;
-            if (e.key === "Enter") {
-              e.preventDefault();
-              onSave();
-            }
-          }}
-        />
-        <button
-          type="button"
-          className="settings-key-save"
-          disabled={draft.trim().length === 0 || busy}
-          onClick={onSave}
-        >
-          {saving ? t("deepseek.verifying") : t("deepseek.save")}
-        </button>
+    <div className="settings-row settings-row--key">
+      <div className="settings-row-text">
+        <p className="settings-row-title">
+          {p.title}
+          {p.help}
+        </p>
+        <p className="settings-row-desc">{p.description}</p>
+        <div className="settings-key-inline">
+          <input
+            type="password"
+            className="settings-key-input is-compact"
+            placeholder={status?.set ? t("deepseek.replaceKey") : p.placeholder}
+            aria-label={p.ariaLabel}
+            autoComplete="off"
+            spellCheck={false}
+            value={draft}
+            disabled={busy}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setRejected(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return;
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onSave();
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="settings-key-save is-compact"
+            disabled={draft.trim().length === 0 || busy}
+            onClick={onSave}
+          >
+            {saving ? t("deepseek.verifying") : t("deepseek.save")}
+          </button>
+        </div>
+        {rejected && (
+          <p className="settings-note is-error is-inline">
+            {t("voice.minimaxRejected")}
+          </p>
+        )}
+        {failed && (
+          <p className="settings-note is-inline">{t("common.couldntSave")}</p>
+        )}
+        {status?.set && !status.encrypted && (
+          <p className="settings-note is-inline">{t("deepseek.unencrypted")}</p>
+        )}
       </div>
-      {status?.set && (
-        <button
-          type="button"
-          className="settings-key-delete"
-          disabled={busy}
-          onClick={onDelete}
-        >
-          {deleting ? t("deepseek.deleting") : t("deepseek.deleteKey")}
-        </button>
-      )}
-      {rejected && (
-        <p className="settings-note is-error">{t("voice.minimaxRejected")}</p>
-      )}
-      {failed && <p className="settings-note">{t("common.couldntSave")}</p>}
-      {status?.set && !status.encrypted && (
-        <p className="settings-note">{t("deepseek.unencrypted")}</p>
-      )}
-    </>
+      <div className="settings-row-control settings-key-control">
+        {state}
+        {status?.set && (
+          <button
+            type="button"
+            className="settings-key-delete is-inline"
+            disabled={busy}
+            onClick={onDelete}
+          >
+            {deleting ? t("deepseek.deleting") : t("voice.keyDelete")}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -454,7 +504,10 @@ export function VoiceSettings(): JSX.Element {
       : null;
 
   return (
-    <>
+    // The rows scroll inside the fixed-height pane (the Coprocessor pane's
+    // idiom): with the cloud engine's two key rows the section had grown
+    // past the card's floor and the card resized (owner 2026-09-08).
+    <div className="settings-rows">
       {supported && (
         <>
           <SettingRow
@@ -524,6 +577,13 @@ export function VoiceSettings(): JSX.Element {
             <>
               <KeyRow
                 title={t("voice.minimaxKey")}
+                help={
+                  <HelpTip
+                    id="voice-minimax-help"
+                    label={t("voice.minimaxHelpAria")}
+                    text={t("voice.minimaxHelp")}
+                  />
+                }
                 description={
                   <>
                     {keyDescParts[0]}
@@ -635,6 +695,6 @@ export function VoiceSettings(): JSX.Element {
           </span>
         }
       />
-    </>
+    </div>
   );
 }

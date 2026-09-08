@@ -111,8 +111,12 @@ export const en = {
   "voice.engine.minimax": "MiniMax cloud",
   "voice.minimaxKey": "MiniMax API key",
   "voice.minimaxKeyDesc":
-    "Pay-as-you-go. Used once to clone her voice, and for speech when no plan key is set. Get one at platform.minimaxi.com.",
+    "Pay-as-you-go. Clones once; speaks when no plan key is set. Get one at platform.minimaxi.com.",
   "voice.minimaxKeyAria": "MiniMax API key",
+  "voice.keyDelete": "Delete",
+  "voice.minimaxHelpAria": "How the two keys divide the work",
+  "voice.minimaxHelp":
+    "Cloning uses only the MiniMax API key (pay-as-you-go, paid once per account). Speech prefers the Token Plan key (covered by the plan) and falls back to the API key. With only a plan key and no voice on the account yet, enter the API key once.",
   "voice.minimaxKeyRejected": "Key rejected",
   "voice.minimaxKeyUnchecked": "Unchecked",
   "voice.minimaxPlanKey": "Token Plan key",

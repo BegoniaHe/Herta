@@ -98,8 +98,12 @@ export const zh = {
   "voice.engine.minimax": "MiniMax 云端",
   "voice.minimaxKey": "MiniMax API 密钥",
   "voice.minimaxKeyDesc":
-    "按量计费。复刻声音时用一次；没有套餐密钥时也用它合成。可在 platform.minimaxi.com 获取。",
+    "按量计费。复刻用一次；无套餐密钥时也用于合成。可在 platform.minimaxi.com 获取。",
   "voice.minimaxKeyAria": "MiniMax API 密钥",
+  "voice.keyDelete": "删除",
+  "voice.minimaxHelpAria": "两把密钥的分工",
+  "voice.minimaxHelp":
+    "复刻只用 MiniMax API 密钥（按量计费，每个账号只付一次）。合成优先用 Token Plan 密钥（套餐内不按字计费），没有就用 API 密钥。只有套餐密钥、账号里又还没有声音时，先填一次 API 密钥。",
   "voice.minimaxKeyRejected": "密钥无效",
   "voice.minimaxKeyUnchecked": "未核对",
   "voice.minimaxPlanKey": "Token Plan 密钥",

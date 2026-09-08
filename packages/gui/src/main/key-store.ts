@@ -8,11 +8,14 @@ import { app, safeStorage } from "electron";
  * The raw key NEVER crosses IPC: the renderer only ever sees the masked
  * status (`set` + last-4 `hint`). See the 2026-06-24-deepseek-key design.
  *
- * Two secrets live here, each in its own pair of files under
+ * Three secrets live here, each in its own pair of files under
  * `app.getPath("userData")`:
  *  - `deepseek-key.enc` / `deepseek-key.txt` — the DeepSeek API key;
- *  - `minimax-key.enc` / `minimax-key.txt` — the MiniMax API key for the
- *    cloud voice (ADR 0062, 2026-09-08).
+ *  - `minimax-key.enc` / `minimax-key.txt` — the MiniMax pay-as-you-go key
+ *    for the cloud voice (ADR 0062, 2026-09-08): clones her voice, and
+ *    speaks when no plan key is set;
+ *  - `minimax-plan-key.enc` / `.txt` — the MiniMax token-plan (`sk-cp-…`)
+ *    key (ADR 0062 §1.8): speaks under the plan; cannot clone.
  * `.enc` is the `safeStorage`-encrypted form (preferred); `.txt` the
  * plaintext fallback when encryption is unavailable (still better than the
  * repo file; flagged `encrypted: false` so the UI can warn).
@@ -20,7 +23,7 @@ import { app, safeStorage } from "electron";
  * All reads are best-effort: a missing / corrupt / undecryptable store resolves
  * to `null` rather than throwing — a bad store must never wedge the app.
  */
-export type SecretName = "deepseek" | "minimax";
+export type SecretName = "deepseek" | "minimax" | "minimax-plan";
 
 function encPath(name: SecretName): string {
   return join(app.getPath("userData"), `${name}-key.enc`);
@@ -162,4 +165,19 @@ export function getMiniMaxKeyStatus(): KeyStatus {
 }
 export function clearMiniMaxKey(): void {
   clearSecret("minimax");
+}
+
+// ── the MiniMax token-plan key (ADR 0062 §1.8) ──────────────────────────────
+
+export function setMiniMaxPlanKey(key: string): { encrypted: boolean } {
+  return setSecret("minimax-plan", key);
+}
+export function readMiniMaxPlanKeyPlain(): string | null {
+  return readSecretPlain("minimax-plan");
+}
+export function getMiniMaxPlanKeyStatus(): KeyStatus {
+  return getSecretStatus("minimax-plan");
+}
+export function clearMiniMaxPlanKey(): void {
+  clearSecret("minimax-plan");
 }

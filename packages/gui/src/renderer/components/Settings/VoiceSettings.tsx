@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import type {
@@ -6,6 +6,7 @@ import type {
   MiniMaxVoiceError,
   MiniMaxVoiceState,
   RealtimeVoiceState,
+  SetKeyResult,
   VoiceEngine,
   VoiceModelFailure,
   VoiceModelState,
@@ -67,9 +68,162 @@ function cloneFailureKey(reason: MiniMaxVoiceError) {
       return "voice.cloneFailed.cancelled" as const;
     case "reference":
       return "voice.cloneFailed.reference" as const;
+    case "no_clone_key":
+      return "voice.cloneFailed.no_clone_key" as const;
     case "other":
       return "voice.cloneFailed.other" as const;
   }
+}
+
+interface KeyRowProps {
+  readonly title: string;
+  readonly description: ReactNode;
+  readonly placeholder: string;
+  readonly ariaLabel: string;
+  /** Masked status, null until the first read lands. */
+  readonly status: DeepSeekKeyStatus | null;
+  /** The clone's last failure blamed this key: it reads 密钥无效. */
+  readonly refused: boolean;
+  /** Saved while the platform could not check it, and nothing has proven
+   *  it since: it reads 未核对. */
+  readonly unchecked: boolean;
+  readonly save: ((key: string) => Promise<SetKeyResult>) | undefined;
+  readonly clear:
+    | (() => Promise<{ readonly status: DeepSeekKeyStatus }>)
+    | undefined;
+  readonly onStatus: (status: DeepSeekKeyStatus) => void;
+  readonly onUnverified: (unverified: boolean) => void;
+}
+
+/** One MiniMax key: the row with its masked status, the form under it, the
+ *  delete link, and the notes a save can leave. The pay-as-you-go key and
+ *  the token-plan key (ADR 0062 §1.8) are two of these. */
+function KeyRow(p: KeyRowProps): JSX.Element {
+  const t = useT();
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [rejected, setRejected] = useState(false);
+  const busy = saving || deleting;
+  const status = p.status;
+
+  const onSave = (): void => {
+    const key = draft.trim();
+    if (p.save === undefined || key.length === 0 || saving) return;
+    setSaving(true);
+    setFailed(false);
+    setRejected(false);
+    p.onUnverified(false);
+    void p
+      .save(key)
+      .then((r) => {
+        if (!r.ok) {
+          setRejected(true);
+          return;
+        }
+        p.onStatus(r.status);
+        setDraft("");
+        p.onUnverified(r.unverified);
+      })
+      .catch(() => setFailed(true))
+      .finally(() => setSaving(false));
+  };
+
+  const onDelete = (): void => {
+    if (p.clear === undefined || deleting) return;
+    setDeleting(true);
+    setFailed(false);
+    void p
+      .clear()
+      .then((r) => {
+        p.onStatus(r.status);
+        p.onUnverified(false);
+      })
+      .catch(() => setFailed(true))
+      .finally(() => setDeleting(false));
+  };
+
+  return (
+    <>
+      <SettingRow
+        title={p.title}
+        description={p.description}
+        control={
+          status === null ? (
+            <span className="settings-key-state is-muted">
+              {t("deepseek.checking")}
+            </span>
+          ) : status.set && p.refused ? (
+            <span className="settings-key-state is-rejected">
+              {t("voice.minimaxKeyRejected")} · …{status.hint}
+            </span>
+          ) : status.set && p.unchecked ? (
+            <span className="settings-key-state is-muted">
+              {t("voice.minimaxKeyUnchecked")} · …{status.hint}
+            </span>
+          ) : status.set ? (
+            <span className="settings-key-state is-connected">
+              <span className="settings-key-dot" aria-hidden="true" />
+              {t("deepseek.connected")} · …{status.hint}
+            </span>
+          ) : (
+            <span className="settings-key-state is-muted">
+              {t("deepseek.noKey")}
+            </span>
+          )
+        }
+      />
+      <div className="settings-key-form">
+        <input
+          type="password"
+          className="settings-key-input"
+          placeholder={status?.set ? t("deepseek.replaceKey") : p.placeholder}
+          aria-label={p.ariaLabel}
+          autoComplete="off"
+          spellCheck={false}
+          value={draft}
+          disabled={busy}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setRejected(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return;
+            if (e.key === "Enter") {
+              e.preventDefault();
+              onSave();
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="settings-key-save"
+          disabled={draft.trim().length === 0 || busy}
+          onClick={onSave}
+        >
+          {saving ? t("deepseek.verifying") : t("deepseek.save")}
+        </button>
+      </div>
+      {status?.set && (
+        <button
+          type="button"
+          className="settings-key-delete"
+          disabled={busy}
+          onClick={onDelete}
+        >
+          {deleting ? t("deepseek.deleting") : t("deepseek.deleteKey")}
+        </button>
+      )}
+      {rejected && (
+        <p className="settings-note is-error">{t("voice.minimaxRejected")}</p>
+      )}
+      {failed && <p className="settings-note">{t("common.couldntSave")}</p>}
+      {status?.set && !status.encrypted && (
+        <p className="settings-note">{t("deepseek.unencrypted")}</p>
+      )}
+    </>
+  );
 }
 
 /**
@@ -98,19 +252,17 @@ export function VoiceSettings(): JSX.Element {
   const modelSupported = bridge.downloadVoiceModel !== undefined;
   const engineSupported =
     bridge.setVoiceEngine !== undefined && bridge.setMiniMaxKey !== undefined;
+  const planSupported = bridge.setMiniMaxPlanKey !== undefined;
   const [rt, setRt] = useState<RealtimeVoiceState | null>(null);
   const [rtFailed, setRtFailed] = useState(false);
   const [model, setModel] = useState<VoiceModelState | null>(null);
   const [engine, setEngine] = useState<VoiceEngine>("local");
   const [engineFailed, setEngineFailed] = useState(false);
   const [mmKey, setMmKey] = useState<DeepSeekKeyStatus | null>(null);
+  const [mmPlanKey, setMmPlanKey] = useState<DeepSeekKeyStatus | null>(null);
   const [clone, setClone] = useState<MiniMaxVoiceState | null>(null);
-  const [keyDraft, setKeyDraft] = useState("");
-  const [keySaving, setKeySaving] = useState(false);
-  const [keyDeleting, setKeyDeleting] = useState(false);
-  const [keyFailed, setKeyFailed] = useState(false);
-  const [keyRejected, setKeyRejected] = useState(false);
   const [keyUnverified, setKeyUnverified] = useState(false);
+  const [planUnverified, setPlanUnverified] = useState(false);
 
   useEffect(() => {
     const read = bridge.getRealtimeVoice;
@@ -124,6 +276,7 @@ export function VoiceSettings(): JSX.Element {
           setModel(s.model);
           setEngine(s.engine);
           setMmKey(s.minimax.key);
+          setMmPlanKey(s.minimax.planKey);
           setClone(s.minimax.voice);
         },
         () => undefined,
@@ -159,8 +312,11 @@ export function VoiceSettings(): JSX.Element {
   const runtime = rt?.runtime ?? false;
   const failed = rt?.failed ?? false;
   const localCanSpeak = bundle && runtime && !failed;
-  const cloudCanSpeak =
-    (mmKey?.set ?? false) && clone !== null && clone.phase === "ready";
+  // Either MiniMax key speaks: the plan key under the plan, the
+  // pay-as-you-go key otherwise (§1.8).
+  const anyKey = (mmKey?.set ?? false) || (mmPlanKey?.set ?? false);
+  const cloneReady = clone !== null && clone.phase === "ready";
+  const cloudCanSpeak = anyKey && cloneReady;
   const canSpeak = engine === "minimax" ? cloudCanSpeak : localCanSpeak;
 
   const onRealtimeChange = (next: boolean): void => {
@@ -189,39 +345,6 @@ export function VoiceSettings(): JSX.Element {
       setEngine(prev);
       setEngineFailed(true);
     });
-  };
-
-  const onKeySave = (): void => {
-    const write = bridge.setMiniMaxKey;
-    const key = keyDraft.trim();
-    if (write === undefined || key.length === 0 || keySaving) return;
-    setKeySaving(true);
-    setKeyFailed(false);
-    setKeyRejected(false);
-    setKeyUnverified(false);
-    void write(key)
-      .then((r) => {
-        if (!r.ok) {
-          setKeyRejected(true);
-          return;
-        }
-        setMmKey(r.status);
-        setKeyDraft("");
-        setKeyUnverified(r.unverified);
-      })
-      .catch(() => setKeyFailed(true))
-      .finally(() => setKeySaving(false));
-  };
-
-  const onKeyDelete = (): void => {
-    const clear = bridge.clearMiniMaxKey;
-    if (clear === undefined || keyDeleting) return;
-    setKeyDeleting(true);
-    setKeyFailed(false);
-    void clear()
-      .then((r) => setMmKey(r.status))
-      .catch(() => setKeyFailed(true))
-      .finally(() => setKeyDeleting(false));
   };
 
   const modelRow = ((): {
@@ -306,16 +429,21 @@ export function VoiceSettings(): JSX.Element {
   const keyDescParts = t("voice.minimaxKeyDesc").split("platform.minimaxi.com");
   // A stored key the platform then refuses (revoked, or saved unverified
   // during an outage) must not keep reading 已连接: the clone's own auth
-  // failure is the honest signal.
+  // failure is the honest signal. It blames the key the clone used — the
+  // pay-as-you-go one when set, else the plan key that tried to adopt.
   const keyRefused =
     clone !== null &&
     clone.phase === "failed" &&
     (clone.error === "invalid_key" || clone.error === "auth");
+  const blamed: "api" | "plan" | null = !keyRefused
+    ? null
+    : (mmKey?.set ?? false)
+      ? "api"
+      : "plan";
   // A key stored while the platform could not be reached is not 已连接 —
   // nobody has checked it. The clone made right after either proves it
   // (ready → connected) or says what went wrong on its own line.
-  const keyUnchecked =
-    keyUnverified && !(clone !== null && clone.phase === "ready");
+  const keyUnchecked = keyUnverified && !cloneReady;
 
   const progress =
     model !== null && model.phase === "downloading" && model.totalBytes > 0
@@ -394,7 +522,7 @@ export function VoiceSettings(): JSX.Element {
           )}
           {engineSupported && engine === "minimax" && (
             <>
-              <SettingRow
+              <KeyRow
                 title={t("voice.minimaxKey")}
                 description={
                   <>
@@ -405,98 +533,39 @@ export function VoiceSettings(): JSX.Element {
                     {keyDescParts[1] ?? ""}
                   </>
                 }
-                control={
-                  mmKey === null ? (
-                    <span className="settings-key-state is-muted">
-                      {t("deepseek.checking")}
-                    </span>
-                  ) : mmKey.set && keyRefused ? (
-                    <span className="settings-key-state is-rejected">
-                      {t("voice.minimaxKeyRejected")} · …{mmKey.hint}
-                    </span>
-                  ) : mmKey.set && keyUnchecked ? (
-                    <span className="settings-key-state is-muted">
-                      {t("voice.minimaxKeyUnchecked")} · …{mmKey.hint}
-                    </span>
-                  ) : mmKey.set ? (
-                    <span className="settings-key-state is-connected">
-                      <span className="settings-key-dot" aria-hidden="true" />
-                      {t("deepseek.connected")} · …{mmKey.hint}
-                    </span>
-                  ) : (
-                    <span className="settings-key-state is-muted">
-                      {t("deepseek.noKey")}
-                    </span>
-                  )
-                }
+                placeholder="sk-api-…"
+                ariaLabel={t("voice.minimaxKeyAria")}
+                status={mmKey}
+                refused={blamed === "api"}
+                unchecked={keyUnchecked}
+                save={bridge.setMiniMaxKey}
+                clear={bridge.clearMiniMaxKey}
+                onStatus={setMmKey}
+                onUnverified={setKeyUnverified}
               />
-              <div className="settings-key-form">
-                <input
-                  type="password"
-                  className="settings-key-input"
-                  placeholder={
-                    mmKey?.set ? t("deepseek.replaceKey") : "sk-api-…"
-                  }
-                  aria-label={t("voice.minimaxKeyAria")}
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={keyDraft}
-                  disabled={keySaving || keyDeleting}
-                  onChange={(e) => {
-                    setKeyDraft(e.target.value);
-                    setKeyRejected(false);
-                    setKeyUnverified(false);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.nativeEvent.isComposing) return;
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      onKeySave();
-                    }
-                  }}
+              {planSupported && (
+                <KeyRow
+                  title={t("voice.minimaxPlanKey")}
+                  description={t("voice.minimaxPlanKeyDesc")}
+                  placeholder="sk-cp-…"
+                  ariaLabel={t("voice.minimaxPlanKeyAria")}
+                  status={mmPlanKey}
+                  refused={blamed === "plan"}
+                  unchecked={planUnverified}
+                  save={bridge.setMiniMaxPlanKey}
+                  clear={bridge.clearMiniMaxPlanKey}
+                  onStatus={setMmPlanKey}
+                  onUnverified={setPlanUnverified}
                 />
-                <button
-                  type="button"
-                  className="settings-key-save"
-                  disabled={
-                    keyDraft.trim().length === 0 || keySaving || keyDeleting
-                  }
-                  onClick={onKeySave}
-                >
-                  {keySaving ? t("deepseek.verifying") : t("deepseek.save")}
-                </button>
-              </div>
-              {mmKey?.set && (
-                <button
-                  type="button"
-                  className="settings-key-delete"
-                  disabled={keySaving || keyDeleting}
-                  onClick={onKeyDelete}
-                >
-                  {keyDeleting
-                    ? t("deepseek.deleting")
-                    : t("deepseek.deleteKey")}
-                </button>
-              )}
-              {keyRejected && (
-                <p className="settings-note is-error">
-                  {t("voice.minimaxRejected")}
-                </p>
-              )}
-              {keyFailed && (
-                <p className="settings-note">{t("common.couldntSave")}</p>
-              )}
-              {mmKey?.set && !mmKey.encrypted && (
-                <p className="settings-note">{t("deepseek.unencrypted")}</p>
               )}
               {/* The clone is main's business; only its two visible moments
                   reach the pane — being made, and having failed. */}
-              {mmKey?.set && clone?.phase === "preparing" && (
+              {anyKey && clone?.phase === "preparing" && (
                 <p className="settings-note" data-testid="voice-clone-note">
                   {t("voice.clonePreparing")}
                 </p>
               )}
-              {mmKey?.set && clone?.phase === "failed" && (
+              {anyKey && clone?.phase === "failed" && (
                 <p
                   className="settings-note is-error"
                   data-testid="voice-clone-note"

@@ -111,15 +111,21 @@ export const en = {
   "voice.engine.minimax": "MiniMax cloud",
   "voice.minimaxKey": "MiniMax API key",
   "voice.minimaxKeyDesc":
-    "Stored encrypted on this device. Get one at platform.minimaxi.com.",
+    "Pay-as-you-go. Used once to clone her voice, and for speech when no plan key is set. Get one at platform.minimaxi.com.",
   "voice.minimaxKeyAria": "MiniMax API key",
   "voice.minimaxKeyRejected": "Key rejected",
   "voice.minimaxKeyUnchecked": "Unchecked",
+  "voice.minimaxPlanKey": "Token Plan key",
+  "voice.minimaxPlanKeyDesc":
+    "Optional. With a speech plan, speech goes through it; cloning stays pay-as-you-go.",
+  "voice.minimaxPlanKeyAria": "MiniMax Token Plan key",
   "voice.minimaxRejected":
     "MiniMax did not accept that key — check it and try again.",
   "voice.clonePreparing": "Preparing her voice…",
   "voice.cloneRetry": "Retry",
   "voice.cloneFailed.no_key": "Enter a MiniMax key first.",
+  "voice.cloneFailed.no_clone_key":
+    "Cloning needs the pay-as-you-go key; enter the MiniMax API key and retry.",
   "voice.cloneFailed.invalid_key": "MiniMax did not accept the key.",
   "voice.cloneFailed.auth":
     "MiniMax refused the request; check the key and the account.",

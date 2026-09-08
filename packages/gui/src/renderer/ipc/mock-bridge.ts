@@ -129,7 +129,11 @@ export interface MockHertaBridgeOpts {
   > & {
     readonly model?: VoiceModelState;
     readonly engine?: VoiceEngine;
-    readonly minimax?: RealtimeVoiceState["minimax"];
+    readonly minimax?: {
+      readonly key?: DeepSeekKeyStatus;
+      readonly planKey?: DeepSeekKeyStatus;
+      readonly voice?: MiniMaxVoiceState;
+    };
   };
   /** When true, setMiniMaxKey rejects every key (neither platform accepts
    *  it) — `{ ok: false, reason: "rejected" }`, status unchanged. */
@@ -207,6 +211,8 @@ export interface MockHertaBridge {
     setVoiceEngine: VoiceEngine[];
     setMiniMaxKey: string[];
     clearMiniMaxKey: number;
+    setMiniMaxPlanKey: string[];
+    clearMiniMaxPlanKey: number;
     prepareMiniMaxVoice: number;
     resetMiniMaxVoice: number;
     windowMinimize: number;
@@ -305,6 +311,8 @@ export function createMockHertaBridge(
     setVoiceEngine: [],
     setMiniMaxKey: [],
     clearMiniMaxKey: 0,
+    setMiniMaxPlanKey: [],
+    clearMiniMaxPlanKey: 0,
     prepareMiniMaxVoice: 0,
     resetMiniMaxVoice: 0,
     windowMinimize: 0,
@@ -364,6 +372,11 @@ export function createMockHertaBridge(
     hint: null,
     encrypted: false,
   };
+  let minimaxPlanKey: DeepSeekKeyStatus = seededVoice.minimax?.planKey ?? {
+    set: false,
+    hint: null,
+    encrypted: false,
+  };
   let minimaxVoice: MiniMaxVoiceState = seededVoice.minimax?.voice ?? {
     phase: "absent",
   };
@@ -374,15 +387,20 @@ export function createMockHertaBridge(
     for (const cb of minimaxCbs) cb(next);
   };
   /** The clone as main makes it: preparing, then ready — or failed without
-   *  a key. */
+   *  a key, or with only the plan key on an account that has no clone to
+   *  adopt (the mock's account is empty). */
   const mockPrepare = (): void => {
-    if (!minimaxKey.set) {
+    if (!minimaxKey.set && !minimaxPlanKey.set) {
       pushMiniMax({ phase: "failed", error: "no_key" });
       return;
     }
     pushMiniMax({ phase: "preparing" });
     if (opts.offlineMiniMax === true) {
       pushMiniMax({ phase: "failed", error: "network" });
+      return;
+    }
+    if (!minimaxKey.set) {
+      pushMiniMax({ phase: "failed", error: "no_clone_key" });
       return;
     }
     pushMiniMax({
@@ -392,19 +410,24 @@ export function createMockHertaBridge(
       clonedAt: "2026-09-08T10:00:00.000Z",
     });
   };
+  const minimaxView = (): RealtimeVoiceState["minimax"] => ({
+    key: minimaxKey,
+    planKey: minimaxPlanKey,
+    voice: minimaxVoice,
+  });
   const voiceView = (): RealtimeVoiceState => ({
     ...seededVoice,
     bundle: realtimeVoice.bundle,
     enabled: realtimeVoice.enabled,
     model: voiceModel,
     engine: voiceEngine,
-    minimax: { key: minimaxKey, voice: minimaxVoice },
+    minimax: minimaxView(),
   });
   let realtimeVoice: RealtimeVoiceState = {
     ...seededVoice,
     model: voiceModel,
     engine: voiceEngine,
-    minimax: { key: minimaxKey, voice: minimaxVoice },
+    minimax: minimaxView(),
   };
   const voiceModelCbs = new Set<(e: VoiceModelState) => void>();
   const pushVoiceModel = (next: VoiceModelState): void => {
@@ -721,7 +744,7 @@ export function createMockHertaBridge(
       // Main makes the clone unasked when the cloud is chosen with a key.
       if (
         engine === "minimax" &&
-        minimaxKey.set &&
+        (minimaxKey.set || minimaxPlanKey.set) &&
         minimaxVoice.phase !== "ready"
       ) {
         mockPrepare();
@@ -754,6 +777,34 @@ export function createMockHertaBridge(
       calls.clearMiniMaxKey += 1;
       minimaxKey = { set: false, hint: null, encrypted: false };
       return { ok: true, status: minimaxKey };
+    },
+    getMiniMaxPlanKeyStatus: async () => minimaxPlanKey,
+    setMiniMaxPlanKey: async (key) => {
+      calls.setMiniMaxPlanKey.push(key);
+      if (opts.rejectMiniMaxKey === true) {
+        return { ok: false, reason: "rejected" };
+      }
+      minimaxPlanKey = {
+        set: true,
+        hint: key.trim().slice(-4),
+        encrypted: true,
+      };
+      // The plan key never touches an existing clone; with none, main
+      // tries for one (adoption on a real account).
+      if (voiceEngine === "minimax" && minimaxVoice.phase !== "ready") {
+        mockPrepare();
+      }
+      return {
+        ok: true,
+        encrypted: true,
+        unverified: opts.offlineMiniMax === true,
+        status: minimaxPlanKey,
+      };
+    },
+    clearMiniMaxPlanKey: async () => {
+      calls.clearMiniMaxPlanKey += 1;
+      minimaxPlanKey = { set: false, hint: null, encrypted: false };
+      return { ok: true, status: minimaxPlanKey };
     },
     prepareMiniMaxVoice: async () => {
       calls.prepareMiniMaxVoice += 1;

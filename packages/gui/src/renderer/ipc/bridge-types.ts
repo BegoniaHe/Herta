@@ -185,7 +185,8 @@ export type MiniMaxVoiceError =
   | "http"
   | "cancelled"
   | "other"
-  | "reference";
+  | "reference"
+  | "no_clone_key";
 
 /** The MiniMax clone this install owns (ADR 0062). `preparing` covers the
  *  platform probe, the reference upload and the clone call. */
@@ -198,9 +199,25 @@ export interface MiniMaxVoiceState {
 }
 
 export interface MiniMaxState {
+  /** The pay-as-you-go key: clones, and speaks when no plan key is set. */
   readonly key: DeepSeekKeyStatus;
+  /** The token-plan key (ADR 0062 §1.8): speaks under the plan; cannot
+   *  clone, but can adopt a clone the account already paid for. */
+  readonly planKey: DeepSeekKeyStatus;
   readonly voice: MiniMaxVoiceState;
 }
+
+/** What storing a MiniMax key answers: `rejected` when neither platform
+ *  accepts it, `unverified` when the check could not run and the key was
+ *  stored anyway. */
+export type SetKeyResult =
+  | {
+      readonly ok: true;
+      readonly encrypted: boolean;
+      readonly unverified: boolean;
+      readonly status: DeepSeekKeyStatus;
+    }
+  | { readonly ok: false; readonly reason: "rejected" };
 
 export type VoiceModelPhase = "absent" | "downloading" | "ready" | "failed";
 
@@ -644,16 +661,16 @@ export interface HertaBridge {
   /** Check the key against the platform and store it; `rejected` when
    *  neither platform accepts it, `unverified` when the check could not
    *  run and the key was stored anyway. */
-  setMiniMaxKey?(key: string): Promise<
-    | {
-        readonly ok: true;
-        readonly encrypted: boolean;
-        readonly unverified: boolean;
-        readonly status: DeepSeekKeyStatus;
-      }
-    | { readonly ok: false; readonly reason: "rejected" }
-  >;
+  setMiniMaxKey?(key: string): Promise<SetKeyResult>;
   clearMiniMaxKey?(): Promise<{
+    readonly ok: true;
+    readonly status: DeepSeekKeyStatus;
+  }>;
+  /** The token-plan key (ADR 0062 §1.8), stored and checked like the
+   *  pay-as-you-go one. Optional alongside it. */
+  getMiniMaxPlanKeyStatus?(): Promise<DeepSeekKeyStatus>;
+  setMiniMaxPlanKey?(key: string): Promise<SetKeyResult>;
+  clearMiniMaxPlanKey?(): Promise<{
     readonly ok: true;
     readonly status: DeepSeekKeyStatus;
   }>;

@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import {
   cloneVoice,
   type FetchLike,
+  listClones,
   MiniMaxError,
   type MiniMaxFailure,
   makeVoiceId,
@@ -9,16 +11,40 @@ import {
 } from "./minimax-api.js";
 
 /**
- * The clone this install owns on MiniMax (ADR 0062): made from the shipped
- * reference on the user's say-so (Settings → 语音 → 准备声音), remembered
- * with the platform it lives on, re-made when MiniMax has deleted it (a
- * clone idle for 7 days is removed) — the synthesizer reports the missing
- * voice and this re-clones once, automatically, because the user already
- * chose the engine and the key.
+ * The clone this install uses on MiniMax (ADR 0062): made from the shipped
+ * reference, unasked, when the cloud engine has a key; remembered with the
+ * platform it lives on; re-made when MiniMax has deleted it — the
+ * synthesizer reports the missing voice and this re-clones once,
+ * automatically, because the user already chose the engine and the key.
+ *
+ * Adopt before clone (§1.8, 2026-09-08): MiniMax bills ¥9.90 per cloned
+ * voice on its first use, and the reference is the same file in every
+ * install — so before uploading, the account's existing clones are listed
+ * and one made from this reference (its id carries the reference's
+ * fingerprint; the untagged `herta_…` ids predate the tag and came from the
+ * one reference that has ever shipped) is adopted. A re-saved key, a
+ * second machine, a reinstall: one paid voice per account. Listing works
+ * with either key; cloning needs the pay-as-you-go one — the token-plan
+ * key speaks but cannot clone (`no_clone_key`).
  */
 export type MiniMaxVoicePhase = "absent" | "preparing" | "ready" | "failed";
 
-export type MiniMaxVoiceError = MiniMaxFailure | "reference";
+export type MiniMaxVoiceError = MiniMaxFailure | "reference" | "no_clone_key";
+
+/** The reference file that shipped before ids carried a tag; its untagged
+ *  `herta_…` clones are adoptable while this is still the reference. */
+export const LEGACY_REFERENCE_TAG = "b1a43133";
+
+/** The first 8 hex of the reference's SHA-256 — the tag in a voice id. */
+export function referenceTag(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex").slice(0, 8);
+}
+
+/** Whether a voice id on the account was cloned from THIS reference. */
+export function isHertaVoiceId(id: string, tag: string): boolean {
+  if (id.startsWith(`herta-${tag}-`)) return true;
+  return tag === LEGACY_REFERENCE_TAG && id.startsWith("herta_");
+}
 
 export interface MiniMaxVoiceRecord {
   readonly voiceId: string;
@@ -37,7 +63,11 @@ export interface MiniMaxVoiceState {
 
 export interface MiniMaxVoiceServiceOptions {
   readonly fetch: FetchLike;
+  /** The pay-as-you-go key: lists, and clones. */
   readonly key: () => string | null;
+  /** The token-plan key (§1.8): lists — an existing clone can be adopted
+   *  with it — but cannot clone. */
+  readonly planKey?: () => string | null;
   /** The shipped reference WAV, or null when the install lacks it. */
   readonly readReference: () => Promise<Uint8Array | null>;
   /** The persisted record at start (the settings file), or null. */
@@ -107,30 +137,79 @@ export function createMiniMaxVoiceService(
     }
   };
 
+  /** The newest clone on the account made from this reference, or null. A
+   *  listing that fails for a reason other than the key is treated as an
+   *  empty account — cloning still answers the user; adoption is a saving,
+   *  not a requirement. */
+  const adoptable = async (
+    host: string,
+    key: string,
+    tag: string,
+  ): Promise<string | null> => {
+    let clones: Awaited<ReturnType<typeof listClones>>;
+    try {
+      clones = await listClones(opts.fetch, host, key);
+    } catch (err) {
+      if (
+        err instanceof MiniMaxError &&
+        (err.reason === "auth" ||
+          err.reason === "invalid_key" ||
+          err.reason === "cancelled")
+      ) {
+        throw err;
+      }
+      log(
+        `could not list the account's clones (${err instanceof Error ? err.message : String(err)}); cloning`,
+      );
+      return null;
+    }
+    const mine = clones
+      .filter((c) => isHertaVoiceId(c.voiceId, tag))
+      .sort((a, b) => b.createdTime.localeCompare(a.createdTime));
+    return mine[0]?.voiceId ?? null;
+  };
+
   const run = async (): Promise<MiniMaxVoiceState> => {
     preparing = true;
     lastError = null;
     opts.onChange(state());
     try {
-      const key = opts.key();
+      const cloneKey = opts.key();
+      const key = cloneKey ?? opts.planKey?.() ?? null;
       if (key === null) throw new MiniMaxError("no_key", "no MiniMax key");
       const reference = await opts.readReference();
       if (reference === null) {
         lastError = "reference";
         throw new Error("the reference audio is not in this install");
       }
+      const tag = referenceTag(reference);
       const host = await probeHost(opts.fetch, key);
-      const fileId = await uploadReference(
-        opts.fetch,
-        host,
-        key,
-        reference,
-        "herta-reference.wav",
-      );
-      const voiceId = makeVoiceId(opts.random);
-      await cloneVoice(opts.fetch, host, key, fileId, voiceId);
-      await persist({ voiceId, host, clonedAt: now().toISOString() });
-      log(`cloned ${voiceId} on ${host}`);
+      // Adopt before clone: a voice this reference already paid for.
+      const adopted = await adoptable(host, key, tag);
+      if (adopted !== null) {
+        await persist({
+          voiceId: adopted,
+          host,
+          clonedAt: now().toISOString(),
+        });
+        log(`adopted ${adopted} on ${host}`);
+      } else {
+        if (cloneKey === null) {
+          lastError = "no_clone_key";
+          throw new Error("cloning needs the pay-as-you-go key");
+        }
+        const fileId = await uploadReference(
+          opts.fetch,
+          host,
+          cloneKey,
+          reference,
+          "herta-reference.wav",
+        );
+        const voiceId = makeVoiceId(opts.random, tag);
+        await cloneVoice(opts.fetch, host, cloneKey, fileId, voiceId);
+        await persist({ voiceId, host, clonedAt: now().toISOString() });
+        log(`cloned ${voiceId} on ${host}`);
+      }
     } catch (err) {
       if (lastError === null) {
         lastError = err instanceof MiniMaxError ? err.reason : "other";

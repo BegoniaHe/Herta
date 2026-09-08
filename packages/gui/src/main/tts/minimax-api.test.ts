@@ -3,6 +3,7 @@ import {
   classifyStatus,
   cloneVoice,
   type FetchLike,
+  listClones,
   MiniMaxError,
   makeVoiceId,
   probeHost,
@@ -44,6 +45,7 @@ describe("classifyStatus", () => {
     expect(classifyStatus(1039, "TPM rate limit exceeded")).toBe("rate");
     expect(classifyStatus(1008, "insufficient balance")).toBe("quota");
     expect(classifyStatus(2013, "voice_id not found")).toBe("voice_missing");
+    expect(classifyStatus(2054, "voice id not exist")).toBe("voice_missing");
     expect(classifyStatus(2013, "invalid params")).toBe("invalid");
     expect(classifyStatus(1000, "unknown error")).toBe("other");
   });
@@ -136,6 +138,45 @@ describe("probeHost", () => {
     await expect(
       probeHost(dead, "k", undefined, ["https://a.example"]),
     ).rejects.toMatchObject({ reason: "network" });
+  });
+});
+
+describe("listClones + makeVoiceId", () => {
+  it("lists the account's clones as get_voice reports them, skipping malformed rows", async () => {
+    const { fetch, calls } = fake({
+      "https://b.example/v1/get_voice": () => ({
+        ...ok,
+        voice_cloning: [
+          { voice_id: "herta_vhj9giztqy", created_time: "2026-09-08" },
+          { voice_id: "herta-b1a43133-x7k2p9q1m4" },
+          { created_time: "2026-09-01" },
+          { voice_id: 42 },
+        ],
+      }),
+    });
+    await expect(listClones(fetch, "https://b.example", "k")).resolves.toEqual([
+      { voiceId: "herta_vhj9giztqy", createdTime: "2026-09-08" },
+      { voiceId: "herta-b1a43133-x7k2p9q1m4", createdTime: "" },
+    ]);
+    expect(JSON.parse(calls[0]?.init.body as string)).toEqual({
+      voice_type: "voice_cloning",
+    });
+    // No list field at all is an empty account, not an error.
+    const empty = fake({ "https://b.example/v1/get_voice": () => ok });
+    await expect(
+      listClones(empty.fetch, "https://b.example", "k"),
+    ).resolves.toEqual([]);
+  });
+
+  it("a tagged id names the reference it came from; untagged is the legacy shape", () => {
+    expect(makeVoiceId(() => "abc123def4", "b1a43133")).toBe(
+      "herta-b1a43133-abc123def4",
+    );
+    expect(makeVoiceId(() => "abc123def4")).toBe("herta_abc123def4");
+    // MiniMax's shape: a letter first, letters/digits/-/_, 8–256 chars.
+    expect(makeVoiceId(undefined, "b1a43133")).toMatch(
+      /^[a-z][a-z0-9_-]{7,255}$/,
+    );
   });
 });
 

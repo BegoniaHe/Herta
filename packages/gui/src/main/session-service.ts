@@ -62,12 +62,16 @@ import {
 import {
   clearDeepSeekKey,
   clearMiniMaxKey,
+  clearMiniMaxPlanKey,
   getDeepSeekKeyStatus,
   getMiniMaxKeyStatus,
+  getMiniMaxPlanKeyStatus,
   readDeepSeekKeyPlain,
   readMiniMaxKeyPlain,
+  readMiniMaxPlanKeyPlain,
   setDeepSeekKey,
   setMiniMaxKey,
+  setMiniMaxPlanKey,
 } from "./key-store.js";
 import {
   readWorkspaceBytesBounded,
@@ -532,6 +536,10 @@ export function createSessionService(
     [(url, init) => net.fetch(url, init), (url, init) => fetch(url, init)],
     (line) => console.log(line),
   );
+  /** Either MiniMax key is enough to try for a voice: the pay-as-you-go
+   *  one clones, the plan one can adopt (ADR 0062 §1.8). */
+  const anyMiniMaxKey = (): boolean =>
+    readMiniMaxKeyPlain() !== null || readMiniMaxPlanKeyPlain() !== null;
   const send: Send = (ch, payload) => {
     if (!wc.isDestroyed()) wc.send(ch, payload);
   };
@@ -1246,6 +1254,7 @@ export function createSessionService(
         engine: voiceEngine,
         minimax: {
           key: getMiniMaxKeyStatus(),
+          planKey: getMiniMaxPlanKeyStatus(),
           voice: minimaxVoice?.state() ?? { phase: "absent" },
         },
       };
@@ -1259,49 +1268,90 @@ export function createSessionService(
         voiceEngine: next,
       }));
       // The clone is machinery, not a step (owner 2026-09-08): choosing
-      // the cloud with a key in the store makes it now, unasked.
-      if (next === "minimax" && readMiniMaxKeyPlain() !== null) {
+      // the cloud with a key in the store makes (or adopts) it now, unasked.
+      if (next === "minimax" && anyMiniMaxKey()) {
         void minimaxVoice?.prepare();
       }
     });
     handle(CMD.getMiniMaxKeyStatus, async () => getMiniMaxKeyStatus());
-    // The key is checked against the platform before it is stored — a key
+    // A key is checked against the platform before it is stored — a key
     // neither host accepts is refused, like a DeepSeek key that fails its
     // auth check. A network failure stores it unverified.
-    handle(CMD.setMiniMaxKey, async (_e, key: string) => {
+    const checkKey = async (
+      key: string,
+    ): Promise<{ trimmed: string; unverified: boolean } | null> => {
       const trimmed = typeof key === "string" ? key.trim() : "";
-      if (trimmed.length === 0) {
-        return { ok: false as const, reason: "rejected" as const };
-      }
-      let unverified = false;
+      if (trimmed.length === 0) return null;
       try {
         await probeHost(minimaxFetch, trimmed);
+        return { trimmed, unverified: false };
       } catch (err) {
         if (err instanceof MiniMaxError && err.reason === "invalid_key") {
-          return { ok: false as const, reason: "rejected" as const };
+          return null;
         }
-        unverified = true;
+        return { trimmed, unverified: true };
       }
-      const { encrypted } = setMiniMaxKey(trimmed);
-      // A new key may be another account: forget the clone the old one
-      // owned, and make a fresh one now if the cloud engine is chosen.
+    };
+    handle(CMD.setMiniMaxKey, async (_e, key: string) => {
+      const checked = await checkKey(key);
+      if (checked === null) {
+        return { ok: false as const, reason: "rejected" as const };
+      }
+      // The same key saved again keeps the clone (a fresh one would be a
+      // fresh first-use fee, ADR 0062 §1.8); a different key may be another
+      // account — forget the clone the old one owned, and make or adopt one
+      // now if the cloud engine is chosen.
+      const unchanged = readMiniMaxKeyPlain() === checked.trimmed;
+      const { encrypted } = setMiniMaxKey(checked.trimmed);
       const svc = minimaxVoice;
       if (svc !== null) {
-        void svc.reset().then(() => {
-          if (voiceEngine === "minimax") return svc.prepare();
-          return undefined;
-        });
+        if (unchanged) {
+          if (voiceEngine === "minimax" && svc.voice() === null) {
+            void svc.prepare();
+          }
+        } else {
+          void svc.reset().then(() => {
+            if (voiceEngine === "minimax") return svc.prepare();
+            return undefined;
+          });
+        }
       }
       return {
         ok: true as const,
         encrypted,
-        unverified,
+        unverified: checked.unverified,
         status: getMiniMaxKeyStatus(),
       };
     });
     handle(CMD.clearMiniMaxKey, async () => {
       clearMiniMaxKey();
       return { ok: true as const, status: getMiniMaxKeyStatus() };
+    });
+    // The token-plan key (ADR 0062 §1.8): speaks under the plan, cannot
+    // clone. Saving it does not touch the clone; with the cloud chosen and
+    // no clone yet it starts a prepare, which may adopt one the account
+    // already paid for.
+    handle(CMD.getMiniMaxPlanKeyStatus, async () => getMiniMaxPlanKeyStatus());
+    handle(CMD.setMiniMaxPlanKey, async (_e, key: string) => {
+      const checked = await checkKey(key);
+      if (checked === null) {
+        return { ok: false as const, reason: "rejected" as const };
+      }
+      const { encrypted } = setMiniMaxPlanKey(checked.trimmed);
+      const svc = minimaxVoice;
+      if (svc !== null && voiceEngine === "minimax" && svc.voice() === null) {
+        void svc.prepare();
+      }
+      return {
+        ok: true as const,
+        encrypted,
+        unverified: checked.unverified,
+        status: getMiniMaxPlanKeyStatus(),
+      };
+    });
+    handle(CMD.clearMiniMaxPlanKey, async () => {
+      clearMiniMaxPlanKey();
+      return { ok: true as const, status: getMiniMaxPlanKeyStatus() };
     });
     handle(CMD.prepareMiniMaxVoice, async () => {
       if (minimaxVoice === null) throw new Error("cloud voice not up");
@@ -1457,6 +1507,7 @@ export function createSessionService(
       minimaxVoice = createMiniMaxVoiceService({
         fetch: fetchLike,
         key: readMiniMaxKeyPlain,
+        planKey: readMiniMaxPlanKeyPlain,
         readReference: async () => {
           try {
             return new Uint8Array(await readFile(referencePath));
@@ -1479,14 +1530,16 @@ export function createSessionService(
       // start, unasked — the user never operates the clone.
       if (
         voiceEngine === "minimax" &&
-        readMiniMaxKeyPlain() !== null &&
+        anyMiniMaxKey() &&
         voiceService.voice() === null
       ) {
         void voiceService.prepare();
       }
       minimaxSynth = createMiniMaxSynthesizer({
         fetch: fetchLike,
-        key: readMiniMaxKeyPlain,
+        // Speech goes through the plan when there is one (§1.8), else it is
+        // billed to the pay-as-you-go key.
+        key: () => readMiniMaxPlanKeyPlain() ?? readMiniMaxKeyPlain(),
         voice: () => voiceService.voice(),
         enabled: () => realtimeVoiceEnabled && voiceEngine === "minimax",
         applyEffect: loadCommChannelEffect(),

@@ -52,7 +52,6 @@ const ABSENT = {
   totalBytes: 60_000_000,
   unpackedBytes: 116_000_000,
 };
-
 describe("VoiceSettings", () => {
   it("renders the mute toggle with localized label", () => {
     const { getByLabelText, getByText } = setup();
@@ -284,7 +283,14 @@ describe("VoiceSettings", () => {
   // ── The engine and the cloud voice (ADR 0062) ────────────────────────────
 
   it("the engine picker is on the first frame; choosing MiniMax swaps the model row for the key row — no clone row, no note", async () => {
-    const { findByText, getByRole, queryByText, queryByTestId, mock } = setup();
+    const {
+      findByText,
+      getByRole,
+      queryByText,
+      queryAllByText,
+      queryByTestId,
+      mock,
+    } = setup();
     await findByText("Installed, about 116 MB on disk.");
     const picker = getByRole("button", { name: "Voice engine" });
     fireEvent.click(picker);
@@ -292,13 +298,21 @@ describe("VoiceSettings", () => {
     expect(mock.calls.setVoiceEngine).toEqual(["minimax"]);
     expect(queryByText("Voice model")).toBeNull();
     expect(await findByText("MiniMax API key")).toBeTruthy();
-    expect(queryByText("No key set")).toBeTruthy();
+    // Both key rows, both empty.
+    expect(queryAllByText("No key set")).toHaveLength(2);
     // The host is emphasized inside the description, the DeepSeek shape.
     const host = queryByText("platform.minimaxi.com");
     expect(host?.className).toBe("settings-key-host");
     expect(host?.parentElement?.textContent).toBe(
-      "Stored encrypted on this device. Get one at platform.minimaxi.com.",
+      "Pay-as-you-go. Used once to clone her voice, and for speech when no plan key is set. Get one at platform.minimaxi.com.",
     );
+    // The token-plan key has its own row under it (ADR 0062 §1.8).
+    expect(queryByText("Token Plan key")).toBeTruthy();
+    expect(
+      queryByText(
+        "Optional. With a speech plan, speech goes through it; cloning stays pay-as-you-go.",
+      ),
+    ).toBeTruthy();
     // The clone is main's business: nothing to prepare, nothing to read
     // about billing. Without a key she cannot speak.
     expect(queryByText("Clone voice")).toBeNull();
@@ -311,21 +325,28 @@ describe("VoiceSettings", () => {
   });
 
   it("saving a key is enough: the clone is made unasked and the toggle comes alive", async () => {
-    const { findByText, getByRole, getByLabelText, queryByTestId, mock } =
-      setup({
-        realtimeVoiceResult: {
-          enabled: true,
-          bundle: true,
-          runtime: true,
-          failed: false,
-          engine: "minimax",
-        },
-      });
+    const {
+      findByText,
+      getByRole,
+      getAllByRole,
+      getByLabelText,
+      queryByTestId,
+      mock,
+    } = setup({
+      realtimeVoiceResult: {
+        enabled: true,
+        bundle: true,
+        runtime: true,
+        failed: false,
+        engine: "minimax",
+      },
+    });
     await findByText("MiniMax API key");
     fireEvent.change(getByLabelText("MiniMax API key"), {
       target: { value: "sk-api-secret-9876" },
     });
-    fireEvent.click(getByRole("button", { name: "Save" }));
+    // Two Save buttons now (one per key row): the pay-as-you-go row's first.
+    fireEvent.click(getAllByRole("button", { name: "Save" })[0] as HTMLElement);
     expect(mock.calls.setMiniMaxKey).toEqual(["sk-api-secret-9876"]);
     expect(await findByText("Connected · …9876")).toBeTruthy();
     // No Prepare button was ever offered; the clone landed on its own.
@@ -339,28 +360,31 @@ describe("VoiceSettings", () => {
   });
 
   it("a rejected key says so and stores nothing", async () => {
-    const { findByText, getByRole, getByLabelText, mock } = setup({
-      rejectMiniMaxKey: true,
-      realtimeVoiceResult: {
-        enabled: true,
-        bundle: true,
-        runtime: true,
-        failed: false,
-        engine: "minimax",
-      },
-    });
+    const { findByText, findAllByText, getAllByRole, getByLabelText, mock } =
+      setup({
+        rejectMiniMaxKey: true,
+        realtimeVoiceResult: {
+          enabled: true,
+          bundle: true,
+          runtime: true,
+          failed: false,
+          engine: "minimax",
+        },
+      });
     await findByText("MiniMax API key");
     fireEvent.change(getByLabelText("MiniMax API key"), {
       target: { value: "bad" },
     });
-    fireEvent.click(getByRole("button", { name: "Save" }));
+    // Two Save buttons now (one per key row): the pay-as-you-go row's first.
+    fireEvent.click(getAllByRole("button", { name: "Save" })[0] as HTMLElement);
     expect(
       await findByText(
         "MiniMax did not accept that key — check it and try again.",
       ),
     ).toBeTruthy();
     expect(mock.calls.setMiniMaxKey).toEqual(["bad"]);
-    expect(await findByText("No key set")).toBeTruthy();
+    // Nothing stored: both rows still empty.
+    expect(await findAllByText("No key set")).toHaveLength(2);
   });
 
   it("a failed clone shows one line with its reason and a Retry; while it remakes, one line says so", async () => {
@@ -399,7 +423,14 @@ describe("VoiceSettings", () => {
   // "Connected" plus a note about her staying silent. Nobody had checked
   // that key: the row says so, and the clone's own line says why.
   it("a key saved while MiniMax was unreachable reads 'Unchecked', with the clone's line and no second note", async () => {
-    const { findByText, getByRole, getByLabelText, queryByText, mock } = setup({
+    const {
+      findByText,
+      getByRole,
+      getAllByRole,
+      getByLabelText,
+      queryByText,
+      mock,
+    } = setup({
       offlineMiniMax: true,
       realtimeVoiceResult: {
         enabled: true,
@@ -413,7 +444,8 @@ describe("VoiceSettings", () => {
     fireEvent.change(getByLabelText("MiniMax API key"), {
       target: { value: "sk-api-wrong-0000" },
     });
-    fireEvent.click(getByRole("button", { name: "Save" }));
+    // Two Save buttons now (one per key row): the pay-as-you-go row's first.
+    fireEvent.click(getAllByRole("button", { name: "Save" })[0] as HTMLElement);
     expect(await findByText("Unchecked · …0000")).toBeTruthy();
     expect(queryByText("Connected · …0000")).toBeNull();
     expect(
@@ -437,6 +469,76 @@ describe("VoiceSettings", () => {
     });
     expect(await findByText("Connected · …0000")).toBeTruthy();
     expect(queryByText("Unchecked · …0000")).toBeNull();
+  });
+
+  // ── the token-plan key (ADR 0062 §1.8) ───────────────────────────────────
+
+  it("a plan key alone on an empty account: stored as Connected, and the clone line says cloning needs the pay-as-you-go key", async () => {
+    const {
+      findByText,
+      getByRole,
+      getAllByRole,
+      getByLabelText,
+      queryByText,
+      mock,
+    } = setup({
+      realtimeVoiceResult: {
+        enabled: true,
+        bundle: true,
+        runtime: true,
+        failed: false,
+        engine: "minimax",
+      },
+    });
+    await findByText("Token Plan key");
+    fireEvent.change(getByLabelText("MiniMax Token Plan key"), {
+      target: { value: "sk-cp-plan-7777" },
+    });
+    // Two Save buttons, one per row: the plan row's is the second.
+    const saves = getAllByRole("button", { name: "Save" });
+    fireEvent.click(saves[1] as HTMLElement);
+    expect(mock.calls.setMiniMaxPlanKey).toEqual(["sk-cp-plan-7777"]);
+    expect(mock.calls.setMiniMaxKey).toEqual([]);
+    expect(await findByText("Connected · …7777")).toBeTruthy();
+    expect(
+      await findByText(
+        "Cloning needs the pay-as-you-go key; enter the MiniMax API key and retry.",
+      ),
+    ).toBeTruthy();
+    expect(queryByText("No key set")).toBeTruthy(); // the pay-as-you-go row
+    const toggle = getByRole("switch", {
+      name: "Real-time voice",
+    }) as HTMLButtonElement;
+    expect(toggle.disabled).toBe(true);
+  });
+
+  it("both keys with a clone the account already paid for: both Connected, the toggle alive", async () => {
+    const { findByText, getByRole, queryByTestId } = setup({
+      realtimeVoiceResult: {
+        enabled: true,
+        bundle: true,
+        runtime: true,
+        failed: false,
+        engine: "minimax",
+        minimax: {
+          key: { set: true, hint: "1234", encrypted: true },
+          planKey: { set: true, hint: "7777", encrypted: true },
+          voice: {
+            phase: "ready",
+            voiceId: "herta_dxl8hnmmth",
+            host: "https://api.minimaxi.com",
+            clonedAt: "2026-09-08T10:00:00.000Z",
+          },
+        },
+      },
+    });
+    expect(await findByText("Connected · …1234")).toBeTruthy();
+    expect(await findByText("Connected · …7777")).toBeTruthy();
+    const toggle = getByRole("switch", {
+      name: "Real-time voice",
+    }) as HTMLButtonElement;
+    expect(toggle.disabled).toBe(false);
+    expect(queryByTestId("voice-clone-note")).toBeNull();
   });
 
   it("a stored key the platform refuses reads 'Key rejected', not Connected, until a clone succeeds", async () => {

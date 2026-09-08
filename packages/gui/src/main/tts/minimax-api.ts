@@ -57,10 +57,11 @@ interface BaseResp {
   readonly status_msg?: string;
 }
 
-/** MiniMax's status codes, as far as the docs and one afternoon's calls go:
+/** MiniMax's status codes, as far as the docs and one day's calls go:
  *  2049 the key is not this platform's; 1004 authentication; 1002/1039 rate
- *  limits; 1008 balance; 2013 invalid params — which is also what a missing
- *  voice comes back as, told apart by its message. */
+ *  limits; 1008 balance; 2054 "voice id not exist" (measured 2026-09-08);
+ *  2013 invalid params — which older answers also used for a missing voice,
+ *  told apart by the message. */
 export function classifyStatus(
   code: number | undefined,
   msg: string | undefined,
@@ -68,6 +69,7 @@ export function classifyStatus(
   const m = (msg ?? "").toLowerCase();
   if (code === 2049) return "invalid_key";
   if (code === 1004) return "auth";
+  if (code === 2054) return "voice_missing";
   if (code === 1002 || code === 1039) return "rate";
   if (code === 1008 || m.includes("balance") || m.includes("insufficient")) {
     return "quota";
@@ -176,6 +178,41 @@ export async function probeHost(
   );
 }
 
+export interface ClonedVoice {
+  readonly voiceId: string;
+  /** As the platform reports it — a date string; empty when absent. */
+  readonly createdTime: string;
+}
+
+/** The account's cloned voices, as `get_voice` lists them. Only voices that
+ *  have spoken at least once appear (measured 2026-09-08: a fresh, unused
+ *  clone is not listed) — which is exactly the set whose first-use fee is
+ *  already paid, so adopting one costs nothing (ADR 0062 §1.8). Any key of
+ *  the account lists them, the token-plan key included. */
+export async function listClones(
+  fetch: FetchLike,
+  host: string,
+  key: string,
+  signal?: AbortSignal,
+): Promise<ClonedVoice[]> {
+  const { json } = await call(fetch, `${host}/v1/get_voice`, {
+    method: "POST",
+    headers: { ...auth(key), "Content-Type": "application/json" },
+    body: JSON.stringify({ voice_type: "voice_cloning" }),
+    signal,
+  });
+  const raw = Array.isArray(json.voice_cloning) ? json.voice_cloning : [];
+  const out: ClonedVoice[] = [];
+  for (const v of raw as { voice_id?: unknown; created_time?: unknown }[]) {
+    if (typeof v?.voice_id !== "string") continue;
+    out.push({
+      voiceId: v.voice_id,
+      createdTime: typeof v.created_time === "string" ? v.created_time : "",
+    });
+  }
+  return out;
+}
+
 /** Upload the reference audio for cloning; resolves the file id as the
  *  exact digit string the server sent (int64 — never through a JS number). */
 export async function uploadReference(
@@ -206,9 +243,15 @@ export async function uploadReference(
 
 /** A voice id MiniMax accepts: 8–256 chars, a letter first, letters / digits
  *  / `-` / `_`, not ending in `-` or `_`, unique per account — so a fresh
- *  random tail per clone (a deleted id may or may not be reusable). */
-export function makeVoiceId(random: () => string = defaultRandom): string {
-  return `herta_${random()}`;
+ *  random tail per clone (a deleted id may or may not be reusable). With a
+ *  `tag` (the reference's fingerprint, ADR 0062 §1.8) the id says which
+ *  reference it was cloned from — `herta-<tag>-<random>` — so a later
+ *  install can adopt it instead of cloning again. */
+export function makeVoiceId(
+  random: () => string = defaultRandom,
+  tag?: string,
+): string {
+  return tag === undefined ? `herta_${random()}` : `herta-${tag}-${random()}`;
 }
 
 function defaultRandom(): string {

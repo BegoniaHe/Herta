@@ -19,12 +19,16 @@ vi.mock("electron", () => ({
 import {
   clearDeepSeekKey,
   clearMiniMaxKey,
+  clearMiniMaxPlanKey,
   getDeepSeekKeyStatus,
   getMiniMaxKeyStatus,
+  getMiniMaxPlanKeyStatus,
   readDeepSeekKeyPlain,
   readMiniMaxKeyPlain,
+  readMiniMaxPlanKeyPlain,
   setDeepSeekKey,
   setMiniMaxKey,
+  setMiniMaxPlanKey,
 } from "./key-store.js";
 
 describe("key-store", () => {
@@ -115,5 +119,21 @@ describe("key-store", () => {
     expect(readMiniMaxKeyPlain()).toBeNull();
     expect(getMiniMaxKeyStatus().set).toBe(false);
     expect(readDeepSeekKeyPlain()).toBe("sk-deepseek-1111");
+  });
+
+  it("the MiniMax token-plan key is a third store beside the pay-as-you-go one (ADR 0062 §1.8)", () => {
+    setMiniMaxKey("sk-api-minimax-2222");
+    const r = setMiniMaxPlanKey("sk-cp-plan-3333");
+    expect(r.encrypted).toBe(true);
+    expect(readMiniMaxPlanKeyPlain()).toBe("sk-cp-plan-3333");
+    expect(getMiniMaxPlanKeyStatus()).toEqual({
+      set: true,
+      hint: "3333",
+      encrypted: true,
+    });
+    expect(readMiniMaxKeyPlain()).toBe("sk-api-minimax-2222");
+    clearMiniMaxPlanKey();
+    expect(readMiniMaxPlanKeyPlain()).toBeNull();
+    expect(readMiniMaxKeyPlain()).toBe("sk-api-minimax-2222");
   });
 });

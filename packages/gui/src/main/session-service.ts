@@ -74,6 +74,7 @@ import {
   readWorkspaceFileBounded,
   resolveInsideWorkspace,
 } from "./read-workspace-file.js";
+import { createFallbackFetch } from "./tts/fallback-fetch.js";
 import { MiniMaxError, probeHost } from "./tts/minimax-api.js";
 import {
   createMiniMaxSynthesizer,
@@ -520,6 +521,17 @@ export function createSessionService(
   let voiceEngine: VoiceEngine = "local";
   let minimaxSynth: MiniMaxSynthesizer | null = null;
   let minimaxVoice: MiniMaxVoiceService | null = null;
+  // The cloud voice's network path (ADR 0062 §1.4, amended): Chromium's
+  // proxy-aware `net.fetch` first — the same stack the DeepSeek calls use —
+  // and Node's `fetch` only when Chromium could not connect at all. On the
+  // owner's second machine Chromium reached DeepSeek but failed the TLS
+  // handshake to both MiniMax hosts; a second stack is the only lever the
+  // app has there. Called after `whenReady` only (the handlers and the
+  // services are wired inside `start`).
+  const minimaxFetch = createFallbackFetch(
+    [(url, init) => net.fetch(url, init), (url, init) => fetch(url, init)],
+    (line) => console.log(line),
+  );
   const send: Send = (ch, payload) => {
     if (!wc.isDestroyed()) wc.send(ch, payload);
   };
@@ -1263,7 +1275,7 @@ export function createSessionService(
       }
       let unverified = false;
       try {
-        await probeHost((url, init) => net.fetch(url, init), trimmed);
+        await probeHost(minimaxFetch, trimmed);
       } catch (err) {
         if (err instanceof MiniMaxError && err.reason === "invalid_key") {
           return { ok: false as const, reason: "rejected" as const };
@@ -1441,8 +1453,7 @@ export function createSessionService(
         resourcesPath: process.resourcesPath,
         workspaceRoot,
       });
-      const fetchLike = (url: string, init: Parameters<typeof net.fetch>[1]) =>
-        net.fetch(url, init);
+      const fetchLike = minimaxFetch;
       minimaxVoice = createMiniMaxVoiceService({
         fetch: fetchLike,
         key: readMiniMaxKeyPlain,

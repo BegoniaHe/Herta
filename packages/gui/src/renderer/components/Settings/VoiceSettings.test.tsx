@@ -394,6 +394,51 @@ describe("VoiceSettings", () => {
   // the clone failed underneath (2026-09-08). The probe now refuses such a
   // key before it is stored; and a stored key the platform refuses later
   // (revoked, or saved unverified during an outage) turns the row red.
+  // The owner's second machine could not reach MiniMax at all (the TLS
+  // handshake failed on both hosts), typed a wrong key, and read
+  // "Connected" plus a note about her staying silent. Nobody had checked
+  // that key: the row says so, and the clone's own line says why.
+  it("a key saved while MiniMax was unreachable reads 'Unchecked', with the clone's line and no second note", async () => {
+    const { findByText, getByRole, getByLabelText, queryByText, mock } = setup({
+      offlineMiniMax: true,
+      realtimeVoiceResult: {
+        enabled: true,
+        bundle: true,
+        runtime: true,
+        failed: false,
+        engine: "minimax",
+      },
+    });
+    await findByText("MiniMax API key");
+    fireEvent.change(getByLabelText("MiniMax API key"), {
+      target: { value: "sk-api-wrong-0000" },
+    });
+    fireEvent.click(getByRole("button", { name: "Save" }));
+    expect(await findByText("Unchecked · …0000")).toBeTruthy();
+    expect(queryByText("Connected · …0000")).toBeNull();
+    expect(
+      await findByText(
+        "MiniMax could not be reached; check the network and retry.",
+      ),
+    ).toBeTruthy();
+    expect(queryByText(/Saved, but/)).toBeNull();
+    const toggle = getByRole("switch", {
+      name: "Real-time voice",
+    }) as HTMLButtonElement;
+    expect(toggle.disabled).toBe(true);
+    // The network comes back and the clone lands: that checks the key.
+    act(() => {
+      mock.emitMiniMaxVoice({
+        phase: "ready",
+        voiceId: "herta_ok",
+        host: "https://api.minimaxi.com",
+        clonedAt: "2026-09-08T10:00:00.000Z",
+      });
+    });
+    expect(await findByText("Connected · …0000")).toBeTruthy();
+    expect(queryByText("Unchecked · …0000")).toBeNull();
+  });
+
   it("a stored key the platform refuses reads 'Key rejected', not Connected, until a clone succeeds", async () => {
     const { findByText, queryByText, mock } = setup({
       realtimeVoiceResult: {

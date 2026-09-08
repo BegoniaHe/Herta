@@ -100,9 +100,8 @@ export const zh = {
   "voice.minimaxKeyDesc": "加密存储在本机。可在 platform.minimaxi.com 获取。",
   "voice.minimaxKeyAria": "MiniMax API 密钥",
   "voice.minimaxKeyRejected": "密钥无效",
+  "voice.minimaxKeyUnchecked": "未核对",
   "voice.minimaxRejected": "MiniMax 不接受这个密钥，检查后再试。",
-  "voice.minimaxUnverified":
-    "已保存，但暂时无法连到 MiniMax 核对；她不出声时先检查网络。",
   "voice.clonePreparing": "正在准备她的声音…",
   "voice.cloneRetry": "重试",
   "voice.cloneFailed.no_key": "先填入 MiniMax 密钥。",

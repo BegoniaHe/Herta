@@ -139,7 +139,11 @@ export function VoiceSettings(): JSX.Element {
       if (m.phase !== "downloading") refresh();
     });
     const unsubClone = bridge.onMiniMaxVoice?.((c) => {
-      if (alive) setClone(c);
+      if (!alive) return;
+      setClone(c);
+      // A clone that landed proves the key: a save the platform could not
+      // check at the time is checked now.
+      if (c.phase === "ready") setKeyUnverified(false);
     });
     return () => {
       alive = false;
@@ -307,6 +311,11 @@ export function VoiceSettings(): JSX.Element {
     clone !== null &&
     clone.phase === "failed" &&
     (clone.error === "invalid_key" || clone.error === "auth");
+  // A key stored while the platform could not be reached is not 已连接 —
+  // nobody has checked it. The clone made right after either proves it
+  // (ready → connected) or says what went wrong on its own line.
+  const keyUnchecked =
+    keyUnverified && !(clone !== null && clone.phase === "ready");
 
   const progress =
     model !== null && model.phase === "downloading" && model.totalBytes > 0
@@ -405,6 +414,10 @@ export function VoiceSettings(): JSX.Element {
                     <span className="settings-key-state is-rejected">
                       {t("voice.minimaxKeyRejected")} · …{mmKey.hint}
                     </span>
+                  ) : mmKey.set && keyUnchecked ? (
+                    <span className="settings-key-state is-muted">
+                      {t("voice.minimaxKeyUnchecked")} · …{mmKey.hint}
+                    </span>
                   ) : mmKey.set ? (
                     <span className="settings-key-state is-connected">
                       <span className="settings-key-dot" aria-hidden="true" />
@@ -472,9 +485,6 @@ export function VoiceSettings(): JSX.Element {
               )}
               {keyFailed && (
                 <p className="settings-note">{t("common.couldntSave")}</p>
-              )}
-              {keyUnverified && (
-                <p className="settings-note">{t("voice.minimaxUnverified")}</p>
               )}
               {mmKey?.set && !mmKey.encrypted && (
                 <p className="settings-note">{t("deepseek.unencrypted")}</p>

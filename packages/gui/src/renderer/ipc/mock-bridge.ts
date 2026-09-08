@@ -134,6 +134,9 @@ export interface MockHertaBridgeOpts {
   /** When true, setMiniMaxKey rejects every key (neither platform accepts
    *  it) — `{ ok: false, reason: "rejected" }`, status unchanged. */
   readonly rejectMiniMaxKey?: boolean;
+  /** When true, MiniMax cannot be reached: a key is stored `unverified`
+   *  and every clone attempt fails with `network`. */
+  readonly offlineMiniMax?: boolean;
   /** When true, setRealtimeVoice rejects — same seam as
    *  failSetInteractionLanguage, so the snap-back + error-note path is
    *  testable. */
@@ -378,6 +381,10 @@ export function createMockHertaBridge(
       return;
     }
     pushMiniMax({ phase: "preparing" });
+    if (opts.offlineMiniMax === true) {
+      pushMiniMax({ phase: "failed", error: "network" });
+      return;
+    }
     pushMiniMax({
       phase: "ready",
       voiceId: "herta_mock000001",
@@ -739,7 +746,7 @@ export function createMockHertaBridge(
       return {
         ok: true,
         encrypted: true,
-        unverified: false,
+        unverified: opts.offlineMiniMax === true,
         status: minimaxKey,
       };
     },

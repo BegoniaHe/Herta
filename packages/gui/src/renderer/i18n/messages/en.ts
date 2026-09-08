@@ -114,10 +114,9 @@ export const en = {
     "Stored encrypted on this device. Get one at platform.minimaxi.com.",
   "voice.minimaxKeyAria": "MiniMax API key",
   "voice.minimaxKeyRejected": "Key rejected",
+  "voice.minimaxKeyUnchecked": "Unchecked",
   "voice.minimaxRejected":
     "MiniMax did not accept that key — check it and try again.",
-  "voice.minimaxUnverified":
-    "Saved, but MiniMax could not be reached to check it — check your connection if she stays silent.",
   "voice.clonePreparing": "Preparing her voice…",
   "voice.cloneRetry": "Retry",
   "voice.cloneFailed.no_key": "Enter a MiniMax key first.",

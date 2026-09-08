@@ -135,9 +135,12 @@ function auth(key: string): Record<string, string> {
 
 /**
  * The platform this key belongs to. A cheap authenticated call per host; a
- * host that says "invalid api key" is the wrong one, ANY other answer —
- * success or a parameter complaint — proves the key authenticated there.
- * Throws `invalid_key` when neither accepts it.
+ * host that says "invalid api key" (2049) is the wrong one, and one that
+ * says "login fail" (1004) did not authenticate the key at all — a key
+ * that is nobody's gets 1004 from BOTH hosts (measured 2026-09-08; the
+ * first cut counted that as accepted and stored the wrong key as 已连接).
+ * Any other answer — success or a parameter complaint — proves the key
+ * authenticated there. Throws `invalid_key` when neither accepts it.
  */
 export async function probeHost(
   fetch: FetchLike,
@@ -157,7 +160,7 @@ export async function probeHost(
       return host;
     } catch (err) {
       if (!(err instanceof MiniMaxError)) throw err;
-      if (err.reason === "invalid_key") continue;
+      if (err.reason === "invalid_key" || err.reason === "auth") continue;
       if (err.reason === "cancelled") throw err;
       if (err.reason === "network" || err.reason === "http") {
         lastNetwork = err;

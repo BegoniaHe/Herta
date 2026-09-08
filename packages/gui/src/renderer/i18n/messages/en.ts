@@ -111,8 +111,9 @@ export const en = {
   "voice.engine.minimax": "MiniMax cloud",
   "voice.minimaxKey": "MiniMax API key",
   "voice.minimaxKeyDesc":
-    "Stored encrypted on this device; get one at platform.minimaxi.com.",
+    "Stored encrypted on this device. Get one at platform.minimaxi.com.",
   "voice.minimaxKeyAria": "MiniMax API key",
+  "voice.minimaxKeyRejected": "Key rejected",
   "voice.minimaxRejected":
     "MiniMax did not accept that key — check it and try again.",
   "voice.minimaxUnverified":

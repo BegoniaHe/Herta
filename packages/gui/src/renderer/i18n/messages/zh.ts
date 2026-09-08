@@ -97,8 +97,9 @@ export const zh = {
   "voice.engine.local": "本地模型",
   "voice.engine.minimax": "MiniMax 云端",
   "voice.minimaxKey": "MiniMax API 密钥",
-  "voice.minimaxKeyDesc": "加密保存在本机；在 platform.minimaxi.com 获取。",
+  "voice.minimaxKeyDesc": "加密存储在本机。可在 platform.minimaxi.com 获取。",
   "voice.minimaxKeyAria": "MiniMax API 密钥",
+  "voice.minimaxKeyRejected": "密钥无效",
   "voice.minimaxRejected": "MiniMax 不接受这个密钥，检查后再试。",
   "voice.minimaxUnverified":
     "已保存，但暂时无法连到 MiniMax 核对；她不出声时先检查网络。",

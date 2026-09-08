@@ -43,6 +43,7 @@ const ALLOW_TOKENS = [
   "DeepSeek",
   "window.herta",
   "platform.deepseek.com",
+  "platform.minimaxi.com",
   "English",
 ];
 

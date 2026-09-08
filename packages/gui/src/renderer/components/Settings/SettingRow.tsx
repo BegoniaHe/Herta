@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 
 export interface SettingRowProps {
   readonly title: string;
-  readonly description: string;
+  /** Plain text, or text with an emphasized span (a host name, say). */
+  readonly description: ReactNode;
   /** The control (e.g. a Toggle) shown at the row's trailing edge. */
   readonly control: ReactNode;
 }

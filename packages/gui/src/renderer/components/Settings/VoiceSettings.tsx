@@ -296,6 +296,18 @@ export function VoiceSettings(): JSX.Element {
     }
   })();
 
+  // The key row's description keeps the literal host emphasized
+  // (settings-key-host) and verbatim in every locale — the DeepSeek
+  // section's shape.
+  const keyDescParts = t("voice.minimaxKeyDesc").split("platform.minimaxi.com");
+  // A stored key the platform then refuses (revoked, or saved unverified
+  // during an outage) must not keep reading 已连接: the clone's own auth
+  // failure is the honest signal.
+  const keyRefused =
+    clone !== null &&
+    clone.phase === "failed" &&
+    (clone.error === "invalid_key" || clone.error === "auth");
+
   const progress =
     model !== null && model.phase === "downloading" && model.totalBytes > 0
       ? Math.min(
@@ -375,11 +387,23 @@ export function VoiceSettings(): JSX.Element {
             <>
               <SettingRow
                 title={t("voice.minimaxKey")}
-                description={t("voice.minimaxKeyDesc")}
+                description={
+                  <>
+                    {keyDescParts[0]}
+                    <span className="settings-key-host">
+                      platform.minimaxi.com
+                    </span>
+                    {keyDescParts[1] ?? ""}
+                  </>
+                }
                 control={
                   mmKey === null ? (
                     <span className="settings-key-state is-muted">
                       {t("deepseek.checking")}
+                    </span>
+                  ) : mmKey.set && keyRefused ? (
+                    <span className="settings-key-state is-rejected">
+                      {t("voice.minimaxKeyRejected")} · …{mmKey.hint}
                     </span>
                   ) : mmKey.set ? (
                     <span className="settings-key-state is-connected">

@@ -293,6 +293,12 @@ describe("VoiceSettings", () => {
     expect(queryByText("Voice model")).toBeNull();
     expect(await findByText("MiniMax API key")).toBeTruthy();
     expect(queryByText("No key set")).toBeTruthy();
+    // The host is emphasized inside the description, the DeepSeek shape.
+    const host = queryByText("platform.minimaxi.com");
+    expect(host?.className).toBe("settings-key-host");
+    expect(host?.parentElement?.textContent).toBe(
+      "Stored encrypted on this device. Get one at platform.minimaxi.com.",
+    );
     // The clone is main's business: nothing to prepare, nothing to read
     // about billing. Without a key she cannot speak.
     expect(queryByText("Clone voice")).toBeNull();
@@ -382,6 +388,43 @@ describe("VoiceSettings", () => {
       mock.emitMiniMaxVoice({ phase: "preparing" });
     });
     expect(await findByText("Preparing her voice…")).toBeTruthy();
+  });
+
+  // The owner typed a wrong key and the row kept saying Connected while
+  // the clone failed underneath (2026-09-08). The probe now refuses such a
+  // key before it is stored; and a stored key the platform refuses later
+  // (revoked, or saved unverified during an outage) turns the row red.
+  it("a stored key the platform refuses reads 'Key rejected', not Connected, until a clone succeeds", async () => {
+    const { findByText, queryByText, mock } = setup({
+      realtimeVoiceResult: {
+        enabled: true,
+        bundle: true,
+        runtime: true,
+        failed: false,
+        engine: "minimax",
+        minimax: {
+          key: { set: true, hint: "1234", encrypted: true },
+          voice: { phase: "failed", error: "auth" },
+        },
+      },
+    });
+    expect(await findByText("Key rejected · …1234")).toBeTruthy();
+    expect(queryByText("Connected · …1234")).toBeNull();
+    expect(
+      queryByText(
+        "MiniMax refused the request; check the key and the account.",
+      ),
+    ).toBeTruthy();
+    act(() => {
+      mock.emitMiniMaxVoice({
+        phase: "ready",
+        voiceId: "herta_ok",
+        host: "https://api.minimaxi.com",
+        clonedAt: "2026-09-08T10:00:00.000Z",
+      });
+    });
+    expect(await findByText("Connected · …1234")).toBeTruthy();
+    expect(queryByText("Key rejected · …1234")).toBeNull();
   });
 
   it("dev: the workspace's own copy shows as such, with nothing to download", async () => {

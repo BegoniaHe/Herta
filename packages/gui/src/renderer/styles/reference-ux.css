@@ -6934,6 +6934,7 @@ button.commit-view__path:hover {
 }
 .settings-key-state.is-muted { color: var(--muted); }
 .settings-key-state.is-connected { color: #1f7a3d; }
+.settings-key-state.is-rejected { color: #b23b3b; }
 .settings-key-dot {
   width: 7px;
   height: 7px;
@@ -6945,6 +6946,10 @@ button.commit-view__path:hover {
   gap: 8px;
   align-items: stretch;
 }
+/* The voice pane's key form hangs under its row card (the DeepSeek pane's
+   sits under a status line that carries its own margin): the same 12px
+   breath, or the input reads as glued to the card's edge (owner 2026-09-08). */
+.settings-row + .settings-key-form { margin-top: 12px; }
 .settings-key-input {
   flex: 1 1 auto;
   min-width: 0;

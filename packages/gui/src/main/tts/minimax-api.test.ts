@@ -80,6 +80,41 @@ describe("probeHost", () => {
     ).rejects.toMatchObject({ reason: "invalid_key" });
   });
 
+  // A key that is nobody's gets 1004 "login fail" from BOTH platforms
+  // (measured against the real hosts 2026-09-08). The first cut read that
+  // as "authenticated, whatever else it disliked" and stored the wrong key
+  // as 已连接 — the owner typed a wrong key and watched it happen.
+  it("a 1004 login failure is not authentication: both hosts → invalid_key; one host → the other", async () => {
+    const loginFail = {
+      base_resp: {
+        status_code: 1004,
+        status_msg:
+          "login fail: Please carry the API secret key in the 'Authorization' field of the request header",
+      },
+    };
+    const both = fake({
+      "https://a.example/v1/get_voice": () => loginFail,
+      "https://b.example/v1/get_voice": () => loginFail,
+    });
+    await expect(
+      probeHost(both.fetch, "k", undefined, [
+        "https://a.example",
+        "https://b.example",
+      ]),
+    ).rejects.toMatchObject({ reason: "invalid_key" });
+    expect(both.calls).toHaveLength(2);
+    const one = fake({
+      "https://a.example/v1/get_voice": () => loginFail,
+      "https://b.example/v1/get_voice": () => ok,
+    });
+    await expect(
+      probeHost(one.fetch, "k", undefined, [
+        "https://a.example",
+        "https://b.example",
+      ]),
+    ).resolves.toBe("https://b.example");
+  });
+
   it("a host that is unreachable is skipped, and reported only if none answered", async () => {
     const failing: FetchLike = async (url, init) => {
       if (url.startsWith("https://a.example"))
